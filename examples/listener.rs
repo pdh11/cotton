@@ -5,6 +5,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
+use tokio::try_join;
+
 use neli::{
     attr::Attribute,
     consts::{
@@ -56,11 +58,11 @@ msg=Nlmsghdr
                 Rtattr { rta_len: 20, rta_type: Cacheinfo, rta_payload: Buffer }]) }) }
 */
 fn handle(msg: Nlmsghdr<Rtm, Ifaddrmsg>) {
-    println!("msg={:?}", msg);
+    //println!("msg={:?}", msg);
     if let NlPayload::Payload(p) = msg.nl_payload {
         let handle = p.rtattrs.get_attr_handle();
         let addr = {
-            if let Ok(mut ip_bytes) = handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Address) {
+            if let Ok(mut ip_bytes) = handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Local) {
                 ip(&ip_bytes)
             } else {
                 None
@@ -88,14 +90,17 @@ fn handle(msg: Nlmsghdr<Rtm, Ifaddrmsg>) {
             .get_attr_payload_as_with_len::<String>(Ifa::Label)
             .ok();
         if let (Some(addr), Some(name)) = (addr, name) {
-            println!("{}: {} {}/{} {:x} {:?}", p.ifa_index, name, addr,
+            print!("{}", match msg.nl_type {
+                Rtm::Newaddr => "NEWADDR",
+                Rtm::Deladdr => "DELADDR",
+                _ => "???ADDR"});
+            println!(" {}: {} {}/{} {:x} {:?}", p.ifa_index, name, addr,
                      p.ifa_prefixlen, flags, bcast);
         }
     }
 }
 
 fn handle_link(msg: Nlmsghdr<Rtm, Ifinfomsg>) {
-//    println!("msg={:?}", msg);
     if let NlPayload::Payload(p) = msg.nl_payload {
         let handle = p.rtattrs.get_attr_handle();
         /*
@@ -115,7 +120,14 @@ fn handle_link(msg: Nlmsghdr<Rtm, Ifinfomsg>) {
             .get_attr_payload_as_with_len::<String>(Ifla::Ifname)
             .ok();
         if let Some(name) = name {
-            print!("{}: {}", p.ifi_index, name);
+            if msg.nl_type == Rtm::Newlink {
+                print!("NEWLINK");
+            } else if msg.nl_type == Rtm::Dellink {
+                print!("DELLINK");
+            } else {
+                print!("???LINK");
+            }
+            print!(" {}: {}", p.ifi_index, name);
             if flags.contains(&Iff::Up) {
                 print!(" UP");
             }
@@ -133,7 +145,46 @@ fn handle_link(msg: Nlmsghdr<Rtm, Ifinfomsg>) {
     }
 }
 
-async fn get_addrs(ss: NlSocket) {
+async fn get_addrs(mut ss: NlSocket) -> Result<(), Box<dyn Error>> {
+    loop {
+        let mut buffer = Vec::new();
+        let msgs = ss.recv(&mut buffer).await?;
+        //println!("msgs: {:?}\n\n", msgs);
+        for msg in msgs {
+            if let NlPayload::Err(e) = msg.nl_payload {
+                if e.error == -2 {
+                    println!(
+                        "This test is not supported on this machine as it requires nl80211; skipping"
+                );
+                } else {
+                    println!("Error {:?}", e);
+                }
+            } else {
+                handle(msg);
+            }
+        }
+    }
+}
+
+async fn get_links(mut ss: NlSocket) -> Result<(), Box<dyn Error>> {
+    loop {
+        let mut buffer = Vec::new();
+        let msgs = ss.recv(&mut buffer).await?;
+        //println!("msgs: {:?}\n\n", msgs);
+        for msg in msgs {
+            if let NlPayload::Err(e) = msg.nl_payload {
+                if e.error == -2 {
+                    println!(
+                        "This test is not supported on this machine as it requires nl80211; skipping"
+                );
+                } else {
+                    println!("Error {:?}", e);
+                }
+            } else {
+                handle_link(msg);
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -146,7 +197,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut ss = NlSocket::new(sock)?;
 
-    /**/
     let ifaddrmsg = Ifaddrmsg {
         ifa_family: RtAddrFamily::Inet,
         ifa_prefixlen: 0,
@@ -163,7 +213,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         NlPayload::Payload(ifaddrmsg),
     );
-    /*
+    ss.send(&nl_header).await?;
+
+    let f1 = get_addrs(ss);
+
+    let mut sock2 = NlSocketHandle::connect(
+        NlFamily::Route, /* family */
+        None,
+        &[1],               /* groups 1=LINK 5=ADDR */
+    )?;
+
+    let mut ss2 = NlSocket::new(sock2)?;
+
     let ifinfomsg = Ifinfomsg::new(
          RtAddrFamily::Unspecified,
          Arphrd::Ether,
@@ -180,30 +241,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None,
         NlPayload::Payload(ifinfomsg),
     );
-     */
-    ss.send(&nl_header).await?;
-    println!("sent");
 
-//    get_addrs(ss);
+    ss2.send(&nl_header).await?;
 
-    while true {
-        let mut buffer = Vec::new();
-        let msgs = ss.recv(&mut buffer).await?;
-        println!("msgs: {:?}\n\n", msgs);
-        for msg in msgs {
-            if let NlPayload::Err(e) = msg.nl_payload {
-                if e.error == -2 {
-                    println!(
-                        "This test is not supported on this machine as it requires nl80211; skipping"
-                );
-                } else {
-                    println!("Error {:?}", e);
-                }
-            } else {
-                handle(msg);
-            }
-        }
-        println!("loop");
-    }
+    let f2 = get_links(ss2);
+
+    try_join!(f1, f2);
+
     Ok(())
 }
