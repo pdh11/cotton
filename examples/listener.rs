@@ -3,11 +3,11 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-use tokio::try_join;
-
 use bitflags::bitflags;
-
-use std::cell::RefCell;
+use async_stream::stream;
+use futures_util::stream::StreamExt;
+use futures_util::Stream;
+use futures_util::stream;
 
 use neli::{
     consts::{
@@ -41,7 +41,7 @@ fn ip(ip_bytes: &[u8]) -> Option<IpAddr> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct NetworkInterface(u32);
 
 bitflags! {
@@ -57,7 +57,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NetworkEvent {
     NewLink(NetworkInterface, String, Flags),
     DelLink(NetworkInterface),
@@ -71,18 +71,12 @@ pub struct NetworkInterfaces {
 }
 
 impl NetworkInterfaces {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub async fn new() -> Result<Self, Box<dyn Error>> {
         let link_handle = NlSocketHandle::connect(NlFamily::Route, None, &[1])?;
-        let link_socket = NlSocket::new(link_handle)?;
-        let addr_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5])?;
-        let addr_socket = NlSocket::new(addr_handle)?;
-        Ok(NetworkInterfaces {
-            link_socket,
-            addr_socket,
-        })
-    }
+        let mut link_socket = NlSocket::new(link_handle)?;
+        let addr_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5,9])?;
+        let mut addr_socket = NlSocket::new(addr_handle)?;
 
-    pub async fn scan(&mut self, func: Box<dyn FnMut(NetworkEvent)>) -> Result<(), Box<dyn Error>> {
         let ifinfomsg = Ifinfomsg::new(
             RtAddrFamily::Unspecified,
             Arphrd::Ether,
@@ -99,7 +93,8 @@ impl NetworkInterfaces {
             None,
             NlPayload::Payload(ifinfomsg),
         );
-        self.link_socket.send(&nl_header).await?;
+
+        link_socket.send(&nl_header).await?;
 
         let ifaddrmsg = Ifaddrmsg {
             ifa_family: RtAddrFamily::Inet,
@@ -117,55 +112,61 @@ impl NetworkInterfaces {
             None,
             NlPayload::Payload(ifaddrmsg),
         );
-        self.addr_socket.send(&nl_header).await?;
 
-        let f = RefCell::new(func);
+        addr_socket.send(&nl_header).await?;
 
-        let f1 = NetworkInterfaces::get_links(&mut self.link_socket, &f);
-        let f2 = NetworkInterfaces::get_addrs(&mut self.addr_socket, &f);
-
-        try_join!(f1, f2).map(|_| ())
+        Ok(NetworkInterfaces {
+            link_socket,
+            addr_socket,
+        })
     }
 
-    async fn get_links(
-        ss: &mut NlSocket,
-        func: &RefCell<Box<dyn FnMut(NetworkEvent)>>,
-    ) -> Result<(), Box<dyn Error>> {
-        let mut buffer = Vec::new();
-        loop {
-            let msgs: NlBuffer<Rtm, Ifinfomsg> = ss.recv(&mut buffer).await?;
-            for msg in msgs {
-                if let NlPayload::Payload(p) = msg.nl_payload {
-                    let handle = p.rtattrs.get_attr_handle();
-                    let name = handle
-                        .get_attr_payload_as_with_len::<String>(Ifla::Ifname)
-                        .ok();
-                    if let Some(name) = name {
-                        let flags = p.ifi_flags;
-                        let mut newflags = Flags::NONE;
-                        for (iff, newf) in [
-                            (&Iff::Up, Flags::UP),
-                            (&Iff::Running, Flags::RUNNING),
-                            (&Iff::Loopback, Flags::LOOPBACK),
-                            (&Iff::Pointopoint, Flags::POINTTOPOINT),
-                            (&Iff::Broadcast, Flags::BROADCAST),
-                            (&Iff::Multicast, Flags::MULTICAST),
-                        ] {
-                            if flags.contains(iff) {
-                                newflags = newflags | newf;
-                            }
-                        }
+    pub fn scan(self) -> impl Stream<Item = NetworkEvent> {
+        stream::select(
+            Box::pin(NetworkInterfaces::get_links(self.link_socket)),
+            Box::pin(NetworkInterfaces::get_addrs(self.addr_socket)))
+    }
 
-                        match msg.nl_type {
-                            Rtm::Newlink => func.borrow_mut()(NetworkEvent::NewLink(
-                                NetworkInterface(p.ifi_index as u32),
-                                name,
-                                newflags,
-                            )),
-                            Rtm::Dellink => func.borrow_mut()(NetworkEvent::DelLink(
-                                NetworkInterface(p.ifi_index as u32),
-                            )),
-                            _ => (),
+    fn get_links(
+        mut ss: NlSocket
+    ) -> impl Stream<Item = NetworkEvent> {
+        let mut buffer = Vec::new();
+        stream! {
+            loop {
+                let msgs: NlBuffer<Rtm, Ifinfomsg> =
+                    ss.recv(&mut buffer).await.unwrap();
+                for msg in msgs {
+                    if let NlPayload::Payload(p) = msg.nl_payload {
+                        let handle = p.rtattrs.get_attr_handle();
+                        let name = handle
+                            .get_attr_payload_as_with_len::<String>(Ifla::Ifname)
+                            .ok();
+                        if let Some(name) = name {
+                            let flags = p.ifi_flags;
+                            let mut newflags = Flags::NONE;
+                            for (iff, newf) in [
+                                (&Iff::Up, Flags::UP),
+                                (&Iff::Running, Flags::RUNNING),
+                                (&Iff::Loopback, Flags::LOOPBACK),
+                                (&Iff::Pointopoint, Flags::POINTTOPOINT),
+                                (&Iff::Broadcast, Flags::BROADCAST),
+                                (&Iff::Multicast, Flags::MULTICAST),
+                            ] {
+                                if flags.contains(iff) {
+                                    newflags = newflags | newf;
+                                }
+                            }
+                            match msg.nl_type {
+                                Rtm::Newlink => yield NetworkEvent::NewLink(
+                                    NetworkInterface(p.ifi_index as u32),
+                                    name,
+                                    newflags,
+                                ),
+                                Rtm::Dellink => yield NetworkEvent::DelLink(
+                                    NetworkInterface(p.ifi_index as u32),
+                                ),
+                                _ => (),
+                            }
                         }
                     }
                 }
@@ -173,40 +174,41 @@ impl NetworkInterfaces {
         }
     }
 
-    async fn get_addrs(
-        ss: &mut NlSocket,
-        func: &RefCell<Box<dyn FnMut(NetworkEvent)>>,
-    ) -> Result<(), Box<dyn Error>> {
+    fn get_addrs(
+        mut ss: NlSocket,
+    ) -> impl Stream<Item = NetworkEvent> {
         let mut buffer = Vec::new();
-        loop {
-            let msgs: NlBuffer<Rtm, Ifaddrmsg> = ss.recv(&mut buffer).await?;
-            for msg in msgs {
-                if let NlPayload::Payload(p) = msg.nl_payload {
-                    let handle = p.rtattrs.get_attr_handle();
-                    let addr = {
-                        if let Ok(ip_bytes) =
-                            handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Local)
-                        {
-                            ip(&ip_bytes)
-                        } else {
-                            None
-                        }
-                    };
-                    let name = handle
-                        .get_attr_payload_as_with_len::<String>(Ifa::Label)
-                        .ok();
-                    if let (Some(addr), Some(name)) = (addr, name) {
-                        match msg.nl_type {
-                            Rtm::Newaddr => func.borrow_mut()(NetworkEvent::NewAddr(
-                                NetworkInterface(p.ifa_index as u32),
-                                name,
-                                addr,
-                                p.ifa_prefixlen,
-                            )),
-                            Rtm::Deladdr => func.borrow_mut()(NetworkEvent::DelAddr(
-                                NetworkInterface(p.ifa_index as u32),
-                            )),
-                            _ => (),
+        stream! {
+            loop {
+                let msgs: NlBuffer<Rtm, Ifaddrmsg> = ss.recv(&mut buffer).await.unwrap();
+                for msg in msgs {
+                    if let NlPayload::Payload(p) = msg.nl_payload {
+                        let handle = p.rtattrs.get_attr_handle();
+                        let addr = {
+                            if let Ok(ip_bytes) =
+                                handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Local)
+                            {
+                                ip(&ip_bytes)
+                            } else {
+                                None
+                            }
+                        };
+                        let name = handle
+                            .get_attr_payload_as_with_len::<String>(Ifa::Label)
+                            .ok();
+                        if let (Some(addr), Some(name)) = (addr, name) {
+                            match msg.nl_type {
+                                Rtm::Newaddr => yield NetworkEvent::NewAddr(
+                                    NetworkInterface(p.ifa_index as u32),
+                                    name,
+                                    addr,
+                                    p.ifa_prefixlen,
+                                ),
+                                Rtm::Deladdr => yield NetworkEvent::DelAddr(
+                                    NetworkInterface(p.ifa_index as u32),
+                                ),
+                                _ => (),
+                            }
                         }
                     }
                 }
@@ -217,9 +219,13 @@ impl NetworkInterfaces {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let mut ni = NetworkInterfaces::new()?;
+    let ni = NetworkInterfaces::new().await?;
 
-    ni.scan(Box::new(|ne| println!("{:?}", ne))).await?;
+    let mut s = ni.scan();
+
+    while let Some(e) = s.next().await {
+        println!("{:?}", e);
+    }
 
     Ok(())
 }
