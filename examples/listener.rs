@@ -1,10 +1,10 @@
 use cotton_netif::*;
+use futures_util::StreamExt;
+use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let ni = dynamic::NetworkInterfaces::new().await?;
-
-    let mut s = ni.scan();
+    let mut s = network_interfaces_dynamic().await?;
 
     while let Some(e) = s.next().await {
         println!("{:?}", e);

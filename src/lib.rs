@@ -27,3 +27,5 @@ pub enum NetworkEvent {
 
 #[cfg(target_os = "linux")]
 pub mod dynamic; // Uses netlink, which is Linux-specific
+
+pub use dynamic::network_interfaces_dynamic;
