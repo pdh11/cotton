@@ -1,5 +1,5 @@
-use std::net::IpAddr;
 use bitflags::bitflags;
+use std::net::IpAddr;
 
 #[derive(Debug, Copy, Clone)]
 pub struct NetworkInterface(u32);

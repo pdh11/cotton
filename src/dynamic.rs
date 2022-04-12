@@ -6,8 +6,8 @@ use std::{
 };
 
 use async_stream::stream;
-use futures_util::Stream;
 use futures_util::stream;
+use futures_util::Stream;
 
 use neli::{
     consts::{
@@ -50,7 +50,7 @@ impl NetworkInterfaces {
     pub async fn new() -> Result<Self, Box<dyn Error>> {
         let link_handle = NlSocketHandle::connect(NlFamily::Route, None, &[1])?;
         let mut link_socket = NlSocket::new(link_handle)?;
-        let addr_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5,9])?;
+        let addr_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5, 9])?;
         let mut addr_socket = NlSocket::new(addr_handle)?;
 
         let ifinfomsg = Ifinfomsg::new(
@@ -100,12 +100,11 @@ impl NetworkInterfaces {
     pub fn scan(self) -> impl Stream<Item = NetworkEvent> {
         stream::select(
             Box::pin(NetworkInterfaces::get_links(self.link_socket)),
-            Box::pin(NetworkInterfaces::get_addrs(self.addr_socket)))
+            Box::pin(NetworkInterfaces::get_addrs(self.addr_socket)),
+        )
     }
 
-    fn get_links(
-        mut ss: NlSocket
-    ) -> impl Stream<Item = NetworkEvent> {
+    fn get_links(mut ss: NlSocket) -> impl Stream<Item = NetworkEvent> {
         let mut buffer = Vec::new();
         stream! {
             loop {
@@ -129,7 +128,7 @@ impl NetworkInterfaces {
                                 (&Iff::Multicast, Flags::MULTICAST),
                             ] {
                                 if flags.contains(iff) {
-                                    newflags = newflags | newf;
+                                    newflags |= newf;
                                 }
                             }
                             match msg.nl_type {
@@ -150,9 +149,7 @@ impl NetworkInterfaces {
         }
     }
 
-    fn get_addrs(
-        mut ss: NlSocket,
-    ) -> impl Stream<Item = NetworkEvent> {
+    fn get_addrs(mut ss: NlSocket) -> impl Stream<Item = NetworkEvent> {
         let mut buffer = Vec::new();
         stream! {
             loop {
@@ -164,7 +161,7 @@ impl NetworkInterfaces {
                             if let Ok(ip_bytes) =
                                 handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Local)
                             {
-                                ip(&ip_bytes)
+                                ip(ip_bytes)
                             } else {
                                 None
                             }
