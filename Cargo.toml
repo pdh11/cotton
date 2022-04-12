@@ -1,8 +1,9 @@
 [package]
-name = "cotton-ssdp"
+name = "cotton-netif"
 version = "0.1.0"
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
+license = "CC0-1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,6 +11,8 @@ edition = "2021"
 neli = { version = "0.6", features = ["async"] }
 tokio = { version = "1.17", features = ["macros"] }
 bitflags = "1.2"
+futures-util = "0.3"
+async-stream = "0.3"
 
 [[example]]
 name = "listener"
