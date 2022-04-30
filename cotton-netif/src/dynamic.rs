@@ -64,12 +64,12 @@ fn translate_link_message(msg: &Nlmsghdr<Rtm, Ifinfomsg>) -> Option<NetworkEvent
             }
             match msg.nl_type {
                 Rtm::Newlink => return Some(NetworkEvent::NewLink(
-                    NetworkInterface(p.ifi_index as u32),
+                    InterfaceIndex(p.ifi_index as u32),
                     name,
                     newflags,
                 )),
                 Rtm::Dellink => return Some(NetworkEvent::DelLink(
-                    NetworkInterface(p.ifi_index as u32),
+                    InterfaceIndex(p.ifi_index as u32),
                 )),
                 _ => (),
             }
@@ -93,12 +93,12 @@ fn translate_addr_message(msg: &Nlmsghdr<Rtm, Ifaddrmsg>) -> Option<NetworkEvent
         if let Some(addr) = addr {
             match msg.nl_type {
                 Rtm::Newaddr => return Some(NetworkEvent::NewAddr(
-                    NetworkInterface(p.ifa_index as u32),
+                    InterfaceIndex(p.ifa_index as u32),
                     addr,
                     p.ifa_prefixlen,
                 )),
                 Rtm::Deladdr => return Some(NetworkEvent::DelAddr(
-                    NetworkInterface(p.ifa_index as u32),
+                    InterfaceIndex(p.ifa_index as u32),
                 )),
                 _ => (),
             }

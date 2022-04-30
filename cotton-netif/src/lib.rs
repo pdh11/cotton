@@ -1,12 +1,10 @@
 use bitflags::bitflags;
 use std::net::IpAddr;
 
+/** Kernel network interface index (1-based)
+ */
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct NetworkInterface(u32);
-
-impl NetworkInterface {
-    pub fn value(&self) -> u32 { self.0 }
-}
+pub struct InterfaceIndex(pub u32);
 
 bitflags! {
     pub struct Flags: u32 {
@@ -23,10 +21,10 @@ bitflags! {
 
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
-    NewLink(NetworkInterface, String, Flags),
-    DelLink(NetworkInterface),
-    NewAddr(NetworkInterface, IpAddr, u8),
-    DelAddr(NetworkInterface),
+    NewLink(InterfaceIndex, String, Flags),
+    DelLink(InterfaceIndex),
+    NewAddr(InterfaceIndex, IpAddr, u8),
+    DelAddr(InterfaceIndex),
 }
 
 #[cfg(target_os = "linux")]
