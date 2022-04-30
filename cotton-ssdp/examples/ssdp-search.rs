@@ -218,7 +218,7 @@ impl Task {
      */
     fn process_multicast(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) = self
+        if let Ok((n, _wasto, _wasfrom)) = self
             .multicast_socket
             .try_io(tokio::io::Interest::READABLE, || {
                 receive(self.multicast_socket.as_raw_fd(), &mut buf)
