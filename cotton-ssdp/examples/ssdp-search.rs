@@ -36,10 +36,18 @@ pub struct Interface {
     listening: bool,
 }
 
-fn receive(fd: RawFd, buffer: &mut [u8]) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
+fn receive(
+    fd: RawFd,
+    buffer: &mut [u8],
+) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
     let mut cmsgspace = cmsg_space!(libc::in_pktinfo);
     let iov = [IoVec::from_mut_slice(buffer)];
-    let r = nix::sys::socket::recvmsg(fd, &iov, Some(&mut cmsgspace), MsgFlags::empty())?;
+    let r = nix::sys::socket::recvmsg(
+        fd,
+        &iov,
+        Some(&mut cmsgspace),
+        MsgFlags::empty(),
+    )?;
     //println!("recvmsg ok");
     let pi = match r.cmsgs().next() {
         Some(ControlMessageOwned::Ipv4PacketInfo(pi)) => pi,
@@ -73,7 +81,13 @@ fn send_from(
 
     let cmsg = [ControlMessage::Ipv4PacketInfo(&pi)];
     let dest = SockAddr::Inet(InetAddr::from_std(&to));
-    let r = nix::sys::socket::sendmsg(fd, &iov, &cmsg, MsgFlags::empty(), Some(&dest));
+    let r = nix::sys::socket::sendmsg(
+        fd,
+        &iov,
+        &cmsg,
+        MsgFlags::empty(),
+        Some(&dest),
+    );
     if let Err(e) = r {
         //println!("sendmsg {:?}", e);
         return Err(e.into());
@@ -102,9 +116,11 @@ fn parse(packet: &str) -> Result<Message, std::io::Error> {
             if let Some(&nts) = map.get("NTS") {
                 match nts {
                     "ssdp:alive" => {
-                        if let (Some(nt), Some(usn), Some(loc)) =
-                            (map.get("NT"), map.get("USN"), map.get("LOCATION"))
-                        {
+                        if let (Some(nt), Some(usn), Some(loc)) = (
+                            map.get("NT"),
+                            map.get("USN"),
+                            map.get("LOCATION"),
+                        ) {
                             return Ok(Message::NotifyAlive(Alive {
                                 notification_type: nt.to_string(),
                                 unique_service_name: usn.to_string(),
@@ -113,7 +129,9 @@ fn parse(packet: &str) -> Result<Message, std::io::Error> {
                         }
                     }
                     "ssdp:byebye" => {
-                        if let (Some(nt), Some(usn)) = (map.get("NT"), map.get("USN")) {
+                        if let (Some(nt), Some(usn)) =
+                            (map.get("NT"), map.get("USN"))
+                        {
                             return Ok(Message::NotifyByeBye(ByeBye {
                                 notification_type: nt.to_string(),
                                 unique_service_name: usn.to_string(),
@@ -162,7 +180,10 @@ struct Inner {
 }
 
 impl Inner {
-    fn subscribe(&mut self, notification_type: String) -> impl Stream<Item = Response> {
+    fn subscribe(
+        &mut self,
+        notification_type: String,
+    ) -> impl Stream<Item = Response> {
         let (snd, rcv) = mpsc::channel(100);
         let s = ActiveSearch {
             notification_type,
@@ -175,7 +196,9 @@ impl Inner {
     fn broadcast(&mut self, response: Response) {
         self.active_searches.retain(|_, s| {
             // @todo cleverer matching
-            if s.notification_type == "ssdp:all" || s.notification_type == response.search_target {
+            if s.notification_type == "ssdp:all"
+                || s.notification_type == response.search_target
+            {
                 match s.channel.try_send(response.clone()) {
                     Ok(_) => true,
                     Err(mpsc::error::TrySendError::Full(_)) => true,
@@ -197,10 +220,12 @@ struct Task {
 
 impl Task {
     async fn new(inner: Arc<Mutex<Inner>>) -> Result<Task, std::io::Error> {
-        let multicast_socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 1900u16)).await?;
+        let multicast_socket =
+            UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 1900u16)).await?;
         setsockopt(multicast_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
 
-        let search_socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
+        let search_socket =
+            UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
         setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
 
         Ok(Task {
@@ -228,12 +253,13 @@ impl Task {
                 if let Ok(m) = parse(s) {
                     println!("  {:?}", m);
                     match m {
-                        Message::NotifyAlive(a) =>
+                        Message::NotifyAlive(a) => {
                             self.inner.lock().unwrap().broadcast(Response {
                                 search_target: a.notification_type,
                                 unique_service_name: a.unique_service_name,
-                                location: a.location
-                            }),
+                                location: a.location,
+                            })
+                        }
                         _ => (),
                     };
                 } else {
@@ -275,7 +301,10 @@ impl Task {
 
     /** Process changes (from cotton_netif) to the list of IP interfaces
      */
-    fn process_interface_event(&mut self, e: NetworkEvent) -> Result<(), std::io::Error> {
+    fn process_interface_event(
+        &mut self,
+        e: NetworkEvent,
+    ) -> Result<(), std::io::Error> {
         let search_all = b"M-SEARCH * HTTP/1.1\r
 HOST: 239.255.255.250:1900\r
 MAN: \"ssdp:discover\"\r
@@ -295,18 +324,24 @@ ST: ssdp:all\r
                     if v.up && !v.listening {
                         if let Some(ref ip) = v.ip {
                             if let IpAddr::V4(ipv4) = ip.addr {
-                                self.multicast_socket
-                                    .join_multicast_v4("239.255.255.250".parse().unwrap(), ipv4)?;
+                                self.multicast_socket.join_multicast_v4(
+                                    "239.255.255.250".parse().unwrap(),
+                                    ipv4,
+                                )?;
                             }
-                            self.search_socket
-                                .try_io(tokio::io::Interest::WRITABLE, || {
+                            self.search_socket.try_io(
+                                tokio::io::Interest::WRITABLE,
+                                || {
                                     send_from(
                                         self.search_socket.as_raw_fd(),
                                         search_all,
-                                        "239.255.255.250:1900".parse().unwrap(),
+                                        "239.255.255.250:1900"
+                                            .parse()
+                                            .unwrap(),
                                         ix,
                                     )
-                                })?;
+                                },
+                            )?;
                             println!("New socket on {}", name);
                             v.listening = true;
                         }
@@ -330,18 +365,22 @@ ST: ssdp:all\r
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if v.up && !v.listening {
                         if let IpAddr::V4(ipv4) = settings.addr {
-                            self.multicast_socket
-                                .join_multicast_v4("239.255.255.250".parse().unwrap(), ipv4)?;
+                            self.multicast_socket.join_multicast_v4(
+                                "239.255.255.250".parse().unwrap(),
+                                ipv4,
+                            )?;
                         }
-                        self.search_socket
-                            .try_io(tokio::io::Interest::WRITABLE, || {
+                        self.search_socket.try_io(
+                            tokio::io::Interest::WRITABLE,
+                            || {
                                 send_from(
                                     self.search_socket.as_raw_fd(),
                                     search_all,
                                     "239.255.255.250:1900".parse().unwrap(),
                                     ix,
                                 )
-                            })?;
+                            },
+                        )?;
                         println!("New socket on {:?}", ix);
                         v.listening = true;
                     }
@@ -380,7 +419,7 @@ impl Service {
 
         let (mut s, mut task) = tokio::try_join!(
             network_interfaces_dynamic(),
-            Task::new(inner.clone()),
+            Task::new(inner.clone())
         )?;
 
         tokio::spawn(async move {
@@ -406,7 +445,10 @@ impl Service {
 
     /* @todo Subscriber wants ByeByes as well as Alives!
      */
-    pub fn subscribe<A>(&mut self, notification_type: A) -> impl Stream<Item = Response>
+    pub fn subscribe<A>(
+        &mut self,
+        notification_type: A,
+    ) -> impl Stream<Item = Response>
     where
         A: Into<String>,
     {
