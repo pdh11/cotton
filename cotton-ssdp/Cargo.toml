@@ -1,0 +1,21 @@
+[package]
+name = "cotton-ssdp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+license = "CC0-1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+panic = 'abort'
+
+[dependencies]
+cotton-netif = { path = "../cotton-netif", version = "0.1.0" }
+tokio = { version = "1.17", features = ["macros", "net"] }
+tokio-stream = "0.1"
+futures = "0.3"
+futures-util = "0.3"
+slotmap = "1"
+nix = "0.23"
+libc = "0.2"
