@@ -13,15 +13,17 @@ use futures_util::Stream;
 use neli::{
     consts::{
         nl::{NlmF, NlmFFlags},
-        rtnl::{Arphrd, Ifa, IfaFFlags, Iff, IffFlags, Ifla, RtAddrFamily, Rtm},
+        rtnl::{
+            Arphrd, Ifa, IfaFFlags, Iff, IffFlags, Ifla, RtAddrFamily, Rtm,
+        },
         socket::NlFamily,
     },
-    nl::{NlPayload, Nlmsghdr},
-    rtnl::Ifaddrmsg,
-    rtnl::Ifinfomsg,
     err::DeError,
     err::SerError,
     err::WrappedError,
+    nl::{NlPayload, Nlmsghdr},
+    rtnl::Ifaddrmsg,
+    rtnl::Ifinfomsg,
     socket::tokio::NlSocket,
     socket::NlSocketHandle,
     types::NlBuffer,
@@ -39,7 +41,10 @@ fn ip(ip_bytes: &[u8]) -> Option<IpAddr> {
         ))),
 
         _ => {
-            println!("Unrecognized address length of {} found", ip_bytes.len());
+            println!(
+                "Unrecognized address length of {} found",
+                ip_bytes.len()
+            );
             None
         }
     }
@@ -61,7 +66,9 @@ fn map_tx_error(err: SerError) -> Error {
     }
 }
 
-fn translate_link_message(msg: &Nlmsghdr<Rtm, Ifinfomsg>) -> Option<NetworkEvent> {
+fn translate_link_message(
+    msg: &Nlmsghdr<Rtm, Ifinfomsg>,
+) -> Option<NetworkEvent> {
     if let NlPayload::Payload(p) = &msg.nl_payload {
         let handle = p.rtattrs.get_attr_handle();
         let name = handle
@@ -83,14 +90,18 @@ fn translate_link_message(msg: &Nlmsghdr<Rtm, Ifinfomsg>) -> Option<NetworkEvent
                 }
             }
             match msg.nl_type {
-                Rtm::Newlink => return Some(NetworkEvent::NewLink(
-                    InterfaceIndex(p.ifi_index as u32),
-                    name,
-                    newflags,
-                )),
-                Rtm::Dellink => return Some(NetworkEvent::DelLink(
-                    InterfaceIndex(p.ifi_index as u32),
-                )),
+                Rtm::Newlink => {
+                    return Some(NetworkEvent::NewLink(
+                        InterfaceIndex(p.ifi_index as u32),
+                        name,
+                        newflags,
+                    ))
+                }
+                Rtm::Dellink => {
+                    return Some(NetworkEvent::DelLink(InterfaceIndex(
+                        p.ifi_index as u32,
+                    )))
+                }
                 _ => (),
             }
         }
@@ -98,28 +109,29 @@ fn translate_link_message(msg: &Nlmsghdr<Rtm, Ifinfomsg>) -> Option<NetworkEvent
     None
 }
 
-fn translate_addr_message(msg: &Nlmsghdr<Rtm, Ifaddrmsg>) -> Option<NetworkEvent> {
+fn translate_addr_message(
+    msg: &Nlmsghdr<Rtm, Ifaddrmsg>,
+) -> Option<NetworkEvent> {
     if let NlPayload::Payload(p) = &msg.nl_payload {
         let handle = p.rtattrs.get_attr_handle();
-        let addr = {
-            if let Ok(ip_bytes) =
-                handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Address)
-            {
-                ip(ip_bytes)
-            } else {
-                None
-            }
-        };
-        if let Some(addr) = addr {
+        if let Some(addr) = handle
+            .get_attr_payload_as_with_len::<&[u8]>(Ifa::Address)
+            .ok()
+            .and_then(ip)
+        {
             match msg.nl_type {
-                Rtm::Newaddr => return Some(NetworkEvent::NewAddr(
-                    InterfaceIndex(p.ifa_index as u32),
-                    addr,
-                    p.ifa_prefixlen,
-                )),
-                Rtm::Deladdr => return Some(NetworkEvent::DelAddr(
-                    InterfaceIndex(p.ifa_index as u32),
-                )),
+                Rtm::Newaddr => {
+                    return Some(NetworkEvent::NewAddr(
+                        InterfaceIndex(p.ifa_index as u32),
+                        addr,
+                        p.ifa_prefixlen,
+                    ))
+                }
+                Rtm::Deladdr => {
+                    return Some(NetworkEvent::DelAddr(InterfaceIndex(
+                        p.ifa_index as u32,
+                    )))
+                }
                 _ => (),
             }
         }
@@ -127,7 +139,9 @@ fn translate_addr_message(msg: &Nlmsghdr<Rtm, Ifaddrmsg>) -> Option<NetworkEvent
     None
 }
 
-fn get_links(mut ss: NlSocket) -> impl Stream<Item = Result<NetworkEvent, Error>> {
+fn get_links(
+    mut ss: NlSocket,
+) -> impl Stream<Item = Result<NetworkEvent, Error>> {
     let mut buffer = Vec::new();
     stream! {
         loop {
@@ -146,7 +160,9 @@ fn get_links(mut ss: NlSocket) -> impl Stream<Item = Result<NetworkEvent, Error>
     }
 }
 
-fn get_addrs(mut ss: NlSocket) -> impl Stream<Item = Result<NetworkEvent, Error>> {
+fn get_addrs(
+    mut ss: NlSocket,
+) -> impl Stream<Item = Result<NetworkEvent, Error>> {
     let mut buffer = Vec::new();
     stream! {
         loop {
@@ -165,7 +181,8 @@ fn get_addrs(mut ss: NlSocket) -> impl Stream<Item = Result<NetworkEvent, Error>
     }
 }
 
-pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
+pub async fn network_interfaces_dynamic(
+) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
     /* Group constants from <linux/rtnetlink.h> not wrapped by neli 0.6.1:
      *  1 = RTNLGRP_LINK (link events)
      *  5 = RTNLGRP_IPV4_IFADDR (ipv4 events)
@@ -193,7 +210,10 @@ pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = Result<Ne
         NlPayload::Payload(ifinfomsg),
     );
 
-    link_socket.send(&nl_link_header).await.map_err(map_tx_error)?;
+    link_socket
+        .send(&nl_link_header)
+        .await
+        .map_err(map_tx_error)?;
 
     let ifaddrmsg = Ifaddrmsg {
         ifa_family: RtAddrFamily::Inet,
@@ -212,7 +232,10 @@ pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = Result<Ne
         NlPayload::Payload(ifaddrmsg),
     );
 
-    addr_socket.send(&nl_addr_header).await.map_err(map_tx_error)?;
+    addr_socket
+        .send(&nl_addr_header)
+        .await
+        .map_err(map_tx_error)?;
 
     Ok(stream::select(
         Box::pin(get_links(link_socket)),
@@ -235,7 +258,7 @@ mod tests {
 
     #[test]
     fn parse_16byte_addr() {
-        let input = [0u8, 0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1];
+        let input = [0u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
 
         let result = ip(&input);
 
