@@ -323,7 +323,7 @@ ST: ssdp:all\r
                     );
                 }
             }
-            NetworkEvent::NewAddr(ix, name, addr, prefix) => {
+            NetworkEvent::NewAddr(ix, addr, prefix) => {
                 let settings = IPSettings {
                     addr,
                     _prefix: prefix,
@@ -343,7 +343,7 @@ ST: ssdp:all\r
                                     ix,
                                 )
                             })?;
-                        println!("New socket on {}", name);
+                        println!("New socket on {:?}", ix);
                         v.listening = true;
                     }
                     v.ip = Some(settings);
