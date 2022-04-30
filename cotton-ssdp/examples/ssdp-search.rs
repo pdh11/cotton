@@ -2,7 +2,6 @@ use cotton_netif::*;
 use cotton_ssdp::*;
 use futures::Stream;
 use futures_util::StreamExt;
-use futures_util::TryFutureExt;
 use libc;
 use nix::cmsg_space;
 use nix::sys::socket::setsockopt;
@@ -381,7 +380,7 @@ impl Service {
 
         let (mut s, mut task) = tokio::try_join!(
             network_interfaces_dynamic(),
-            Task::new(inner.clone()).map_err(|e| Box::new(e))
+            Task::new(inner.clone()),
         )?;
 
         tokio::spawn(async move {
@@ -389,9 +388,12 @@ impl Service {
                 //println!("select");
 
                 tokio::select! {
-                    e = s.next() => if let Some(event) = e {
-                        task.process_interface_event(event)
-                            .unwrap_or_else(|err| println!("SSDP error {}", err))
+                    e = s.next() => if let Some(result) = e {
+                        if let Ok(event) = result {
+                            task.process_interface_event(event)
+                                .unwrap_or_else(
+                                    |err| println!("SSDP error {}", err))
+                        }
                     },
                     _ = task.multicast_socket.readable() => task.process_multicast(),
                     _ = task.search_socket.readable() => task.process_search(),
