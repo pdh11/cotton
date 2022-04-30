@@ -1,7 +1,8 @@
 use super::*;
 
 use std::{
-    error::Error,
+    io::Error,
+    io::ErrorKind,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
@@ -18,6 +19,9 @@ use neli::{
     nl::{NlPayload, Nlmsghdr},
     rtnl::Ifaddrmsg,
     rtnl::Ifinfomsg,
+    err::DeError,
+    err::SerError,
+    err::WrappedError,
     socket::tokio::NlSocket,
     socket::NlSocketHandle,
     types::NlBuffer,
@@ -38,6 +42,22 @@ fn ip(ip_bytes: &[u8]) -> Option<IpAddr> {
             println!("Unrecognized address length of {} found", ip_bytes.len());
             None
         }
+    }
+}
+
+fn map_rx_error(err: DeError) -> Error {
+    if let DeError::Wrapped(WrappedError::IOError(io_error)) = err {
+        io_error
+    } else {
+        Error::from(ErrorKind::Other)
+    }
+}
+
+fn map_tx_error(err: SerError) -> Error {
+    if let SerError::Wrapped(WrappedError::IOError(io_error)) = err {
+        io_error
+    } else {
+        Error::from(ErrorKind::Other)
     }
 }
 
@@ -107,38 +127,45 @@ fn translate_addr_message(msg: &Nlmsghdr<Rtm, Ifaddrmsg>) -> Option<NetworkEvent
     None
 }
 
-fn get_links(mut ss: NlSocket) -> impl Stream<Item = NetworkEvent> {
+fn get_links(mut ss: NlSocket) -> impl Stream<Item = Result<NetworkEvent, Error>> {
     let mut buffer = Vec::new();
     stream! {
         loop {
-            let msgs: NlBuffer<Rtm, Ifinfomsg> =
-                ss.recv(&mut buffer).await.unwrap();
-            for msg in msgs {
-                if let Some(event) = translate_link_message(&msg) {
-                    yield event;
-                }
+            let res: Result<NlBuffer<Rtm, Ifinfomsg>, DeError> =
+                ss.recv(&mut buffer).await;
+            match res {
+                Ok(msgs) =>
+                    for msg in msgs {
+                        if let Some(event) = translate_link_message(&msg) {
+                            yield Ok(event);
+                        }
+                    },
+                Err(e) => yield Err(map_rx_error(e))
             }
         }
     }
 }
 
-fn get_addrs(mut ss: NlSocket) -> impl Stream<Item = NetworkEvent> {
+fn get_addrs(mut ss: NlSocket) -> impl Stream<Item = Result<NetworkEvent, Error>> {
     let mut buffer = Vec::new();
     stream! {
         loop {
-            let msgs: NlBuffer<Rtm, Ifaddrmsg> =
-                ss.recv(&mut buffer).await.unwrap();
-            for msg in msgs {
-                if let Some(event) = translate_addr_message(&msg) {
-                    yield event;
-                }
+            let res: Result<NlBuffer<Rtm, Ifaddrmsg>, DeError> =
+                ss.recv(&mut buffer).await;
+            match res {
+                Ok(msgs) =>
+                    for msg in msgs {
+                        if let Some(event) = translate_addr_message(&msg) {
+                            yield Ok(event);
+                        }
+                    },
+                Err(e) => yield Err(map_rx_error(e))
             }
         }
     }
 }
 
-pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = NetworkEvent>, Box<dyn Error>>
-{
+pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
     /* Group constants from <linux/rtnetlink.h> not wrapped by neli 0.6.1:
      *  1 = RTNLGRP_LINK (link events)
      *  5 = RTNLGRP_IPV4_IFADDR (ipv4 events)
@@ -166,7 +193,7 @@ pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = NetworkEv
         NlPayload::Payload(ifinfomsg),
     );
 
-    link_socket.send(&nl_link_header).await?;
+    link_socket.send(&nl_link_header).await.map_err(map_tx_error)?;
 
     let ifaddrmsg = Ifaddrmsg {
         ifa_family: RtAddrFamily::Inet,
@@ -185,7 +212,7 @@ pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = NetworkEv
         NlPayload::Payload(ifaddrmsg),
     );
 
-    addr_socket.send(&nl_addr_header).await?;
+    addr_socket.send(&nl_addr_header).await.map_err(map_tx_error)?;
 
     Ok(stream::select(
         Box::pin(get_links(link_socket)),
