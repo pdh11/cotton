@@ -25,7 +25,7 @@ bitflags! {
 pub enum NetworkEvent {
     NewLink(NetworkInterface, String, Flags),
     DelLink(NetworkInterface),
-    NewAddr(NetworkInterface, String, IpAddr, u8),
+    NewAddr(NetworkInterface, IpAddr, u8),
     DelAddr(NetworkInterface),
 }
 

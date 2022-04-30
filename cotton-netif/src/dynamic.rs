@@ -83,21 +83,17 @@ fn translate_addr_message(msg: &Nlmsghdr<Rtm, Ifaddrmsg>) -> Option<NetworkEvent
         let handle = p.rtattrs.get_attr_handle();
         let addr = {
             if let Ok(ip_bytes) =
-                handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Local)
+                handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Address)
             {
                 ip(ip_bytes)
             } else {
                 None
             }
-                    };
-        let name = handle
-            .get_attr_payload_as_with_len::<String>(Ifa::Label)
-            .ok();
-        if let (Some(addr), Some(name)) = (addr, name) {
+        };
+        if let Some(addr) = addr {
             match msg.nl_type {
                 Rtm::Newaddr => return Some(NetworkEvent::NewAddr(
                     NetworkInterface(p.ifa_index as u32),
-                    name,
                     addr,
                     p.ifa_prefixlen,
                 )),
@@ -146,11 +142,11 @@ pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = NetworkEv
     /* Group constants from <linux/rtnetlink.h> not wrapped by neli 0.6.1:
      *  1 = RTNLGRP_LINK (link events)
      *  5 = RTNLGRP_IPV4_IFADDR (ipv4 events)
-     *  9 = RTNLGRP_IPV6_IFADDR (ipv6 events)
+     *  9 = RTNLGRP_IPV6_IFADDR (ipv6 events) <-- needs a 3rd socket?
      */
     let link_handle = NlSocketHandle::connect(NlFamily::Route, None, &[1])?;
     let mut link_socket = NlSocket::new(link_handle)?;
-    let addr_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5, 9])?;
+    let addr_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5])?;
     let mut addr_socket = NlSocket::new(addr_handle)?;
 
     let ifinfomsg = Ifinfomsg::new(
