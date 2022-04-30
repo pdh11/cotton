@@ -63,11 +63,11 @@ fn send_from(
     fd: RawFd,
     buffer: &[u8],
     to: SocketAddr,
-    ix: NetworkInterface,
+    ix: InterfaceIndex,
 ) -> Result<(), std::io::Error> {
     let iov = [IoVec::from_slice(buffer)];
     let pi = libc::in_pktinfo {
-        ipi_ifindex: ix.value() as i32,
+        ipi_ifindex: ix.0 as i32,
         ipi_addr: libc::in_addr { s_addr: 0 },
         ipi_spec_dst: libc::in_addr { s_addr: 0 },
     };
@@ -193,7 +193,7 @@ struct Task {
     inner: Arc<Mutex<Inner>>,
     multicast_socket: tokio::net::UdpSocket,
     search_socket: tokio::net::UdpSocket,
-    interfaces: HashMap<NetworkInterface, Interface>,
+    interfaces: HashMap<InterfaceIndex, Interface>,
 }
 
 impl Task {
