@@ -1,8 +1,12 @@
 use bitflags::bitflags;
 use std::net::IpAddr;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct NetworkInterface(u32);
+
+impl NetworkInterface {
+    pub fn value(&self) -> u32 { return self.0; }
+}
 
 bitflags! {
     pub struct Flags: u32 {
