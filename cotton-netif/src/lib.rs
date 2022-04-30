@@ -5,7 +5,7 @@ use std::net::IpAddr;
 pub struct NetworkInterface(u32);
 
 impl NetworkInterface {
-    pub fn value(&self) -> u32 { return self.0; }
+    pub fn value(&self) -> u32 { self.0 }
 }
 
 bitflags! {

@@ -41,6 +41,76 @@ fn ip(ip_bytes: &[u8]) -> Option<IpAddr> {
     }
 }
 
+fn translate_link_message(msg: &Nlmsghdr<Rtm, Ifinfomsg>) -> Option<NetworkEvent> {
+    if let NlPayload::Payload(p) = &msg.nl_payload {
+        let handle = p.rtattrs.get_attr_handle();
+        let name = handle
+            .get_attr_payload_as_with_len::<String>(Ifla::Ifname)
+            .ok();
+        if let Some(name) = name {
+            let flags = &p.ifi_flags;
+            let mut newflags = Flags::NONE;
+            for (iff, newf) in [
+                (&Iff::Up, Flags::UP),
+                (&Iff::Running, Flags::RUNNING),
+                (&Iff::Loopback, Flags::LOOPBACK),
+                (&Iff::Pointopoint, Flags::POINTTOPOINT),
+                (&Iff::Broadcast, Flags::BROADCAST),
+                (&Iff::Multicast, Flags::MULTICAST),
+            ] {
+                if flags.contains(iff) {
+                    newflags |= newf;
+                }
+            }
+            match msg.nl_type {
+                Rtm::Newlink => return Some(NetworkEvent::NewLink(
+                    NetworkInterface(p.ifi_index as u32),
+                    name,
+                    newflags,
+                )),
+                Rtm::Dellink => return Some(NetworkEvent::DelLink(
+                    NetworkInterface(p.ifi_index as u32),
+                )),
+                _ => (),
+            }
+        }
+    }
+    None
+}
+
+fn translate_addr_message(msg: &Nlmsghdr<Rtm, Ifaddrmsg>) -> Option<NetworkEvent> {
+    if let NlPayload::Payload(p) = &msg.nl_payload {
+        let handle = p.rtattrs.get_attr_handle();
+        let addr = {
+            if let Ok(ip_bytes) =
+                handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Local)
+            {
+                ip(ip_bytes)
+            } else {
+                None
+            }
+                    };
+        let name = handle
+            .get_attr_payload_as_with_len::<String>(Ifa::Label)
+            .ok();
+        if let (Some(addr), Some(name)) = (addr, name) {
+            match msg.nl_type {
+                Rtm::Newaddr => return Some(NetworkEvent::NewAddr(
+                    NetworkInterface(p.ifa_index as u32),
+                    name,
+                    addr,
+                    p.ifa_prefixlen,
+                )),
+                Rtm::Deladdr => return Some(NetworkEvent::DelAddr(
+                    NetworkInterface(p.ifa_index as u32),
+                )),
+                _ => (),
+            }
+        }
+    }
+    None
+}
+
 fn get_links(mut ss: NlSocket) -> impl Stream<Item = NetworkEvent> {
     let mut buffer = Vec::new();
     stream! {
@@ -48,38 +118,8 @@ fn get_links(mut ss: NlSocket) -> impl Stream<Item = NetworkEvent> {
             let msgs: NlBuffer<Rtm, Ifinfomsg> =
                 ss.recv(&mut buffer).await.unwrap();
             for msg in msgs {
-                if let NlPayload::Payload(p) = msg.nl_payload {
-                    let handle = p.rtattrs.get_attr_handle();
-                    let name = handle
-                        .get_attr_payload_as_with_len::<String>(Ifla::Ifname)
-                        .ok();
-                    if let Some(name) = name {
-                        let flags = p.ifi_flags;
-                        let mut newflags = Flags::NONE;
-                        for (iff, newf) in [
-                            (&Iff::Up, Flags::UP),
-                            (&Iff::Running, Flags::RUNNING),
-                            (&Iff::Loopback, Flags::LOOPBACK),
-                            (&Iff::Pointopoint, Flags::POINTTOPOINT),
-                            (&Iff::Broadcast, Flags::BROADCAST),
-                            (&Iff::Multicast, Flags::MULTICAST),
-                        ] {
-                            if flags.contains(iff) {
-                                newflags |= newf;
-                            }
-                        }
-                        match msg.nl_type {
-                            Rtm::Newlink => yield NetworkEvent::NewLink(
-                                NetworkInterface(p.ifi_index as u32),
-                                name,
-                                newflags,
-                            ),
-                            Rtm::Dellink => yield NetworkEvent::DelLink(
-                                NetworkInterface(p.ifi_index as u32),
-                            ),
-                            _ => (),
-                        }
-                    }
+                if let Some(event) = translate_link_message(&msg) {
+                    yield event;
                 }
             }
         }
@@ -90,36 +130,11 @@ fn get_addrs(mut ss: NlSocket) -> impl Stream<Item = NetworkEvent> {
     let mut buffer = Vec::new();
     stream! {
         loop {
-            let msgs: NlBuffer<Rtm, Ifaddrmsg> = ss.recv(&mut buffer).await.unwrap();
+            let msgs: NlBuffer<Rtm, Ifaddrmsg> =
+                ss.recv(&mut buffer).await.unwrap();
             for msg in msgs {
-                if let NlPayload::Payload(p) = msg.nl_payload {
-                    let handle = p.rtattrs.get_attr_handle();
-                    let addr = {
-                        if let Ok(ip_bytes) =
-                            handle.get_attr_payload_as_with_len::<&[u8]>(Ifa::Local)
-                        {
-                            ip(ip_bytes)
-                        } else {
-                            None
-                        }
-                    };
-                    let name = handle
-                        .get_attr_payload_as_with_len::<String>(Ifa::Label)
-                        .ok();
-                    if let (Some(addr), Some(name)) = (addr, name) {
-                        match msg.nl_type {
-                            Rtm::Newaddr => yield NetworkEvent::NewAddr(
-                                NetworkInterface(p.ifa_index as u32),
-                                name,
-                                addr,
-                                p.ifa_prefixlen,
-                            ),
-                            Rtm::Deladdr => yield NetworkEvent::DelAddr(
-                                NetworkInterface(p.ifa_index as u32),
-                            ),
-                            _ => (),
-                        }
-                    }
+                if let Some(event) = translate_addr_message(&msg) {
+                    yield event;
                 }
             }
         }
@@ -184,8 +199,6 @@ pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = NetworkEv
 
 #[cfg(test)]
 mod tests {
-    extern crate std;
-
     use super::*;
 
     #[test]
