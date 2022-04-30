@@ -196,4 +196,22 @@ mod tests {
 
         assert_eq!(result, "192.168.0.200".parse().ok());
     }
+
+    #[test]
+    fn parse_16byte_addr() {
+        let input = [0u8, 0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1];
+
+        let result = ip(&input);
+
+        assert_eq!(result, "::1".parse().ok());
+    }
+
+    #[test]
+    fn no_parse_5byte_addr() {
+        let input = [2u8, 3, 4, 5, 6];
+
+        let result = ip(&input);
+
+        assert_eq!(result, None);
+    }
 }
