@@ -1,12 +1,12 @@
 [package]
 name = "cotton-netif"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
 
 [dependencies]
-tokio = { version = "1.17", features = ["macros", "sync"] }
+tokio = { version = "1.17", features = ["macros", "sync", "rt"] }
 bitflags = "1.2"
 futures-util = "0.3"
 async-stream = "0.3"

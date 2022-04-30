@@ -2,7 +2,7 @@ use cotton_netif::*;
 use futures_util::StreamExt;
 use std::error::Error;
 
-#[tokio::main]
+#[tokio::main(flavor="current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut s = network_interfaces_dynamic().await?;
 
