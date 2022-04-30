@@ -181,3 +181,19 @@ pub async fn network_interfaces_dynamic() -> Result<impl Stream<Item = NetworkEv
         Box::pin(get_addrs(addr_socket)),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+
+    #[test]
+    fn parse_4byte_addr() {
+        let input = [192u8, 168u8, 0u8, 200u8];
+
+        let result = ip(&input);
+
+        assert_eq!(result, "192.168.0.200".parse().ok());
+    }
+}
