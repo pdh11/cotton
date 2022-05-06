@@ -1,3 +1,16 @@
+//! Enumerating network interfaces and their IP addresses
+//!
+//! The netif crate encapsulates the obtaining of the host's network
+//! interfaces and IP addresses.
+//!
+//! @todo If "eth0:1" is an alias, getifaddrs reports two interfaces,
+//!  but netlink reports one but with two addresses.
+//!
+//! @todo getifaddrs doesn't directly provide InterfaceIndex
+//!
+//! @todo IPv6
+//!
+
 use bitflags::bitflags;
 use std::net::IpAddr;
 
