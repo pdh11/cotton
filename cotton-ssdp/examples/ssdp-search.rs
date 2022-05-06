@@ -8,14 +8,14 @@ use nix::sys::socket::setsockopt;
 use nix::sys::socket::sockopt::Ipv4PacketInfo;
 use nix::sys::socket::ControlMessage;
 use nix::sys::socket::ControlMessageOwned;
-use nix::sys::socket::InetAddr;
 use nix::sys::socket::MsgFlags;
-use nix::sys::socket::SockAddr;
-use nix::sys::uio::IoVec;
+use nix::sys::socket::SockaddrStorage;
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::error::Error;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::io::IoSlice;
+use std::io::IoSliceMut;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
 use std::sync::{Arc, Mutex};
@@ -41,10 +41,10 @@ fn receive(
     buffer: &mut [u8],
 ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
     let mut cmsgspace = cmsg_space!(libc::in_pktinfo);
-    let iov = [IoVec::from_mut_slice(buffer)];
-    let r = nix::sys::socket::recvmsg(
+    let mut iov = [IoSliceMut::new(buffer)];
+    let r = nix::sys::socket::recvmsg::<SockaddrStorage>(
         fd,
-        &iov,
+        &mut iov,
         Some(&mut cmsgspace),
         MsgFlags::empty(),
     )?;
@@ -53,17 +53,24 @@ fn receive(
         Some(ControlMessageOwned::Ipv4PacketInfo(pi)) => pi,
         _ => return Err(std::io::ErrorKind::InvalidData.into()),
     };
-    let rxon = nix::sys::socket::Ipv4Addr(pi.ipi_spec_dst).to_std();
-    let wasto = nix::sys::socket::Ipv4Addr(pi.ipi_addr).to_std();
-    let wasfrom = match r.address {
-        Some(SockAddr::Inet(a)) => a.to_std(),
-        _ => return Err(std::io::ErrorKind::InvalidData.into()),
+    let rxon = Ipv4Addr::from(u32::from_be(pi.ipi_spec_dst.s_addr));
+    let wasto = Ipv4Addr::from(u32::from_be(pi.ipi_addr.s_addr));
+    let wasfrom = {
+        if let Some(ss) = r.address {
+            if let Some(sin) = ss.as_sockaddr_in() {
+                SocketAddrV4::new(Ipv4Addr::from(sin.ip()), sin.port())
+            } else {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
+        } else {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
     };
     println!(
         "PI ix {} sd {:} ad {:} addr {:?}",
         pi.ipi_ifindex, rxon, wasto, wasfrom
     );
-    Ok((r.bytes, rxon.into(), wasfrom.into()))
+    Ok((r.bytes, IpAddr::V4(rxon), SocketAddr::V4(wasfrom)))
 }
 
 fn send_from(
@@ -72,7 +79,7 @@ fn send_from(
     to: SocketAddr,
     ix: InterfaceIndex,
 ) -> Result<(), std::io::Error> {
-    let iov = [IoVec::from_slice(buffer)];
+    let iov = [IoSlice::new(buffer)];
     let pi = libc::in_pktinfo {
         ipi_ifindex: ix.0 as i32,
         ipi_addr: libc::in_addr { s_addr: 0 },
@@ -80,7 +87,10 @@ fn send_from(
     };
 
     let cmsg = [ControlMessage::Ipv4PacketInfo(&pi)];
-    let dest = SockAddr::Inet(InetAddr::from_std(&to));
+    let dest = match to {
+        SocketAddr::V4(ipv4) => SockaddrStorage::from(ipv4),
+        SocketAddr::V6(ipv6) => SockaddrStorage::from(ipv6),
+    };
     let r = nix::sys::socket::sendmsg(
         fd,
         &iov,

@@ -9,10 +9,10 @@ license = "CC0-1.0"
 
 [dependencies]
 cotton-netif = { path = "../cotton-netif", version = "0.0.1" }
-tokio = { version = "1.17", features = ["macros", "net"] }
+tokio = { version = "1.18", features = ["macros", "net"] }
 tokio-stream = "0.1"
 futures = "0.3"
 futures-util = "0.3"
 slotmap = "1"
-nix = "0.23"
+nix = { version = "0.24", default_features = false, features = ["uio"] }
 libc = "0.2"
