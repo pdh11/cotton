@@ -30,4 +30,11 @@ pub enum NetworkEvent {
 #[cfg(target_os = "linux")]
 pub mod dynamic; // Uses netlink, which is Linux-specific
 
+#[cfg(target_os = "linux")]
 pub use dynamic::network_interfaces_dynamic;
+
+#[cfg(unix)]
+pub mod getifaddrs;
+
+#[cfg(unix)]
+pub use getifaddrs::network_interfaces_static;
