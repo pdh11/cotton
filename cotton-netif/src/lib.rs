@@ -12,7 +12,9 @@
 //! platforms in future, shouldn't require changes to any client code.
 //!
 //! Todo:
-//!  - [ ] IPv6 in linux_netlink
+//!  - [x] IPv6 in linux_netlink
+//!  - [ ] Better test coverage
+//!  - [ ] Turn async into a (cargo) Feature
 //!
 
 #![warn(missing_docs)]
@@ -51,7 +53,7 @@ bitflags! {
     }
 }
 
-/** Event when a new interface or address is detected
+/** Event when a new interface or address is detected, or when one disappears
  */
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {

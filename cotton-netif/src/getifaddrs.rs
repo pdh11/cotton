@@ -1,12 +1,10 @@
 use super::*;
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use nix::ifaddrs;
 use nix::net::if_::InterfaceFlags;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
-use std::{
-    net::{IpAddr, Ipv4Addr},
-};
+use std::net::{IpAddr, Ipv4Addr};
 
 /** Obtain the current list of network interfaces
 
@@ -29,6 +27,24 @@ get_interfaces(|e| println!("{:?}", e))?;
 # Ok::<(), std::io::Error>(())
 ```
 
+The output of that program on an example system might look like this (notice
+that interface `eno1` has three different addresses):
+
+```text
+NewLink(InterfaceIndex(1), "lo", UP | LOOPBACK | RUNNING)
+NewLink(InterfaceIndex(2), "eno1", UP | BROADCAST | RUNNING | MULTICAST)
+NewLink(InterfaceIndex(3), "eno2", UP | BROADCAST | RUNNING | MULTICAST)
+NewLink(InterfaceIndex(4), "imp0", UP | POINTTOPOINT | MULTICAST)
+NewLink(InterfaceIndex(5), "docker0", UP | BROADCAST | MULTICAST)
+NewAddr(InterfaceIndex(1), 127.0.0.1, 8)
+NewAddr(InterfaceIndex(2), 192.168.168.15, 24)
+NewAddr(InterfaceIndex(2), 169.254.100.100, 16)
+NewAddr(InterfaceIndex(4), 169.254.0.1, 24)
+NewAddr(InterfaceIndex(5), 172.17.0.1, 16)
+NewAddr(InterfaceIndex(1), ::1, 128)
+NewAddr(InterfaceIndex(2), fe80::fac0:2a3b:d68e:80a2, 64)
+```
+
 As another example, here is how to list all available
 multicast-capable interfaces:
 
@@ -47,7 +63,8 @@ get_interfaces(|e| match e {
 
  */
 pub fn get_interfaces<FN>(mut callback: FN) -> Result<(), std::io::Error>
-    where FN: FnMut(NetworkEvent)
+where
+    FN: FnMut(NetworkEvent),
 {
     let addrs = ifaddrs::getifaddrs()?;
     let mut next_index = 1u32;
@@ -55,7 +72,7 @@ pub fn get_interfaces<FN>(mut callback: FN) -> Result<(), std::io::Error>
     for ifaddr in addrs {
         /* Undo Linux aliasing: "eth0:1" is "eth0" really.
          */
-        let name = match ifaddr.interface_name.split_once(":") {
+        let name = match ifaddr.interface_name.split_once(':') {
             None => ifaddr.interface_name,
             Some((prefix, _alias)) => prefix.to_string(),
         };
@@ -80,11 +97,11 @@ pub fn get_interfaces<FN>(mut callback: FN) -> Result<(), std::io::Error>
 
                 let index = next_index;
                 next_index += 1;
-                callback(
-                    NetworkEvent::NewLink(InterfaceIndex(index),
-                                          e.key().clone(),
-                                          newflags)
-                );
+                callback(NetworkEvent::NewLink(
+                    InterfaceIndex(index),
+                    e.key().clone(),
+                    newflags,
+                ));
                 e.insert(index);
                 index
             }
@@ -97,17 +114,16 @@ pub fn get_interfaces<FN>(mut callback: FN) -> Result<(), std::io::Error>
                     callback(NetworkEvent::NewAddr(
                         InterfaceIndex(index),
                         ip,
-                        netmask.ip().leading_ones() as u8)
-                    );
+                        netmask.ip().leading_ones() as u8,
+                    ));
                 }
             } else if let Some(ipv6) = addr.as_sockaddr_in6() {
                 if let Some(netmask) = mask.as_sockaddr_in6() {
                     callback(NetworkEvent::NewAddr(
                         InterfaceIndex(index),
                         IpAddr::from(ipv6.ip()),
-                        u128::from_be_bytes(
-                            netmask.as_ref().sin6_addr.s6_addr)
-                            .leading_ones() as u8
+                        u128::from_be_bytes(netmask.as_ref().sin6_addr.s6_addr)
+                            .leading_ones() as u8,
                     ));
                 }
             }

@@ -253,12 +253,14 @@ pub async fn get_interfaces_async(
     /* Group constants from <linux/rtnetlink.h> not wrapped by neli 0.6.1:
      *  1 = RTNLGRP_LINK (link events)
      *  5 = RTNLGRP_IPV4_IFADDR (ipv4 events)
-     *  9 = RTNLGRP_IPV6_IFADDR (ipv6 events) <-- needs a 3rd socket?
+     *  9 = RTNLGRP_IPV6_IFADDR (ipv6 events)
      */
     let link_handle = NlSocketHandle::connect(NlFamily::Route, None, &[1])?;
     let mut link_socket = NlSocket::new(link_handle)?;
-    let addr_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5])?;
-    let mut addr_socket = NlSocket::new(addr_handle)?;
+    let addr4_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5])?;
+    let mut addr4_socket = NlSocket::new(addr4_handle)?;
+    let addr6_handle = NlSocketHandle::connect(NlFamily::Route, None, &[9])?;
+    let mut addr6_socket = NlSocket::new(addr6_handle)?;
 
     let ifinfomsg = Ifinfomsg::new(
         RtAddrFamily::Unspecified,
@@ -290,7 +292,7 @@ pub async fn get_interfaces_async(
         ifa_index: 0,
         rtattrs: RtBuffer::new(),
     };
-    let nl_addr_header = Nlmsghdr::new(
+    let nl_addr4_header = Nlmsghdr::new(
         None,
         Rtm::Getaddr,
         NlmFFlags::new(&[NlmF::Request, NlmF::Root]),
@@ -299,14 +301,39 @@ pub async fn get_interfaces_async(
         NlPayload::Payload(ifaddrmsg),
     );
 
-    addr_socket
-        .send(&nl_addr_header)
+    addr4_socket
+        .send(&nl_addr4_header)
+        .await
+        .map_err(map_tx_error)?;
+
+    let ifaddr6msg = Ifaddrmsg {
+        ifa_family: RtAddrFamily::Inet6,
+        ifa_prefixlen: 0,
+        ifa_flags: IfaFFlags::empty(),
+        ifa_scope: 0,
+        ifa_index: 0,
+        rtattrs: RtBuffer::new(),
+    };
+    let nl_addr6_header = Nlmsghdr::new(
+        None,
+        Rtm::Getaddr,
+        NlmFFlags::new(&[NlmF::Request, NlmF::Root]),
+        None,
+        None,
+        NlPayload::Payload(ifaddr6msg),
+    );
+
+    addr6_socket
+        .send(&nl_addr6_header)
         .await
         .map_err(map_tx_error)?;
 
     Ok(stream::select(
         Box::pin(get_links(link_socket)),
-        Box::pin(get_addrs(addr_socket)),
+        stream::select(
+            Box::pin(get_addrs(addr4_socket)),
+            Box::pin(get_addrs(addr6_socket)),
+        ),
     ))
 }
 
