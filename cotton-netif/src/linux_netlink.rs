@@ -9,6 +9,7 @@ use std::{
 use async_stream::stream;
 use futures_util::stream;
 use futures_util::Stream;
+use futures_util::join;
 
 use neli::{
     consts::{
@@ -33,11 +34,11 @@ use neli::{
 fn ip(ip_bytes: &[u8]) -> Option<IpAddr> {
     match ip_bytes.len() {
         4 => Some(IpAddr::from(Ipv4Addr::from(
-            u32::from_ne_bytes(ip_bytes.try_into().unwrap()).to_be(),
+            u32::from_be_bytes(ip_bytes.try_into().unwrap()),
         ))),
 
         16 => Some(IpAddr::from(Ipv6Addr::from(
-            u128::from_ne_bytes(ip_bytes.try_into().unwrap()).to_be(),
+            u128::from_be_bytes(ip_bytes.try_into().unwrap()),
         ))),
 
         _ => {
@@ -279,11 +280,6 @@ pub async fn get_interfaces_async(
         NlPayload::Payload(ifinfomsg),
     );
 
-    link_socket
-        .send(&nl_link_header)
-        .await
-        .map_err(map_tx_error)?;
-
     let ifaddrmsg = Ifaddrmsg {
         ifa_family: RtAddrFamily::Inet,
         ifa_prefixlen: 0,
@@ -300,11 +296,6 @@ pub async fn get_interfaces_async(
         None,
         NlPayload::Payload(ifaddrmsg),
     );
-
-    addr4_socket
-        .send(&nl_addr4_header)
-        .await
-        .map_err(map_tx_error)?;
 
     let ifaddr6msg = Ifaddrmsg {
         ifa_family: RtAddrFamily::Inet6,
@@ -323,10 +314,12 @@ pub async fn get_interfaces_async(
         NlPayload::Payload(ifaddr6msg),
     );
 
-    addr6_socket
-        .send(&nl_addr6_header)
-        .await
-        .map_err(map_tx_error)?;
+    let (rc1, rc2, rc3) = join! {
+        link_socket.send(&nl_link_header),
+        addr4_socket.send(&nl_addr4_header),
+        addr6_socket.send(&nl_addr6_header),
+    };
+    rc1.and(rc2).and(rc3).map_err(map_tx_error)?;
 
     Ok(stream::select(
         Box::pin(get_links(link_socket)),
@@ -340,6 +333,7 @@ pub async fn get_interfaces_async(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_test::block_on;
 
     #[test]
     fn parse_4byte_addr() {
@@ -366,5 +360,10 @@ mod tests {
         let result = ip(&input);
 
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn zzz_instantiate() {
+        assert!(block_on(get_interfaces_async()).is_ok());
     }
 }

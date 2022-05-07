@@ -174,6 +174,9 @@ fn map_interface_flags(flags: &InterfaceFlags) -> Flags {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nix::sys::socket::UnixAddr;
+    use nix::sys::socket::SockaddrStorage;
+    use nix::sys::socket::SockaddrLike;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV4;
     use std::net::SocketAddrV6;
@@ -260,6 +263,83 @@ mod tests {
                 24
             )
         );
+    }
+
+    #[test]
+    fn new_no_address() {
+        let mut map = InterfaceMap::new();
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        map.check(ifaddr);
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(169, 254, 99, 99), 80);
+
+        let ifaddr2 = ifaddrs::InterfaceAddress {
+            interface_name: "eth0:1".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: None, //<-- that won't work then
+            broadcast: None,
+            destination: None,
+        };
+
+        let (link, addr) = map.check(ifaddr2);
+
+        assert!(link.is_none());
+        assert!(addr.is_none());
+    }
+
+    #[test]
+    fn new_not_ip() {
+        let mut map = InterfaceMap::new();
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        map.check(ifaddr);
+
+        unsafe {
+            // Small palaver to obtain a SockaddrStorage that isn't IPv4 or
+            // IPv6
+            let addr = UnixAddr::new("/tmp/foo").unwrap();
+            let addr = SockaddrStorage::from_raw(
+                (&addr as &dyn SockaddrLike).as_ptr(),
+                Some(addr.len())).unwrap();
+
+            let ifaddr2 = ifaddrs::InterfaceAddress {
+                interface_name: "eth0:1".to_string(),
+                flags: InterfaceFlags::IFF_UP,
+                address: Some(addr.clone()),
+                netmask: Some(addr),
+                broadcast: None,
+                destination: None,
+            };
+
+            let (link, addr) = map.check(ifaddr2);
+
+            assert!(link.is_none());
+            assert!(addr.is_none());
+        }
     }
 
     #[test]
@@ -413,5 +493,10 @@ mod tests {
                 32
             )
         );
+    }
+
+    #[test]
+    fn zzz_instantiate() {
+        assert!(get_interfaces(|_| {}).is_ok());
     }
 }
