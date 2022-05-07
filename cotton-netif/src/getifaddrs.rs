@@ -99,8 +99,10 @@ impl InterfaceMap {
      * One result can give rise to at most one NewLink message and one NewAddr,
      * so we return a 2-tuple of Options.
      */
-    fn check(&mut self, ifaddr: ifaddrs::InterfaceAddress)
-             -> (Option<NetworkEvent>, Option<NetworkEvent>) {
+    fn check(
+        &mut self,
+        ifaddr: ifaddrs::InterfaceAddress,
+    ) -> (Option<NetworkEvent>, Option<NetworkEvent>) {
         /* Undo Linux aliasing: "eth0:1" is "eth0" really. */
         let name = match ifaddr.interface_name.split_once(':') {
             None => ifaddr.interface_name,
@@ -142,8 +144,7 @@ impl InterfaceMap {
                     addr_message = Some(NetworkEvent::NewAddr(
                         InterfaceIndex(index),
                         IpAddr::from(ipv6.ip()),
-                        u128::from_be_bytes(
-                            netmask.as_ref().sin6_addr.s6_addr)
+                        u128::from_be_bytes(netmask.as_ref().sin6_addr.s6_addr)
                             .leading_ones() as u8,
                     ));
                 }
@@ -173,7 +174,9 @@ fn map_interface_flags(flags: &InterfaceFlags) -> Flags {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv6Addr;
     use std::net::SocketAddrV4;
+    use std::net::SocketAddrV6;
 
     #[test]
     fn flag_up() {
@@ -182,40 +185,50 @@ mod tests {
 
     #[test]
     fn flag_running() {
-        assert_eq!(map_interface_flags(&InterfaceFlags::IFF_RUNNING),
-                   Flags::RUNNING);
+        assert_eq!(
+            map_interface_flags(&InterfaceFlags::IFF_RUNNING),
+            Flags::RUNNING
+        );
     }
 
     #[test]
     fn flag_loopback() {
-        assert_eq!(map_interface_flags(&InterfaceFlags::IFF_LOOPBACK),
-                   Flags::LOOPBACK);
+        assert_eq!(
+            map_interface_flags(&InterfaceFlags::IFF_LOOPBACK),
+            Flags::LOOPBACK
+        );
     }
 
     #[test]
     fn flag_p2p() {
-        assert_eq!(map_interface_flags(&InterfaceFlags::IFF_POINTOPOINT),
-                   Flags::POINTTOPOINT);
+        assert_eq!(
+            map_interface_flags(&InterfaceFlags::IFF_POINTOPOINT),
+            Flags::POINTTOPOINT
+        );
     }
 
     #[test]
     fn flag_broadcast() {
-        assert_eq!(map_interface_flags(&InterfaceFlags::IFF_BROADCAST),
-                   Flags::BROADCAST);
+        assert_eq!(
+            map_interface_flags(&InterfaceFlags::IFF_BROADCAST),
+            Flags::BROADCAST
+        );
     }
 
     #[test]
     fn flag_multicast() {
-        assert_eq!(map_interface_flags(&InterfaceFlags::IFF_MULTICAST),
-                   Flags::MULTICAST);
+        assert_eq!(
+            map_interface_flags(&InterfaceFlags::IFF_MULTICAST),
+            Flags::MULTICAST
+        );
     }
 
     #[test]
     fn new_ipv4() {
         let mut map = InterfaceMap::new();
 
-        let addr = SocketAddrV4::new(Ipv4Addr::new(192,168,100,1), 80);
-        let mask = SocketAddrV4::new(Ipv4Addr::new(255,255,255,0), 80);
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
         let ifaddr = ifaddrs::InterfaceAddress {
             interface_name: "eth0".to_string(),
@@ -231,13 +244,174 @@ mod tests {
         assert!(link.is_some());
         assert!(addr.is_some());
 
-        assert_eq!(link.unwrap(),
-                   NetworkEvent::NewLink(InterfaceIndex(1),
-                                         "eth0".to_string(),
-                                         Flags::UP));
-        assert_eq!(addr.unwrap(),
-                   NetworkEvent::NewAddr(InterfaceIndex(1),
-                                         Ipv4Addr::new(192,168,100,1).into(),
-                                         24));
+        assert_eq!(
+            link.unwrap(),
+            NetworkEvent::NewLink(
+                InterfaceIndex(1),
+                "eth0".to_string(),
+                Flags::UP
+            )
+        );
+        assert_eq!(
+            addr.unwrap(),
+            NetworkEvent::NewAddr(
+                InterfaceIndex(1),
+                Ipv4Addr::new(192, 168, 100, 1).into(),
+                24
+            )
+        );
+    }
+
+    #[test]
+    fn ipv4_alias() {
+        let mut map = InterfaceMap::new();
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        map.check(ifaddr);
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(169, 254, 99, 99), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 0, 0), 80);
+
+        let ifaddr2 = ifaddrs::InterfaceAddress {
+            interface_name: "eth0:1".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        let (link, addr) = map.check(ifaddr2);
+
+        assert!(link.is_none());
+        assert!(addr.is_some());
+
+        assert_eq!(
+            addr.unwrap(),
+            NetworkEvent::NewAddr(
+                InterfaceIndex(1),
+                Ipv4Addr::new(169, 254, 99, 99).into(),
+                16
+            )
+        );
+    }
+
+    #[test]
+    fn ipv4_twoif() {
+        let mut map = InterfaceMap::new();
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        map.check(ifaddr);
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(169, 254, 99, 99), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 0, 0), 80);
+
+        let ifaddr2 = ifaddrs::InterfaceAddress {
+            interface_name: "eth1".to_string(),
+            flags: InterfaceFlags::IFF_UP | InterfaceFlags::IFF_RUNNING,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        let (link, addr) = map.check(ifaddr2);
+
+        assert!(link.is_some());
+        assert!(addr.is_some());
+
+        assert_eq!(
+            link.unwrap(),
+            NetworkEvent::NewLink(
+                InterfaceIndex(2),
+                "eth1".to_string(),
+                Flags::UP | Flags::RUNNING
+            )
+        );
+        assert_eq!(
+            addr.unwrap(),
+            NetworkEvent::NewAddr(
+                InterfaceIndex(2),
+                Ipv4Addr::new(169, 254, 99, 99).into(),
+                16
+            )
+        );
+    }
+
+    #[test]
+    fn ipv4_ipv6() {
+        let mut map = InterfaceMap::new();
+
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        map.check(ifaddr);
+
+        let addr = SocketAddrV6::new(
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+            80,
+            0,
+            0,
+        );
+        let mask = SocketAddrV6::new(
+            Ipv6Addr::new(0xFFFF, 0xFFFF, 0, 0, 0, 0, 0, 0),
+            80,
+            0,
+            0,
+        );
+
+        let ifaddr2 = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        let (link, addr) = map.check(ifaddr2);
+
+        assert!(link.is_none());
+        assert!(addr.is_some());
+
+        assert_eq!(
+            addr.unwrap(),
+            NetworkEvent::NewAddr(
+                InterfaceIndex(1),
+                Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).into(),
+                32
+            )
+        );
     }
 }
