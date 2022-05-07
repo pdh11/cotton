@@ -428,7 +428,7 @@ impl Service {
         }));
 
         let (mut s, mut task) = tokio::try_join!(
-            network_interfaces_dynamic(),
+            get_interfaces_async(),
             Task::new(inner.clone())
         )?;
 
