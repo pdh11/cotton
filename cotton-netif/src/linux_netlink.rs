@@ -76,7 +76,7 @@ fn translate_link_message(
             .ok();
         if let Some(name) = name {
             let flags = &p.ifi_flags;
-            let mut newflags = Flags::NONE;
+            let mut newflags = Default::default();
             for (iff, newf) in [
                 (&Iff::Up, Flags::UP),
                 (&Iff::Running, Flags::RUNNING),
@@ -181,7 +181,74 @@ fn get_addrs(
     }
 }
 
-pub async fn network_interfaces_dynamic(
+/** Obtain the current list of network interfaces and a stream of future events
+
+The stream consists of a sequence of [NetworkEvent]
+objects, each describing a network interface (as
+[NetworkEvent::NewLink]) or an address on that interface (as
+[NetworkEvent::NewAddr]). An interface may have several addresses,
+both IPv4 and IPv6. In all cases, the [NetworkEvent::NewLink] event
+describing an interface, will be generated before that interface's
+[NetworkEvent::NewAddr] event or events.
+
+All interfaces and addresses already present when get_interfaces_async
+is called, will be immediately announced as if newly-added.
+
+If addresses are deactivated or interfaces disappear -- such as when a USB
+network adaptor is unplugged -- [NetworkEvent::DelLink]
+or [NetworkEvent::DelAddr] events will be generated.
+
+The stream continues to wait for future events, i.e. the `while` loop
+in the examples is an *infinite* loop. In normal use, an asynchronous
+application would use `tokio::select!` or similar to wait on both
+network events from this crate, and the other events specific to that
+application.
+
+For a simple listing of the returned information, just use println:
+
+```rust
+# use cotton_netif::*;
+# use futures_util::StreamExt;
+# tokio_test::block_on(async {
+let mut s = get_interfaces_async().await?;
+
+while let Some(e) = s.next().await {
+    println!("{:?}", e);
+#   break;
+}
+# Ok::<(), std::io::Error>(())
+# });
+# Ok::<(), std::io::Error>(())
+```
+
+As another example, here is how to list all available
+multicast-capable interfaces, and be notified if and when new ones
+appear:
+
+```rust
+# use cotton_netif::*;
+# use futures_util::StreamExt;
+# tokio_test::block_on(async {
+let mut s = get_interfaces_async().await?;
+
+while let Some(e) = s.next().await {
+    match e {
+        Ok(NetworkEvent::NewLink(_i, name, flags)) => {
+            if flags.contains(Flags::RUNNING | Flags::UP | Flags::MULTICAST) {
+                println!("New multicast-capable interface: {}", name);
+            }
+        },
+        _ => {},
+    }
+#   break;
+}
+# Ok::<(), std::io::Error>(())
+# });
+# Ok::<(), std::io::Error>(())
+```
+
+ */
+pub async fn get_interfaces_async(
 ) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
     /* Group constants from <linux/rtnetlink.h> not wrapped by neli 0.6.1:
      *  1 = RTNLGRP_LINK (link events)
