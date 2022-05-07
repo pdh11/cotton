@@ -55,7 +55,7 @@ bitflags! {
 
 /** Event when a new interface or address is detected, or when one disappears
  */
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NetworkEvent {
     /** A new network interface is detected. */
     NewLink(InterfaceIndex, String, Flags),
