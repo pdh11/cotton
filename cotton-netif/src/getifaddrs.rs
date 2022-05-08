@@ -552,15 +552,18 @@ mod tests {
         assert!(addr.is_none());
     }
 
+    fn empty_callback(_: NetworkEvent) {
+    }
+
     #[test]
     fn get_interfaces_passes_through_errors() {
-        let s = get_interfaces2(|_| {},
+        let s = get_interfaces2(empty_callback,
                                 || Err(nix::errno::Errno::ENOTTY));
         assert!(s.is_err());
     }
 
     #[test]
     fn zzz_instantiate() {
-        assert!(get_interfaces(|_| {}).is_ok());
+        assert!(get_interfaces(empty_callback).is_ok());
     }
 }
