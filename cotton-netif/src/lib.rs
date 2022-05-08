@@ -90,7 +90,6 @@ pub mod getifaddrs;
 pub use getifaddrs::get_interfaces;
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
     use std::collections::HashMap;

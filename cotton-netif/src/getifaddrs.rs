@@ -3,7 +3,6 @@ use nix::ifaddrs;
 use nix::net::if_::InterfaceFlags;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-
 use std::net::{IpAddr, Ipv4Addr};
 
 /** Obtain the current list of network interfaces
@@ -62,12 +61,21 @@ get_interfaces(|e| match e {
 ```
 
  */
-pub fn get_interfaces<FN>(mut callback: FN) -> Result<(), std::io::Error>
+pub fn get_interfaces<FN>(callback: FN) -> Result<(), std::io::Error>
 where
-    FN: FnMut(NetworkEvent),
+    FN: FnMut(NetworkEvent)
+{
+    get_interfaces2(callback, ifaddrs::getifaddrs)
+}
+
+fn get_interfaces2<FN>(mut callback: FN,
+                       getifaddrs: fn() -> nix::Result<ifaddrs::InterfaceAddressIterator>)
+                       -> Result<(), std::io::Error>
+where
+    FN: FnMut(NetworkEvent)
 {
     let mut map = InterfaceMap::new();
-    for ifaddr in ifaddrs::getifaddrs()? {
+    for ifaddr in getifaddrs()? {
         let (new_link, new_addr) = map.check(ifaddr);
         if let Some(msg) = new_link {
             callback(msg);
@@ -542,6 +550,13 @@ mod tests {
 
         assert!(link.is_none());
         assert!(addr.is_none());
+    }
+
+    #[test]
+    fn get_interfaces_passes_through_errors() {
+        let s = get_interfaces2(|_| {},
+                                || Err(nix::errno::Errno::ENOTTY));
+        assert!(s.is_err());
     }
 
     #[test]
