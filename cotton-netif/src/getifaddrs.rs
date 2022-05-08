@@ -496,6 +496,55 @@ mod tests {
     }
 
     #[test]
+    fn ipv4_ipv6_bad_mask() {
+        let mut map = InterfaceMap::new();
+
+        let addr4 = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask4 = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let addr6 = SocketAddrV6::new(
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+            80,
+            0,
+            0,
+        );
+        let mask6 = SocketAddrV6::new(
+            Ipv6Addr::new(0xFFFF, 0xFFFF, 0, 0, 0, 0, 0, 0),
+            80,
+            0,
+            0,
+        );
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr4.into()),
+            netmask: Some(mask6.into()), // note mismatch
+            broadcast: None,
+            destination: None,
+        };
+
+        let (link, addr) = map.check(ifaddr);
+
+        assert!(link.is_some());
+        assert!(addr.is_none());
+
+        let ifaddr2 = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr6.into()),
+            netmask: Some(mask4.into()), // note mismatch
+            broadcast: None,
+            destination: None,
+        };
+
+        let (link, addr) = map.check(ifaddr2);
+
+        assert!(link.is_none());
+        assert!(addr.is_none());
+    }
+
+    #[test]
     fn zzz_instantiate() {
         assert!(get_interfaces(|_| {}).is_ok());
     }

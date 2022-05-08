@@ -88,3 +88,63 @@ pub mod getifaddrs;
 #[cfg(unix)]
 #[doc(inline)]
 pub use getifaddrs::get_interfaces;
+
+#[cfg(test)]
+
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_index_debug() {
+        let ix = InterfaceIndex(3);
+        let s = format!("{:?}", ix);
+        assert_eq!(s, "InterfaceIndex(3)".to_string());
+    }
+
+    #[test]
+    fn test_index_clone() {
+        let ix = InterfaceIndex(4);
+        let ix2 = ix.clone();
+        let ix3 = ix;
+        assert_eq!(ix, ix2);
+        assert_eq!(ix, ix3);
+    }
+
+    #[test]
+    fn test_index_hash() {
+        let mut h = HashMap::new();
+        h.insert(InterfaceIndex(1), "eth0");
+        h.insert(InterfaceIndex(2), "eth1");
+
+        assert_eq!(h.get(&InterfaceIndex(1)), Some(&"eth0"));
+    }
+
+    #[test]
+    fn test_index_partialeq() {
+        assert!(InterfaceIndex(1).eq(&InterfaceIndex(1)));
+        assert!(InterfaceIndex(2).ne(&InterfaceIndex(3)));
+    }
+
+    #[test]
+    fn test_event_debug() {
+        let e = NetworkEvent::DelLink(InterfaceIndex(7));
+        let s = format!("{:?}", e);
+        assert_eq!(s, "DelLink(InterfaceIndex(7))");
+    }
+
+    #[test]
+    fn test_event_partialeq() {
+        assert!(NetworkEvent::DelLink(InterfaceIndex(1))
+                .eq(&NetworkEvent::DelLink(InterfaceIndex(1))));
+        assert!(NetworkEvent::DelLink(InterfaceIndex(2))
+                .ne(&NetworkEvent::DelLink(InterfaceIndex(3))));
+    }
+
+    #[test]
+    fn test_event_clone() {
+        let e = NetworkEvent::DelLink(InterfaceIndex(1));
+        let e2 = e.clone();
+        assert_eq!(e, e2);
+    }
+}
