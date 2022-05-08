@@ -7,9 +7,9 @@ use std::{
 };
 
 use async_stream::stream;
+use futures_util::join;
 use futures_util::stream;
 use futures_util::Stream;
-use futures_util::join;
 
 use neli::{
     consts::{
@@ -33,13 +33,13 @@ use neli::{
 
 fn ip(ip_bytes: &[u8]) -> Option<IpAddr> {
     match ip_bytes.len() {
-        4 => Some(IpAddr::from(Ipv4Addr::from(
-            u32::from_be_bytes(ip_bytes.try_into().unwrap()),
-        ))),
+        4 => Some(IpAddr::from(Ipv4Addr::from(u32::from_be_bytes(
+            ip_bytes.try_into().unwrap(),
+        )))),
 
-        16 => Some(IpAddr::from(Ipv6Addr::from(
-            u128::from_be_bytes(ip_bytes.try_into().unwrap()),
-        ))),
+        16 => Some(IpAddr::from(Ipv6Addr::from(u128::from_be_bytes(
+            ip_bytes.try_into().unwrap(),
+        )))),
 
         _ => {
             println!(

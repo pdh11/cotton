@@ -63,16 +63,17 @@ get_interfaces(|e| match e {
  */
 pub fn get_interfaces<FN>(callback: FN) -> Result<(), std::io::Error>
 where
-    FN: FnMut(NetworkEvent)
+    FN: FnMut(NetworkEvent),
 {
     get_interfaces2(callback, ifaddrs::getifaddrs)
 }
 
-fn get_interfaces2<FN>(mut callback: FN,
-                       getifaddrs: fn() -> nix::Result<ifaddrs::InterfaceAddressIterator>)
-                       -> Result<(), std::io::Error>
+fn get_interfaces2<FN>(
+    mut callback: FN,
+    getifaddrs: fn() -> nix::Result<ifaddrs::InterfaceAddressIterator>,
+) -> Result<(), std::io::Error>
 where
-    FN: FnMut(NetworkEvent)
+    FN: FnMut(NetworkEvent),
 {
     let mut map = InterfaceMap::new();
     for ifaddr in getifaddrs()? {
@@ -182,9 +183,9 @@ fn map_interface_flags(flags: &InterfaceFlags) -> Flags {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nix::sys::socket::UnixAddr;
-    use nix::sys::socket::SockaddrStorage;
     use nix::sys::socket::SockaddrLike;
+    use nix::sys::socket::SockaddrStorage;
+    use nix::sys::socket::UnixAddr;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV4;
     use std::net::SocketAddrV6;
@@ -332,7 +333,9 @@ mod tests {
             let addr = UnixAddr::new("/tmp/foo").unwrap();
             let addr = SockaddrStorage::from_raw(
                 (&addr as &dyn SockaddrLike).as_ptr(),
-                Some(addr.len())).unwrap();
+                Some(addr.len()),
+            )
+            .unwrap();
 
             let ifaddr2 = ifaddrs::InterfaceAddress {
                 interface_name: "eth0:1".to_string(),
@@ -552,13 +555,12 @@ mod tests {
         assert!(addr.is_none());
     }
 
-    fn empty_callback(_: NetworkEvent) {
-    }
+    fn empty_callback(_: NetworkEvent) {}
 
     #[test]
     fn get_interfaces_passes_through_errors() {
-        let s = get_interfaces2(empty_callback,
-                                || Err(nix::errno::Errno::ENOTTY));
+        let s =
+            get_interfaces2(empty_callback, || Err(nix::errno::Errno::ENOTTY));
         assert!(s.is_err());
     }
 

@@ -135,9 +135,9 @@ mod tests {
     #[test]
     fn test_event_partialeq() {
         assert!(NetworkEvent::DelLink(InterfaceIndex(1))
-                .eq(&NetworkEvent::DelLink(InterfaceIndex(1))));
+            .eq(&NetworkEvent::DelLink(InterfaceIndex(1))));
         assert!(NetworkEvent::DelLink(InterfaceIndex(2))
-                .ne(&NetworkEvent::DelLink(InterfaceIndex(3))));
+            .ne(&NetworkEvent::DelLink(InterfaceIndex(3))));
     }
 
     #[test]
