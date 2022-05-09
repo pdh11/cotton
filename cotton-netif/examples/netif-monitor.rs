@@ -5,7 +5,9 @@ use std::error::Error;
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("static:");
 
-    cotton_netif::get_interfaces(|e| println!("{:?}", e))?;
+    for e in cotton_netif::get_interfaces()? {
+        println!("{:?}", e);
+    }
 
     let mut s = cotton_netif::get_interfaces_async().await?;
 

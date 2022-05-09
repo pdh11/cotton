@@ -7,12 +7,12 @@ use std::net::{IpAddr, Ipv4Addr};
 
 /** Obtain the current list of network interfaces
 
-The supplied function will be called with a sequence of [NetworkEvent]
+The returned iterator provides a sequence of [NetworkEvent]
 objects, each describing a network interface (as
 [NetworkEvent::NewLink]) or an address on that interface (as
 [NetworkEvent::NewAddr]). An interface may have several addresses,
 both IPv4 and IPv6. In all cases, the [NetworkEvent::NewLink] event
-describing an interface, will be generated before that interface's
+describing an interface, will be produced before that interface's
 [NetworkEvent::NewAddr] event or events.
 
 As the list is a snapshot of the current state, no [NetworkEvent::DelLink]
@@ -22,7 +22,9 @@ For a simple listing of the returned information, just use println:
 
 ```rust
 # use cotton_netif::*;
-get_interfaces(|e| println!("{:?}", e))?;
+for e in get_interfaces()? {
+    println!("{:?}", e);
+}
 # Ok::<(), std::io::Error>(())
 ```
 
@@ -49,55 +51,76 @@ multicast-capable interfaces:
 
 ```rust
 # use cotton_netif::*;
-get_interfaces(|e| match e {
-    NetworkEvent::NewLink(_i, name, flags) => {
-        if flags.contains(Flags::RUNNING | Flags::UP | Flags::MULTICAST) {
-            println!("New multicast-capable interface: {}", name);
-        }
+for e in get_interfaces()?
+    .filter(|e| match e {
+        NetworkEvent::NewLink(_i, _name, flags) => {
+        flags.contains(Flags::RUNNING | Flags::UP | Flags::MULTICAST)
     },
-    _ => {},
-})?;
+    _ => false,
+}) {
+     println!("New multicast-capable interface: {:?}", e);
+};
 # Ok::<(), std::io::Error>(())
 ```
 
  */
-pub fn get_interfaces<FN>(callback: FN) -> Result<(), std::io::Error>
-where
-    FN: FnMut(NetworkEvent),
-{
-    get_interfaces2(callback, ifaddrs::getifaddrs)
+pub fn get_interfaces(
+) -> Result<impl Iterator<Item = NetworkEvent>, std::io::Error> {
+    get_interfaces_inner(ifaddrs::getifaddrs)
 }
 
-fn get_interfaces2<FN>(
-    mut callback: FN,
+fn get_interfaces_inner(
     getifaddrs: fn() -> nix::Result<ifaddrs::InterfaceAddressIterator>,
-) -> Result<(), std::io::Error>
-where
-    FN: FnMut(NetworkEvent),
-{
-    let mut map = InterfaceMap::new();
-    for ifaddr in getifaddrs()? {
-        let (new_link, new_addr) = map.check(ifaddr);
-        if let Some(msg) = new_link {
-            callback(msg);
-        }
-        if let Some(msg) = new_addr {
-            callback(msg);
-        }
-    }
-    Ok(())
+) -> Result<impl Iterator<Item = NetworkEvent>, std::io::Error> {
+    Ok(InterfaceMap::new(getifaddrs()?))
 }
 
 /** Manage the mapping between interface names and indexes
  */
-struct InterfaceMap {
+struct InterfaceMap<ITER>
+where
+    ITER: Iterator<Item = ifaddrs::InterfaceAddress>,
+{
+    iter: ITER,
+    pending: Option<NetworkEvent>,
     index_map: HashMap<String, u32>,
     next_index: u32,
 }
 
-impl InterfaceMap {
-    fn new() -> InterfaceMap {
+impl<ITER> Iterator for InterfaceMap<ITER>
+where
+    ITER: Iterator<Item = ifaddrs::InterfaceAddress>,
+{
+    type Item = NetworkEvent;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pending.is_some() {
+            self.pending.take()
+        } else {
+            loop {
+                let ifaddr = self.iter.next()?;
+                let (new_link, new_addr) = self.check(ifaddr);
+                if new_link.is_some() {
+                    self.pending = new_addr;
+                    return new_link;
+                }
+                if new_addr.is_some() {
+                    return new_addr;
+                }
+                // otherwise go round again
+            }
+        }
+    }
+}
+
+impl<ITER> InterfaceMap<ITER>
+where
+    ITER: Iterator<Item = ifaddrs::InterfaceAddress>,
+{
+    fn new(iter: ITER) -> InterfaceMap<ITER> {
         InterfaceMap {
+            iter,
+            pending: None,
             index_map: Default::default(),
             next_index: 1,
         }
@@ -237,8 +260,6 @@ mod tests {
 
     #[test]
     fn new_ipv4() {
-        let mut map = InterfaceMap::new();
-
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
@@ -251,10 +272,11 @@ mod tests {
             destination: None,
         };
 
-        let (link, addr) = map.check(ifaddr);
+        let mut map = InterfaceMap::new([ifaddr].into_iter());
+
+        let link = map.next();
 
         assert!(link.is_some());
-        assert!(addr.is_some());
 
         assert_eq!(
             link.unwrap(),
@@ -264,6 +286,11 @@ mod tests {
                 Flags::UP
             )
         );
+
+        let addr = map.next();
+
+        assert!(addr.is_some());
+
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
@@ -272,11 +299,15 @@ mod tests {
                 24
             )
         );
+
+        let fin = map.next();
+
+        assert!(fin.is_none());
     }
 
     #[test]
     fn new_no_address() {
-        let mut map = InterfaceMap::new();
+        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
@@ -311,8 +342,6 @@ mod tests {
 
     #[test]
     fn new_not_ip() {
-        let mut map = InterfaceMap::new();
-
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
@@ -325,37 +354,37 @@ mod tests {
             destination: None,
         };
 
-        map.check(ifaddr);
-
-        unsafe {
+        let addr = unsafe {
             // Small palaver to obtain a SockaddrStorage that isn't IPv4 or
             // IPv6
             let addr = UnixAddr::new("/tmp/foo").unwrap();
-            let addr = SockaddrStorage::from_raw(
+            SockaddrStorage::from_raw(
                 (&addr as &dyn SockaddrLike).as_ptr(),
                 Some(addr.len()),
-            )
-            .unwrap();
+            ).unwrap()
+        };
 
-            let ifaddr2 = ifaddrs::InterfaceAddress {
-                interface_name: "eth0:1".to_string(),
-                flags: InterfaceFlags::IFF_UP,
-                address: Some(addr.clone()),
-                netmask: Some(addr),
-                broadcast: None,
-                destination: None,
-            };
+        let ifaddr2 = ifaddrs::InterfaceAddress {
+            interface_name: "eth0:1".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.clone()),
+            netmask: Some(addr),
+            broadcast: None,
+            destination: None,
+        };
 
-            let (link, addr) = map.check(ifaddr2);
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
-            assert!(link.is_none());
-            assert!(addr.is_none());
-        }
+        let _ = map.next(); // link
+        let _ = map.next(); // addr
+        let fin = map.next();
+
+        assert!(fin.is_none());
     }
 
     #[test]
     fn ipv4_alias() {
-        let mut map = InterfaceMap::new();
+        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
@@ -400,7 +429,7 @@ mod tests {
 
     #[test]
     fn ipv4_twoif() {
-        let mut map = InterfaceMap::new();
+        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
@@ -453,8 +482,6 @@ mod tests {
 
     #[test]
     fn ipv4_ipv6() {
-        let mut map = InterfaceMap::new();
-
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
@@ -466,8 +493,6 @@ mod tests {
             broadcast: None,
             destination: None,
         };
-
-        map.check(ifaddr);
 
         let addr = SocketAddrV6::new(
             Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
@@ -491,13 +516,40 @@ mod tests {
             destination: None,
         };
 
-        let (link, addr) = map.check(ifaddr2);
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
-        assert!(link.is_none());
+        let link = map.next(); // Returns IPv4
+
+        assert!(link.is_some());
+
+        assert_eq!(
+            link.unwrap(),
+            NetworkEvent::NewLink(
+                InterfaceIndex(1),
+                "eth0".to_string(),
+                Flags::UP
+            )
+        );
+
+        let addr = map.next();
+
         assert!(addr.is_some());
 
         assert_eq!(
             addr.unwrap(),
+            NetworkEvent::NewAddr(
+                InterfaceIndex(1),
+                Ipv4Addr::new(192, 168, 100, 1).into(),
+                24
+            )
+        );
+
+        let addr2 = map.next(); // Returns IPv6
+
+        assert!(addr2.is_some());
+
+        assert_eq!(
+            addr2.unwrap(),
             NetworkEvent::NewAddr(
                 InterfaceIndex(1),
                 Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).into(),
@@ -508,7 +560,7 @@ mod tests {
 
     #[test]
     fn ipv4_ipv6_bad_mask() {
-        let mut map = InterfaceMap::new();
+        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
 
         let addr4 = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask4 = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
@@ -555,17 +607,14 @@ mod tests {
         assert!(addr.is_none());
     }
 
-    fn empty_callback(_: NetworkEvent) {}
-
     #[test]
     fn get_interfaces_passes_through_errors() {
-        let s =
-            get_interfaces2(empty_callback, || Err(nix::errno::Errno::ENOTTY));
+        let s = get_interfaces_inner(|| Err(nix::errno::Errno::ENOTTY));
         assert!(s.is_err());
     }
 
     #[test]
     fn zzz_instantiate() {
-        assert!(get_interfaces(empty_callback).is_ok());
+        assert!(get_interfaces().is_ok());
     }
 }
