@@ -13,7 +13,8 @@
 //!
 //! Todo:
 //!  - [x] IPv6 in linux_netlink
-//!  - [ ] Better test coverage
+//!  - [x] Better test coverage
+//!  - [ ] Does DelAddr need to include the address?
 //!  - [ ] Turn async into a (cargo) Feature
 //!
 

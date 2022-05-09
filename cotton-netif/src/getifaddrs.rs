@@ -51,14 +51,14 @@ multicast-capable interfaces:
 
 ```rust
 # use cotton_netif::*;
-for e in get_interfaces()?
-    .filter(|e| match e {
-        NetworkEvent::NewLink(_i, _name, flags) => {
-        flags.contains(Flags::RUNNING | Flags::UP | Flags::MULTICAST)
-    },
-    _ => false,
-}) {
-     println!("New multicast-capable interface: {:?}", e);
+for name in get_interfaces()?
+    .filter_map(|e| match e {
+        NetworkEvent::NewLink(_i, name, flags)
+            if flags.contains(Flags::RUNNING | Flags::UP | Flags::MULTICAST)
+                => Some(name),
+        _ => None,
+    }) {
+    println!("New multicast-capable interface: {}", name);
 };
 # Ok::<(), std::io::Error>(())
 ```
