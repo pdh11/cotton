@@ -258,6 +258,11 @@ mod tests {
         );
     }
 
+    fn test_iter(ifaddrs: &[ifaddrs::InterfaceAddress])
+                 -> impl Iterator<Item = ifaddrs::InterfaceAddress> {
+        ifaddrs.to_vec().into_iter()
+    }
+
     #[test]
     fn new_ipv4() {
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
@@ -272,7 +277,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr].into_iter());
+        let mut map = InterfaceMap::new(test_iter(&[ifaddr]));
 
         let link = map.next();
 
@@ -288,9 +293,7 @@ mod tests {
         );
 
         let addr = map.next();
-
         assert!(addr.is_some());
-
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
@@ -307,8 +310,6 @@ mod tests {
 
     #[test]
     fn new_no_address() {
-        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
-
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
@@ -321,8 +322,6 @@ mod tests {
             destination: None,
         };
 
-        map.check(ifaddr);
-
         let addr = SocketAddrV4::new(Ipv4Addr::new(169, 254, 99, 99), 80);
 
         let ifaddr2 = ifaddrs::InterfaceAddress {
@@ -334,10 +333,32 @@ mod tests {
             destination: None,
         };
 
-        let (link, addr) = map.check(ifaddr2);
+        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
 
-        assert!(link.is_none());
-        assert!(addr.is_none());
+        let link = map.next();
+        assert!(link.is_some());
+        assert_eq!(
+            link.unwrap(),
+            NetworkEvent::NewLink(
+                InterfaceIndex(1),
+                "eth0".to_string(),
+                Flags::UP
+            )
+        );
+
+        let addr = map.next();
+        assert!(addr.is_some());
+        assert_eq!(
+            addr.unwrap(),
+            NetworkEvent::NewAddr(
+                InterfaceIndex(1),
+                Ipv4Addr::new(192, 168, 100, 1).into(),
+                24
+            )
+        );
+
+        let fin = map.next();   // No second address
+        assert!(fin.is_none());
     }
 
     #[test]
@@ -373,7 +394,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
 
         let _ = map.next(); // link
         let _ = map.next(); // addr
@@ -384,8 +405,6 @@ mod tests {
 
     #[test]
     fn ipv4_alias() {
-        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
-
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
@@ -397,8 +416,6 @@ mod tests {
             broadcast: None,
             destination: None,
         };
-
-        map.check(ifaddr);
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(169, 254, 99, 99), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 0, 0), 80);
@@ -412,11 +429,16 @@ mod tests {
             destination: None,
         };
 
-        let (link, addr) = map.check(ifaddr2);
+        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
 
-        assert!(link.is_none());
+        let link = map.next();
+        assert!(link.is_some());
+
+        let addr = map.next();
         assert!(addr.is_some());
 
+        let addr = map.next();
+        assert!(addr.is_some());
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
@@ -425,12 +447,13 @@ mod tests {
                 16
             )
         );
+
+        let fin = map.next();
+        assert!(fin.is_none());
     }
 
     #[test]
     fn ipv4_twoif() {
-        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
-
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
@@ -442,8 +465,6 @@ mod tests {
             broadcast: None,
             destination: None,
         };
-
-        map.check(ifaddr);
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(169, 254, 99, 99), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 0, 0), 80);
@@ -457,11 +478,16 @@ mod tests {
             destination: None,
         };
 
-        let (link, addr) = map.check(ifaddr2);
+        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
 
+        let link = map.next();
         assert!(link.is_some());
+
+        let addr = map.next();
         assert!(addr.is_some());
 
+        let link = map.next();
+        assert!(link.is_some());
         assert_eq!(
             link.unwrap(),
             NetworkEvent::NewLink(
@@ -470,6 +496,9 @@ mod tests {
                 Flags::UP | Flags::RUNNING
             )
         );
+
+        let addr = map.next();
+        assert!(addr.is_some());
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
@@ -478,6 +507,9 @@ mod tests {
                 16
             )
         );
+
+        let fin = map.next();
+        assert!(fin.is_none());
     }
 
     #[test]
@@ -516,7 +548,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
 
         let link = map.next(); // Returns IPv4
 
@@ -560,8 +592,6 @@ mod tests {
 
     #[test]
     fn ipv4_ipv6_bad_mask() {
-        let mut map = InterfaceMap::new(ifaddrs::getifaddrs().unwrap());
-
         let addr4 = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask4 = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
 
@@ -587,11 +617,6 @@ mod tests {
             destination: None,
         };
 
-        let (link, addr) = map.check(ifaddr);
-
-        assert!(link.is_some());
-        assert!(addr.is_none());
-
         let ifaddr2 = ifaddrs::InterfaceAddress {
             interface_name: "eth0".to_string(),
             flags: InterfaceFlags::IFF_UP,
@@ -601,10 +626,14 @@ mod tests {
             destination: None,
         };
 
-        let (link, addr) = map.check(ifaddr2);
+        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
 
-        assert!(link.is_none());
-        assert!(addr.is_none());
+        let link = map.next();
+        assert!(link.is_some());
+
+        /* No valid addrs */
+        let fin = map.next();
+        assert!(fin.is_none());
     }
 
     #[test]
