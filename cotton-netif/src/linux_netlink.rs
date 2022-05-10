@@ -67,44 +67,48 @@ fn map_tx_error(err: SerError) -> Error {
     }
 }
 
+fn map_flags(flags: &IffFlags) -> Flags {
+    let mut newflags = Default::default();
+    for (iff, newf) in [
+        (&Iff::Up, Flags::UP),
+        (&Iff::Running, Flags::RUNNING),
+        (&Iff::Loopback, Flags::LOOPBACK),
+        (&Iff::Pointopoint, Flags::POINTTOPOINT),
+        (&Iff::Broadcast, Flags::BROADCAST),
+        (&Iff::Multicast, Flags::MULTICAST),
+    ] {
+        if flags.contains(iff) {
+            newflags |= newf;
+        }
+    }
+    newflags
+}
+
 fn translate_link_message(
     msg: &Nlmsghdr<Rtm, Ifinfomsg>,
 ) -> Option<NetworkEvent> {
     if let NlPayload::Payload(p) = &msg.nl_payload {
-        let handle = p.rtattrs.get_attr_handle();
-        let name = handle
-            .get_attr_payload_as_with_len::<String>(Ifla::Ifname)
-            .ok();
-        if let Some(name) = name {
-            let flags = &p.ifi_flags;
-            let mut newflags = Default::default();
-            for (iff, newf) in [
-                (&Iff::Up, Flags::UP),
-                (&Iff::Running, Flags::RUNNING),
-                (&Iff::Loopback, Flags::LOOPBACK),
-                (&Iff::Pointopoint, Flags::POINTTOPOINT),
-                (&Iff::Broadcast, Flags::BROADCAST),
-                (&Iff::Multicast, Flags::MULTICAST),
-            ] {
-                if flags.contains(iff) {
-                    newflags |= newf;
-                }
-            }
-            match msg.nl_type {
-                Rtm::Newlink => {
+        match msg.nl_type {
+            Rtm::Newlink => {
+                let handle = p.rtattrs.get_attr_handle();
+                let name = handle
+                    .get_attr_payload_as_with_len::<String>(Ifla::Ifname)
+                    .ok();
+                if let Some(name) = name {
+                    let newflags = map_flags(&p.ifi_flags);
                     return Some(NetworkEvent::NewLink(
                         InterfaceIndex(p.ifi_index as u32),
                         name,
                         newflags,
-                    ))
+                    ));
                 }
-                Rtm::Dellink => {
-                    return Some(NetworkEvent::DelLink(InterfaceIndex(
-                        p.ifi_index as u32,
-                    )))
-                }
-                _ => (),
             }
+            Rtm::Dellink => {
+                return Some(NetworkEvent::DelLink(InterfaceIndex(
+                    p.ifi_index as u32,
+                )))
+            }
+            _ => (),
         }
     }
     None
@@ -333,6 +337,8 @@ pub async fn get_interfaces_async(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use neli::rtnl::Rtattr;
+    use std::os::unix::io::FromRawFd;
     use tokio_test::block_on;
 
     #[test]
@@ -360,6 +366,359 @@ mod tests {
         let result = ip(&input);
 
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_rx_io_error_mapped() {
+        let err = map_rx_error(DeError::Wrapped(WrappedError::IOError(
+            std::io::Error::from(ErrorKind::UnexpectedEof),
+        )));
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_rx_io_error_not_mapped() {
+        let err = map_rx_error(DeError::BufferNotParsed);
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_tx_io_error_mapped() {
+        let err = map_tx_error(SerError::Wrapped(WrappedError::IOError(
+            std::io::Error::from(ErrorKind::UnexpectedEof),
+        )));
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_tx_io_error_not_mapped() {
+        let err = map_tx_error(SerError::BufferNotFilled);
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_map_up() {
+        assert_eq!(map_flags(&IffFlags::new(&[Iff::Up])), Flags::UP);
+    }
+
+    #[test]
+    fn test_map_running() {
+        assert_eq!(map_flags(&IffFlags::new(&[Iff::Running])), Flags::RUNNING);
+    }
+
+    #[test]
+    fn test_map_loopback() {
+        assert_eq!(
+            map_flags(&IffFlags::new(&[Iff::Loopback])),
+            Flags::LOOPBACK
+        );
+    }
+
+    #[test]
+    fn test_map_pointtopoint() {
+        assert_eq!(
+            map_flags(&IffFlags::new(&[Iff::Pointopoint])),
+            Flags::POINTTOPOINT
+        );
+    }
+
+    #[test]
+    fn test_map_broadcast() {
+        assert_eq!(
+            map_flags(&IffFlags::new(&[Iff::Broadcast])),
+            Flags::BROADCAST
+        );
+    }
+
+    #[test]
+    fn test_map_multicast() {
+        assert_eq!(
+            map_flags(&IffFlags::new(&[Iff::Multicast])),
+            Flags::MULTICAST
+        );
+    }
+
+    #[test]
+    fn test_map_several() {
+        assert_eq!(
+            map_flags(&IffFlags::new(&[
+                Iff::Up,
+                Iff::Running,
+                Iff::Multicast
+            ])),
+            Flags::UP | Flags::RUNNING | Flags::MULTICAST
+        );
+    }
+
+    #[test]
+    fn test_link_message_no_payload() {
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Getlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Empty,
+        );
+
+        assert!(translate_link_message(&msg).is_none());
+    }
+
+    #[test]
+    fn test_link_message_no_name() {
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifinfomsg::new(
+                RtAddrFamily::Inet,
+                Arphrd::Ether,
+                0,
+                IffFlags::empty(),
+                IffFlags::empty(),
+                RtBuffer::new(),
+            )),
+        );
+
+        assert!(translate_link_message(&msg).is_none());
+    }
+
+    #[test]
+    fn test_link_message_no_type() {
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifla::Ifname, "eth0".to_string()).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Getlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifinfomsg::new(
+                RtAddrFamily::Inet,
+                Arphrd::Ether,
+                0,
+                IffFlags::empty(),
+                IffFlags::empty(),
+                buf,
+            )),
+        );
+
+        assert!(translate_link_message(&msg).is_none());
+    }
+
+    #[test]
+    fn test_link_message_new() {
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifla::Ifname, "eth0".to_string()).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifinfomsg::new(
+                RtAddrFamily::Inet,
+                Arphrd::Ether,
+                3,
+                IffFlags::empty(),
+                IffFlags::empty(),
+                buf,
+            )),
+        );
+
+        let event = translate_link_message(&msg);
+        assert!(event.is_some());
+        assert_eq!(
+            event.unwrap(),
+            NetworkEvent::NewLink(
+                InterfaceIndex(3),
+                "eth0".to_string(),
+                Default::default()
+            )
+        );
+    }
+
+    #[test]
+    fn test_link_message_del() {
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifla::Ifname, "eth1".to_string()).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Dellink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifinfomsg::new(
+                RtAddrFamily::Inet,
+                Arphrd::Ether,
+                2,
+                IffFlags::empty(),
+                IffFlags::empty(),
+                buf,
+            )),
+        );
+
+        let event = translate_link_message(&msg);
+        assert!(event.is_some());
+        assert_eq!(event.unwrap(), NetworkEvent::DelLink(InterfaceIndex(2)));
+    }
+
+    #[test]
+    fn test_addr_message_no_payload() {
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Getlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Empty,
+        );
+
+        assert!(translate_addr_message(&msg).is_none());
+    }
+
+    #[test]
+    fn test_addr_message_no_addr() {
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 0,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: RtBuffer::new(),
+            }),
+        );
+
+        assert!(translate_addr_message(&msg).is_none());
+    }
+
+    #[test]
+    fn test_addr_message_bad_addr() {
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifa::Address, 65535u16).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 0,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: buf
+            }),
+        );
+
+        assert!(translate_addr_message(&msg).is_none());
+    }
+
+    #[test]
+    fn test_addr_message_bad_type() {
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifa::Address, 65535u32).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 0,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: buf
+            }),
+        );
+
+        assert!(translate_addr_message(&msg).is_none());
+    }
+
+    #[test]
+    fn test_addr_message_new() {
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifa::Address, 65535u32).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newaddr,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 24,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: buf
+            }),
+        );
+
+        let event = translate_addr_message(&msg);
+        assert!(event.is_some());
+        assert_eq!(event.unwrap(),
+                   NetworkEvent::NewAddr(InterfaceIndex(2),
+                                         ip(&[255, 255, 0, 0]).unwrap(),
+                                         24));
+    }
+
+    #[test]
+    fn test_addr_message_del() {
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifa::Address, 65535u32).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Deladdr,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 24,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: buf
+            }),
+        );
+
+        let event = translate_addr_message(&msg);
+        assert!(event.is_some());
+        assert_eq!(event.unwrap(),
+                   NetworkEvent::DelAddr(InterfaceIndex(2)));
+    }
+
+    #[tokio::test]
+    async fn newlink_message() {
+        let (infd, outfd) = nix::sys::socket::socketpair(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Stream,
+            None,
+            nix::sys::socket::SockFlag::empty(),
+        )
+        .unwrap();
+
+        let nlsocket =
+            unsafe { NlSocket::new(NlSocketHandle::from_raw_fd(outfd)) };
     }
 
     #[test]

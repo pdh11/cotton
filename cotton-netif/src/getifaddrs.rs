@@ -258,8 +258,9 @@ mod tests {
         );
     }
 
-    fn test_iter(ifaddrs: &[ifaddrs::InterfaceAddress])
-                 -> impl Iterator<Item = ifaddrs::InterfaceAddress> {
+    fn test_iter(
+        ifaddrs: &[ifaddrs::InterfaceAddress],
+    ) -> impl Iterator<Item = ifaddrs::InterfaceAddress> {
         ifaddrs.to_vec().into_iter()
     }
 
@@ -357,7 +358,7 @@ mod tests {
             )
         );
 
-        let fin = map.next();   // No second address
+        let fin = map.next(); // No second address
         assert!(fin.is_none());
     }
 
@@ -382,7 +383,8 @@ mod tests {
             SockaddrStorage::from_raw(
                 (&addr as &dyn SockaddrLike).as_ptr(),
                 Some(addr.len()),
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         let ifaddr2 = ifaddrs::InterfaceAddress {
