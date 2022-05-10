@@ -14,7 +14,7 @@
 //! Todo:
 //!  - [x] IPv6 in linux_netlink
 //!  - [x] Better test coverage
-//!  - [ ] Does DelAddr need to include the address?
+//!  - [x] Does DelAddr need to include the address? *yes*
 //!  - [ ] Turn async into a (cargo) Feature
 //!
 
@@ -69,7 +69,7 @@ pub enum NetworkEvent {
     NewAddr(InterfaceIndex, std::net::IpAddr, u8),
 
     /** A previously-active address has been deactivated. */
-    DelAddr(InterfaceIndex),
+    DelAddr(InterfaceIndex, std::net::IpAddr, u8),
 }
 
 /** Dynamic listing using Linux's netlink socket

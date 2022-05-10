@@ -133,9 +133,11 @@ fn translate_addr_message(
                     ))
                 }
                 Rtm::Deladdr => {
-                    return Some(NetworkEvent::DelAddr(InterfaceIndex(
-                        p.ifa_index as u32,
-                    )))
+                    return Some(NetworkEvent::DelAddr(
+                        InterfaceIndex(p.ifa_index as u32),
+                        addr,
+                        p.ifa_prefixlen,
+                    ))
                 }
                 _ => (),
             }
@@ -337,7 +339,9 @@ pub async fn get_interfaces_async(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
     use neli::rtnl::Rtattr;
+    use neli::ToBytes;
     use std::os::unix::io::FromRawFd;
     use tokio_test::block_on;
 
@@ -620,7 +624,7 @@ mod tests {
                 ifa_flags: IfaFFlags::empty(),
                 ifa_scope: 0,
                 ifa_index: 2,
-                rtattrs: buf
+                rtattrs: buf,
             }),
         );
 
@@ -644,7 +648,7 @@ mod tests {
                 ifa_flags: IfaFFlags::empty(),
                 ifa_scope: 0,
                 ifa_index: 2,
-                rtattrs: buf
+                rtattrs: buf,
             }),
         );
 
@@ -668,16 +672,20 @@ mod tests {
                 ifa_flags: IfaFFlags::empty(),
                 ifa_scope: 0,
                 ifa_index: 2,
-                rtattrs: buf
+                rtattrs: buf,
             }),
         );
 
         let event = translate_addr_message(&msg);
         assert!(event.is_some());
-        assert_eq!(event.unwrap(),
-                   NetworkEvent::NewAddr(InterfaceIndex(2),
-                                         ip(&[255, 255, 0, 0]).unwrap(),
-                                         24));
+        assert_eq!(
+            event.unwrap(),
+            NetworkEvent::NewAddr(
+                InterfaceIndex(2),
+                ip(&[255, 255, 0, 0]).unwrap(),
+                24
+            )
+        );
     }
 
     #[test]
@@ -697,28 +705,187 @@ mod tests {
                 ifa_flags: IfaFFlags::empty(),
                 ifa_scope: 0,
                 ifa_index: 2,
-                rtattrs: buf
+                rtattrs: buf,
             }),
         );
 
         let event = translate_addr_message(&msg);
         assert!(event.is_some());
-        assert_eq!(event.unwrap(),
-                   NetworkEvent::DelAddr(InterfaceIndex(2)));
+        assert_eq!(
+            event.unwrap(),
+            NetworkEvent::DelAddr(
+                InterfaceIndex(2),
+                ip(&[255, 255, 0, 0]).unwrap(),
+                24
+            )
+        );
     }
 
     #[tokio::test]
-    async fn newlink_message() {
+    async fn get_links_bad_message() {
         let (infd, outfd) = nix::sys::socket::socketpair(
             nix::sys::socket::AddressFamily::Unix,
-            nix::sys::socket::SockType::Stream,
+            nix::sys::socket::SockType::Datagram,
             None,
             nix::sys::socket::SockFlag::empty(),
         )
         .unwrap();
 
-        let nlsocket =
-            unsafe { NlSocket::new(NlSocketHandle::from_raw_fd(outfd)) };
+        let nlsocket = unsafe {
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+        };
+
+        nix::sys::socket::sendto(
+            infd,
+            &[1, 2, 3, 4, 5],
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+        .unwrap();
+
+        let s = Box::pin(get_links(nlsocket)).next().await;
+        assert!(s.is_some());
+        let result = s.unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_links_del() {
+        let (infd, outfd) = nix::sys::socket::socketpair(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Datagram,
+            None,
+            nix::sys::socket::SockFlag::empty(),
+        )
+        .unwrap();
+
+        let nlsocket = unsafe {
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+        };
+
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifla::Ifname, "eth1".to_string()).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Dellink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifinfomsg::new(
+                RtAddrFamily::Inet,
+                Arphrd::Ether,
+                2,
+                IffFlags::empty(),
+                IffFlags::empty(),
+                buf,
+            )),
+        );
+
+        let mut v = std::io::Cursor::new(Vec::new());
+        msg.to_bytes(&mut v).unwrap();
+
+        nix::sys::socket::sendto(
+            infd,
+            &v.into_inner(),
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+        .unwrap();
+
+        let s = Box::pin(get_links(nlsocket)).next().await;
+
+        assert!(s.is_some());
+        let result = s.unwrap();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), NetworkEvent::DelLink(InterfaceIndex(2)));
+    }
+
+    #[tokio::test]
+    async fn get_addrs_bad_message() {
+        let (infd, outfd) = nix::sys::socket::socketpair(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Datagram,
+            None,
+            nix::sys::socket::SockFlag::empty(),
+        )
+        .unwrap();
+
+        let nlsocket = unsafe {
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+        };
+
+        nix::sys::socket::sendto(
+            infd,
+            &[1, 2, 3, 4, 5],
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+        .unwrap();
+
+        let s = Box::pin(get_addrs(nlsocket)).next().await;
+        assert!(s.is_some());
+        let result = s.unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_addr_del() {
+        let (infd, outfd) = nix::sys::socket::socketpair(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Datagram,
+            None,
+            nix::sys::socket::SockFlag::empty(),
+        )
+        .unwrap();
+
+        let nlsocket = unsafe {
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+        };
+
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifa::Address, 65535u32).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Deladdr,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 24,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: buf,
+            }),
+        );
+
+        let mut v = std::io::Cursor::new(Vec::new());
+        msg.to_bytes(&mut v).unwrap();
+
+        nix::sys::socket::sendto(
+            infd,
+            &v.into_inner(),
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+        .unwrap();
+
+        let s = Box::pin(get_addrs(nlsocket)).next().await;
+
+        assert!(s.is_some());
+        let event = s.unwrap();
+        assert!(event.is_ok());
+        assert_eq!(
+            event.unwrap(),
+            NetworkEvent::DelAddr(
+                InterfaceIndex(2),
+                ip(&[255, 255, 0, 0]).unwrap(),
+                24
+            )
+        );
     }
 
     #[test]
