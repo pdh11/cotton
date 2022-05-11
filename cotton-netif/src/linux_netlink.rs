@@ -7,7 +7,6 @@ use std::{
 };
 
 use async_stream::stream;
-use futures_util::join;
 use futures_util::stream;
 use futures_util::Stream;
 
@@ -257,18 +256,58 @@ while let Some(e) = s.next().await {
  */
 pub async fn get_interfaces_async(
 ) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
-    /* Group constants from <linux/rtnetlink.h> not wrapped by neli 0.6.1:
-     *  1 = RTNLGRP_LINK (link events)
-     *  5 = RTNLGRP_IPV4_IFADDR (ipv4 events)
-     *  9 = RTNLGRP_IPV6_IFADDR (ipv6 events)
-     */
-    let link_handle = NlSocketHandle::connect(NlFamily::Route, None, &[1])?;
-    let mut link_socket = NlSocket::new(link_handle)?;
-    let addr4_handle = NlSocketHandle::connect(NlFamily::Route, None, &[5])?;
-    let mut addr4_socket = NlSocket::new(addr4_handle)?;
-    let addr6_handle = NlSocketHandle::connect(NlFamily::Route, None, &[9])?;
-    let mut addr6_socket = NlSocket::new(addr6_handle)?;
+    get_interfaces_async_inner(
+        NlSocketHandle::connect,
+        link_sender,
+        addr_sender,
+        NlSocket::new::<NlSocketHandle>,
+    )
+}
 
+/// The type of NlSocketHandle::connect
+type HandleFn =
+    fn(NlFamily, Option<u32>, &[u32]) -> Result<NlSocketHandle, Error>;
+
+/// The type of NlSocket::new::<NlSocketHandle>
+type SocketFn = fn(NlSocketHandle) -> Result<NlSocket, Error>;
+
+/// Like NlSocketHandle::send::<Nlmsghdr<Rtm, Ifinfomsg>>
+type SendLinkMessageFn =
+    fn(&mut NlSocketHandle, Nlmsghdr<Rtm, Ifinfomsg>) -> Result<(), SerError>;
+
+/// Like NlSocketHandle::send::<Nlmsghdr<Rtm, Ifaddrmsg>>
+type SendAddrMessageFn =
+    fn(&mut NlSocketHandle, Nlmsghdr<Rtm, Ifaddrmsg>) -> Result<(), SerError>;
+
+fn link_sender(s: &mut NlSocketHandle, m: Nlmsghdr<Rtm, Ifinfomsg>)
+               -> Result<(), SerError> {
+    s.send(m)
+}
+
+fn addr_sender(s: &mut NlSocketHandle, m: Nlmsghdr<Rtm, Ifaddrmsg>)
+               -> Result<(), SerError> {
+    s.send(m)
+}
+
+fn get_interfaces_async_inner(
+    handle_fn: HandleFn,
+    send_link_fn: SendLinkMessageFn,
+    send_addr_fn: SendAddrMessageFn,
+    socket_fn: SocketFn,
+) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
+    get_interfaces_async_inner2(
+        create_link_socket(handle_fn, send_link_fn, socket_fn)?,
+        create_ipv4addr_socket(handle_fn, send_addr_fn, socket_fn)?,
+        create_ipv6addr_socket(handle_fn, send_addr_fn, socket_fn)?,
+    )
+}
+
+fn create_link_socket(
+    handle_fn: HandleFn,
+    send_link_fn: SendLinkMessageFn,
+    socket_fn: SocketFn,
+) -> Result<NlSocket, Error> {
+    let mut s = handle_fn(NlFamily::Route, None, &[1])?; // =RTNLGRP_LINK
     let ifinfomsg = Ifinfomsg::new(
         RtAddrFamily::Unspecified,
         Arphrd::Ether,
@@ -285,7 +324,16 @@ pub async fn get_interfaces_async(
         None,
         NlPayload::Payload(ifinfomsg),
     );
+    send_link_fn(&mut s, nl_link_header).map_err(map_tx_error)?;
+    socket_fn(s)
+}
 
+fn create_ipv4addr_socket(
+    handle_fn: HandleFn,
+    send_addr_fn: SendAddrMessageFn,
+    socket_fn: SocketFn,
+) -> Result<NlSocket, Error> {
+    let mut s = handle_fn(NlFamily::Route, None, &[5])?; // =RTNLGRP_IPV4_IFADDR
     let ifaddrmsg = Ifaddrmsg {
         ifa_family: RtAddrFamily::Inet,
         ifa_prefixlen: 0,
@@ -302,8 +350,17 @@ pub async fn get_interfaces_async(
         None,
         NlPayload::Payload(ifaddrmsg),
     );
+    send_addr_fn(&mut s, nl_addr4_header).map_err(map_tx_error)?;
+    socket_fn(s)
+}
 
-    let ifaddr6msg = Ifaddrmsg {
+fn create_ipv6addr_socket(
+    handle_fn: HandleFn,
+    send_addr_fn: SendAddrMessageFn,
+    socket_fn: SocketFn,
+) -> Result<NlSocket, Error> {
+    let mut s = handle_fn(NlFamily::Route, None, &[9])?; // =RTNLGRP_IPV6_IFADDR
+    let ifaddrmsg = Ifaddrmsg {
         ifa_family: RtAddrFamily::Inet6,
         ifa_prefixlen: 0,
         ifa_flags: IfaFFlags::empty(),
@@ -317,16 +374,17 @@ pub async fn get_interfaces_async(
         NlmFFlags::new(&[NlmF::Request, NlmF::Root]),
         None,
         None,
-        NlPayload::Payload(ifaddr6msg),
+        NlPayload::Payload(ifaddrmsg),
     );
+    send_addr_fn(&mut s, nl_addr6_header).map_err(map_tx_error)?;
+    socket_fn(s)
+}
 
-    let (rc1, rc2, rc3) = join! {
-        link_socket.send(&nl_link_header),
-        addr4_socket.send(&nl_addr4_header),
-        addr6_socket.send(&nl_addr6_header),
-    };
-    rc1.and(rc2).and(rc3).map_err(map_tx_error)?;
-
+fn get_interfaces_async_inner2(
+    link_socket: NlSocket,
+    addr4_socket: NlSocket,
+    addr6_socket: NlSocket,
+) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
     Ok(stream::select(
         Box::pin(get_links(link_socket)),
         stream::select(
@@ -886,6 +944,119 @@ mod tests {
                 24
             )
         );
+    }
+
+    fn failing_handle_fn(_: NlFamily, _: Option<u32>,
+                         _: &[u32]) -> Result<NlSocketHandle, Error> {
+        Err(std::io::Error::from(ErrorKind::UnexpectedEof))
+    }
+
+    #[test]
+    fn create_link_passes_on_handle_error() {
+        let s = create_link_socket(failing_handle_fn,
+                                   link_sender,
+                                   NlSocket::new::<NlSocketHandle>);
+        assert!(s.is_err());
+    }
+
+    fn failing_link_sender(_: &mut NlSocketHandle, _: Nlmsghdr<Rtm, Ifinfomsg>)
+                           -> Result<(), SerError> {
+        Err(SerError::BufferNotFilled)
+    }
+
+    #[test]
+    fn create_link_passes_on_send_error() {
+        let s = create_link_socket(NlSocketHandle::connect,
+                                   failing_link_sender,
+                                   NlSocket::new::<NlSocketHandle>);
+        assert!(s.is_err());
+    }
+
+    #[test]
+    fn create_ipv4addr_passes_on_handle_error() {
+        let s = create_ipv4addr_socket(failing_handle_fn,
+                                       addr_sender,
+                                       NlSocket::new::<NlSocketHandle>);
+        assert!(s.is_err());
+    }
+
+    fn failing_addr_sender(_: &mut NlSocketHandle, _: Nlmsghdr<Rtm, Ifaddrmsg>)
+                           -> Result<(), SerError> {
+        Err(SerError::BufferNotFilled)
+    }
+
+    #[test]
+    fn create_ipv4addr_passes_on_send_error() {
+        let s = create_ipv4addr_socket(NlSocketHandle::connect,
+                                       failing_addr_sender,
+                                       NlSocket::new::<NlSocketHandle>);
+        assert!(s.is_err());
+    }
+
+    #[test]
+    fn create_ipv6addr_passes_on_handle_error() {
+        let s = create_ipv6addr_socket(failing_handle_fn,
+                                       addr_sender,
+                                       NlSocket::new::<NlSocketHandle>);
+        assert!(s.is_err());
+    }
+
+    #[test]
+    fn create_ipv6addr_passes_on_send_error() {
+        let s = create_ipv6addr_socket(NlSocketHandle::connect,
+                                       failing_addr_sender,
+                                       NlSocket::new::<NlSocketHandle>);
+        assert!(s.is_err());
+    }
+
+    #[test]
+    fn get_interfaces_passes_on_link_error() {
+        let s = get_interfaces_async_inner(
+            |_,_,_| {
+                Err(std::io::Error::from(ErrorKind::UnexpectedEof))
+            },
+            link_sender,
+            addr_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
+
+        assert!(s.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_interfaces_passes_on_addr4_error() {
+        let s = get_interfaces_async_inner(
+            |x,y,g| {
+                if g[0] == 5 {
+                    Err(std::io::Error::from(ErrorKind::UnexpectedEof))
+                } else {
+                    NlSocketHandle::connect(x,y,g)
+                }
+            },
+            link_sender,
+            addr_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
+
+        assert!(s.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_interfaces_passes_on_addr6_error() {
+        let s = get_interfaces_async_inner(
+            |x,y,g| {
+                if g[0] == 9 {
+                    Err(std::io::Error::from(ErrorKind::UnexpectedEof))
+                } else {
+                    NlSocketHandle::connect(x,y,g)
+                }
+            },
+            link_sender,
+            addr_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
+
+        assert!(s.is_err());
     }
 
     #[test]
