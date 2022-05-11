@@ -15,6 +15,7 @@
 //!  - [x] IPv6 in linux_netlink
 //!  - [x] Better test coverage
 //!  - [x] Does DelAddr need to include the address? *yes*
+//!  - [ ] Can we use just one netlink socket, perhaps with lower-level neli?
 //!  - [ ] Turn async into a (cargo) Feature
 //!
 

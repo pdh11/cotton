@@ -256,6 +256,13 @@ while let Some(e) = s.next().await {
  */
 pub async fn get_interfaces_async(
 ) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
+    /* Pass through to an inner function for testability. Hopefully
+     * the compiler notices that in cfg(not test) builds, this is the
+     * only call to `_inner` and it can be inlined, and then `_inner2`
+     * can be inlined, and then these four function pointers can be
+     * resolved and inlined, and users will have paid no performance
+     * cost for the testability.
+     */
     get_interfaces_async_inner(
         NlSocketHandle::connect,
         link_sender,
@@ -279,13 +286,17 @@ type SendLinkMessageFn =
 type SendAddrMessageFn =
     fn(&mut NlSocketHandle, Nlmsghdr<Rtm, Ifaddrmsg>) -> Result<(), SerError>;
 
-fn link_sender(s: &mut NlSocketHandle, m: Nlmsghdr<Rtm, Ifinfomsg>)
-               -> Result<(), SerError> {
+fn link_sender(
+    s: &mut NlSocketHandle,
+    m: Nlmsghdr<Rtm, Ifinfomsg>,
+) -> Result<(), SerError> {
     s.send(m)
 }
 
-fn addr_sender(s: &mut NlSocketHandle, m: Nlmsghdr<Rtm, Ifaddrmsg>)
-               -> Result<(), SerError> {
+fn addr_sender(
+    s: &mut NlSocketHandle,
+    m: Nlmsghdr<Rtm, Ifaddrmsg>,
+) -> Result<(), SerError> {
     s.send(m)
 }
 
@@ -946,75 +957,92 @@ mod tests {
         );
     }
 
-    fn failing_handle_fn(_: NlFamily, _: Option<u32>,
-                         _: &[u32]) -> Result<NlSocketHandle, Error> {
+    fn failing_handle_fn(
+        _: NlFamily,
+        _: Option<u32>,
+        _: &[u32],
+    ) -> Result<NlSocketHandle, Error> {
         Err(std::io::Error::from(ErrorKind::UnexpectedEof))
     }
 
     #[test]
     fn create_link_passes_on_handle_error() {
-        let s = create_link_socket(failing_handle_fn,
-                                   link_sender,
-                                   NlSocket::new::<NlSocketHandle>);
+        let s = create_link_socket(
+            failing_handle_fn,
+            link_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
         assert!(s.is_err());
     }
 
-    fn failing_link_sender(_: &mut NlSocketHandle, _: Nlmsghdr<Rtm, Ifinfomsg>)
-                           -> Result<(), SerError> {
+    fn failing_link_sender(
+        _: &mut NlSocketHandle,
+        _: Nlmsghdr<Rtm, Ifinfomsg>,
+    ) -> Result<(), SerError> {
         Err(SerError::BufferNotFilled)
     }
 
     #[test]
     fn create_link_passes_on_send_error() {
-        let s = create_link_socket(NlSocketHandle::connect,
-                                   failing_link_sender,
-                                   NlSocket::new::<NlSocketHandle>);
+        let s = create_link_socket(
+            NlSocketHandle::connect,
+            failing_link_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
         assert!(s.is_err());
     }
 
     #[test]
     fn create_ipv4addr_passes_on_handle_error() {
-        let s = create_ipv4addr_socket(failing_handle_fn,
-                                       addr_sender,
-                                       NlSocket::new::<NlSocketHandle>);
+        let s = create_ipv4addr_socket(
+            failing_handle_fn,
+            addr_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
         assert!(s.is_err());
     }
 
-    fn failing_addr_sender(_: &mut NlSocketHandle, _: Nlmsghdr<Rtm, Ifaddrmsg>)
-                           -> Result<(), SerError> {
+    fn failing_addr_sender(
+        _: &mut NlSocketHandle,
+        _: Nlmsghdr<Rtm, Ifaddrmsg>,
+    ) -> Result<(), SerError> {
         Err(SerError::BufferNotFilled)
     }
 
     #[test]
     fn create_ipv4addr_passes_on_send_error() {
-        let s = create_ipv4addr_socket(NlSocketHandle::connect,
-                                       failing_addr_sender,
-                                       NlSocket::new::<NlSocketHandle>);
+        let s = create_ipv4addr_socket(
+            NlSocketHandle::connect,
+            failing_addr_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
         assert!(s.is_err());
     }
 
     #[test]
     fn create_ipv6addr_passes_on_handle_error() {
-        let s = create_ipv6addr_socket(failing_handle_fn,
-                                       addr_sender,
-                                       NlSocket::new::<NlSocketHandle>);
+        let s = create_ipv6addr_socket(
+            failing_handle_fn,
+            addr_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
         assert!(s.is_err());
     }
 
     #[test]
     fn create_ipv6addr_passes_on_send_error() {
-        let s = create_ipv6addr_socket(NlSocketHandle::connect,
-                                       failing_addr_sender,
-                                       NlSocket::new::<NlSocketHandle>);
+        let s = create_ipv6addr_socket(
+            NlSocketHandle::connect,
+            failing_addr_sender,
+            NlSocket::new::<NlSocketHandle>,
+        );
         assert!(s.is_err());
     }
 
     #[test]
     fn get_interfaces_passes_on_link_error() {
         let s = get_interfaces_async_inner(
-            |_,_,_| {
-                Err(std::io::Error::from(ErrorKind::UnexpectedEof))
-            },
+            |_, _, _| Err(std::io::Error::from(ErrorKind::UnexpectedEof)),
             link_sender,
             addr_sender,
             NlSocket::new::<NlSocketHandle>,
@@ -1026,11 +1054,11 @@ mod tests {
     #[tokio::test]
     async fn get_interfaces_passes_on_addr4_error() {
         let s = get_interfaces_async_inner(
-            |x,y,g| {
+            |x, y, g| {
                 if g[0] == 5 {
                     Err(std::io::Error::from(ErrorKind::UnexpectedEof))
                 } else {
-                    NlSocketHandle::connect(x,y,g)
+                    NlSocketHandle::connect(x, y, g)
                 }
             },
             link_sender,
@@ -1044,11 +1072,11 @@ mod tests {
     #[tokio::test]
     async fn get_interfaces_passes_on_addr6_error() {
         let s = get_interfaces_async_inner(
-            |x,y,g| {
+            |x, y, g| {
                 if g[0] == 9 {
                     Err(std::io::Error::from(ErrorKind::UnexpectedEof))
                 } else {
-                    NlSocketHandle::connect(x,y,g)
+                    NlSocketHandle::connect(x, y, g)
                 }
             },
             link_sender,
