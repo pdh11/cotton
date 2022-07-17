@@ -73,6 +73,15 @@ fn receive(
     Ok((r.bytes, IpAddr::V4(rxon), SocketAddr::V4(wasfrom)))
 }
 
+/** Send a UDP datagram from a specific interface
+ *
+ * Works even if two interfaces share the same IP range (169.254/16, for
+ * instance) so long as they have different addresses.
+ *
+ * For how this works see https://man7.org/linux/man-pages/man7/ip.7.html
+ *
+ * This facility probably only works on Linux.
+ */
 fn send_from(
     fd: RawFd,
     buffer: &[u8],
@@ -471,8 +480,12 @@ impl Service {
     /* @todo advertise() */
 }
 
-#[tokio::main]
+#[tokio::main(flavor="current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
+    println!("ssdp-search from {} {}",
+             env!("CARGO_PKG_NAME"),
+             env!("CARGO_PKG_VERSION"));
+
     let mut s = Service::new().await?;
 
     let mut map = HashMap::new();
