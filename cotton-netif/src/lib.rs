@@ -3,18 +3,19 @@
 //! The netif crate encapsulates the obtaining of the host's network
 //! interfaces and IP addresses. It supports both static/synchronous
 //! listing (i.e., a snapshot of the current list of network
-//! interfaces) using [get_interfaces] and dynamic/asynchronous
+//! interfaces) using [`get_interfaces`] and dynamic/asynchronous
 //! listing (i.e., getting events as network interfaces and addresses
-//! come and go) using [get_interfaces_async].
+//! come and go) using [`get_interfaces_async`].
 //!
 //! At present this crate *only works on Linux* (and maybe BSD) but
 //! the structure is such that adding compatibility with other
 //! platforms in future, shouldn't require changes to any client code.
 //!
 //! Todo:
-//!  - [x] IPv6 in linux_netlink
+//!  - [x] IPv6 in `linux_netlink`
 //!  - [x] Better test coverage
-//!  - [x] Does DelAddr need to include the address? *yes*
+//!  - [x] Does `DelAddr` need to include the address? *yes*
+//!  - [ ] Can `get_interfaces_async` itself not be async?
 //!  - [ ] Can we use just one netlink socket, perhaps with lower-level neli?
 //!  - [ ] Turn async into a (cargo) Feature
 //!
@@ -99,11 +100,12 @@ mod tests {
     #[test]
     fn test_index_debug() {
         let ix = InterfaceIndex(3);
-        let s = format!("{:?}", ix);
+        let s = format!("{ix:?}");
         assert_eq!(s, "InterfaceIndex(3)".to_string());
     }
 
     #[test]
+    #[allow(clippy::clone_on_copy)]
     fn test_index_clone() {
         let ix = InterfaceIndex(4);
         let ix2 = ix.clone();
@@ -130,7 +132,7 @@ mod tests {
     #[test]
     fn test_event_debug() {
         let e = NetworkEvent::DelLink(InterfaceIndex(7));
-        let s = format!("{:?}", e);
+        let s = format!("{e:?}");
         assert_eq!(s, "DelLink(InterfaceIndex(7))");
     }
 

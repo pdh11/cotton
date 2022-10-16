@@ -1,4 +1,4 @@
-use super::*;
+use super::{Flags, InterfaceIndex, NetworkEvent};
 use nix::ifaddrs;
 use nix::net::if_::InterfaceFlags;
 use std::collections::hash_map::Entry;
@@ -7,16 +7,16 @@ use std::net::{IpAddr, Ipv4Addr};
 
 /** Obtain the current list of network interfaces
 
-The returned iterator provides a sequence of [NetworkEvent]
+The returned iterator provides a sequence of [`NetworkEvent`]
 objects, each describing a network interface (as
-[NetworkEvent::NewLink]) or an address on that interface (as
-[NetworkEvent::NewAddr]). An interface may have several addresses,
-both IPv4 and IPv6. In all cases, the [NetworkEvent::NewLink] event
+[`NetworkEvent::NewLink`]) or an address on that interface (as
+[`NetworkEvent::NewAddr`]). An interface may have several addresses,
+both IPv4 and IPv6. In all cases, the [`NetworkEvent::NewLink`] event
 describing an interface, will be produced before that interface's
-[NetworkEvent::NewAddr] event or events.
+[`NetworkEvent::NewAddr`] event or events.
 
-As the list is a snapshot of the current state, no [NetworkEvent::DelLink]
-or [NetworkEvent::DelAddr] events will be generated.
+As the list is a snapshot of the current state, no [`NetworkEvent::DelLink`]
+or [`NetworkEvent::DelAddr`] events will be generated.
 
 For a simple listing of the returned information, just use println:
 
@@ -62,6 +62,11 @@ for name in get_interfaces()?
 };
 # Ok::<(), std::io::Error>(())
 ```
+
+# Errors
+
+Returns Err if the underlying getifaddrs() system call fails, see
+getifaddrs(3).
 
  */
 pub fn get_interfaces(
@@ -121,15 +126,15 @@ where
         InterfaceMap {
             iter,
             pending: None,
-            index_map: Default::default(),
+            index_map: HashMap::default(),
             next_index: 1,
         }
     }
 
-    /** Process one InterfaceAddress result from getifaddrs
+    /** Process one `InterfaceAddress` result from getifaddrs
      *
-     * One result can give rise to at most one NewLink message and one NewAddr,
-     * so we return a 2-tuple of Options.
+     * One result can give rise to at most one NewLink message and one
+     * NewAddr, so we return a 2-tuple of Options.
      */
     fn check(
         &mut self,
@@ -153,7 +158,7 @@ where
                     Some(NetworkEvent::NewLink(
                         InterfaceIndex(index),
                         name,
-                        map_interface_flags(&ifaddr.flags),
+                        map_interface_flags(ifaddr.flags),
                     )),
                 )
             }
@@ -168,7 +173,7 @@ where
                     addr_message = Some(NetworkEvent::NewAddr(
                         InterfaceIndex(index),
                         ip,
-                        netmask.ip().leading_ones() as u8,
+                        (netmask.ip().leading_ones() & 0xFF) as u8,
                     ));
                 }
             } else if let Some(ipv6) = addr.as_sockaddr_in6() {
@@ -176,8 +181,8 @@ where
                     addr_message = Some(NetworkEvent::NewAddr(
                         InterfaceIndex(index),
                         IpAddr::from(ipv6.ip()),
-                        u128::from_be_bytes(netmask.as_ref().sin6_addr.s6_addr)
-                            .leading_ones() as u8,
+                        (u128::from_be_bytes(netmask.as_ref().sin6_addr.s6_addr)
+                            .leading_ones() & 0xFF) as u8,
                     ));
                 }
             }
@@ -186,8 +191,8 @@ where
     }
 }
 
-fn map_interface_flags(flags: &InterfaceFlags) -> Flags {
-    let mut newflags = Default::default();
+fn map_interface_flags(flags: InterfaceFlags) -> Flags {
+    let mut newflags = Flags::default();
     for (iff, newf) in [
         (InterfaceFlags::IFF_UP, Flags::UP),
         (InterfaceFlags::IFF_RUNNING, Flags::RUNNING),
@@ -215,13 +220,13 @@ mod tests {
 
     #[test]
     fn flag_up() {
-        assert_eq!(map_interface_flags(&InterfaceFlags::IFF_UP), Flags::UP);
+        assert_eq!(map_interface_flags(InterfaceFlags::IFF_UP), Flags::UP);
     }
 
     #[test]
     fn flag_running() {
         assert_eq!(
-            map_interface_flags(&InterfaceFlags::IFF_RUNNING),
+            map_interface_flags(InterfaceFlags::IFF_RUNNING),
             Flags::RUNNING
         );
     }
@@ -229,7 +234,7 @@ mod tests {
     #[test]
     fn flag_loopback() {
         assert_eq!(
-            map_interface_flags(&InterfaceFlags::IFF_LOOPBACK),
+            map_interface_flags(InterfaceFlags::IFF_LOOPBACK),
             Flags::LOOPBACK
         );
     }
@@ -237,7 +242,7 @@ mod tests {
     #[test]
     fn flag_p2p() {
         assert_eq!(
-            map_interface_flags(&InterfaceFlags::IFF_POINTOPOINT),
+            map_interface_flags(InterfaceFlags::IFF_POINTOPOINT),
             Flags::POINTTOPOINT
         );
     }
@@ -245,7 +250,7 @@ mod tests {
     #[test]
     fn flag_broadcast() {
         assert_eq!(
-            map_interface_flags(&InterfaceFlags::IFF_BROADCAST),
+            map_interface_flags(InterfaceFlags::IFF_BROADCAST),
             Flags::BROADCAST
         );
     }
@@ -253,15 +258,9 @@ mod tests {
     #[test]
     fn flag_multicast() {
         assert_eq!(
-            map_interface_flags(&InterfaceFlags::IFF_MULTICAST),
+            map_interface_flags(InterfaceFlags::IFF_MULTICAST),
             Flags::MULTICAST
         );
-    }
-
-    fn test_iter(
-        ifaddrs: &[ifaddrs::InterfaceAddress],
-    ) -> impl Iterator<Item = ifaddrs::InterfaceAddress> {
-        ifaddrs.to_vec().into_iter()
     }
 
     #[test]
@@ -278,7 +277,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new(test_iter(&[ifaddr]));
+        let mut map = InterfaceMap::new([ifaddr].into_iter());
 
         let link = map.next();
 
@@ -334,7 +333,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
         let link = map.next();
         assert!(link.is_some());
@@ -390,16 +389,16 @@ mod tests {
         let ifaddr2 = ifaddrs::InterfaceAddress {
             interface_name: "eth0:1".to_string(),
             flags: InterfaceFlags::IFF_UP,
-            address: Some(addr.clone()),
+            address: Some(addr),
             netmask: Some(addr),
             broadcast: None,
             destination: None,
         };
 
-        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
-        let _ = map.next(); // link
-        let _ = map.next(); // addr
+        let _a = map.next(); // link
+        let _b = map.next(); // addr
         let fin = map.next();
 
         assert!(fin.is_none());
@@ -431,7 +430,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
         let link = map.next();
         assert!(link.is_some());
@@ -480,7 +479,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
         let link = map.next();
         assert!(link.is_some());
@@ -550,7 +549,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
         let link = map.next(); // Returns IPv4
 
@@ -628,7 +627,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new(test_iter(&[ifaddr, ifaddr2]));
+        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
 
         let link = map.next();
         assert!(link.is_some());

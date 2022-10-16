@@ -1,4 +1,4 @@
-use super::*;
+use super::{Flags, InterfaceIndex, NetworkEvent};
 
 use std::{
     io::Error,
@@ -67,7 +67,7 @@ fn map_tx_error(err: SerError) -> Error {
 }
 
 fn map_flags(flags: &IffFlags) -> Flags {
-    let mut newflags = Default::default();
+    let mut newflags = Flags::default();
     for (iff, newf) in [
         (&Iff::Up, Flags::UP),
         (&Iff::Running, Flags::RUNNING),
@@ -83,6 +83,7 @@ fn map_flags(flags: &IffFlags) -> Flags {
     newflags
 }
 
+#[allow(clippy::cast_sign_loss)]
 fn translate_link_message(
     msg: &Nlmsghdr<Rtm, Ifinfomsg>,
 ) -> Option<NetworkEvent> {
@@ -113,6 +114,7 @@ fn translate_link_message(
     None
 }
 
+#[allow(clippy::cast_sign_loss)]
 fn translate_addr_message(
     msg: &Nlmsghdr<Rtm, Ifaddrmsg>,
 ) -> Option<NetworkEvent> {
@@ -189,20 +191,20 @@ fn get_addrs(
 
 /** Obtain the current list of network interfaces and a stream of future events
 
-The stream consists of a sequence of [NetworkEvent]
+The stream consists of a sequence of [`NetworkEvent`]
 objects, each describing a network interface (as
-[NetworkEvent::NewLink]) or an address on that interface (as
-[NetworkEvent::NewAddr]). An interface may have several addresses,
-both IPv4 and IPv6. In all cases, the [NetworkEvent::NewLink] event
+[`NetworkEvent::NewLink`]) or an address on that interface (as
+[`NetworkEvent::NewAddr`]). An interface may have several addresses,
+both IPv4 and IPv6. In all cases, the [`NetworkEvent::NewLink`] event
 describing an interface, will be generated before that interface's
-[NetworkEvent::NewAddr] event or events.
+[`NetworkEvent::NewAddr`] event or events.
 
-All interfaces and addresses already present when get_interfaces_async
+All interfaces and addresses already present when `get_interfaces_async`
 is called, will be immediately announced as if newly-added.
 
 If addresses are deactivated or interfaces disappear -- such as when a USB
-network adaptor is unplugged -- [NetworkEvent::DelLink]
-or [NetworkEvent::DelAddr] events will be generated.
+network adaptor is unplugged -- [`NetworkEvent::DelLink`]
+or [`NetworkEvent::DelAddr`] events will be generated.
 
 The stream continues to wait for future events, i.e. the `while` loop
 in the examples is an *infinite* loop. In normal use, an asynchronous
@@ -271,18 +273,18 @@ pub async fn get_interfaces_async(
     )
 }
 
-/// The type of NlSocketHandle::connect
+/// The type of `NlSocketHandle::connect`
 type HandleFn =
     fn(NlFamily, Option<u32>, &[u32]) -> Result<NlSocketHandle, Error>;
 
-/// The type of NlSocket::new::<NlSocketHandle>
+/// The type of `NlSocket::new::<NlSocketHandle>`
 type SocketFn = fn(NlSocketHandle) -> Result<NlSocket, Error>;
 
-/// Like NlSocketHandle::send::<Nlmsghdr<Rtm, Ifinfomsg>>
+/// Like `NlSocketHandle::send::<Nlmsghdr<Rtm, Ifinfomsg>>`
 type SendLinkMessageFn =
     fn(&mut NlSocketHandle, Nlmsghdr<Rtm, Ifinfomsg>) -> Result<(), SerError>;
 
-/// Like NlSocketHandle::send::<Nlmsghdr<Rtm, Ifaddrmsg>>
+/// Like `NlSocketHandle::send::<Nlmsghdr<Rtm, Ifaddrmsg>>`
 type SendAddrMessageFn =
     fn(&mut NlSocketHandle, Nlmsghdr<Rtm, Ifaddrmsg>) -> Result<(), SerError>;
 
@@ -306,11 +308,11 @@ fn get_interfaces_async_inner(
     send_addr_fn: SendAddrMessageFn,
     socket_fn: SocketFn,
 ) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
-    get_interfaces_async_inner2(
+    Ok(get_interfaces_async_inner2(
         create_link_socket(handle_fn, send_link_fn, socket_fn)?,
         create_ipv4addr_socket(handle_fn, send_addr_fn, socket_fn)?,
         create_ipv6addr_socket(handle_fn, send_addr_fn, socket_fn)?,
-    )
+    ))
 }
 
 fn create_link_socket(
@@ -395,14 +397,14 @@ fn get_interfaces_async_inner2(
     link_socket: NlSocket,
     addr4_socket: NlSocket,
     addr6_socket: NlSocket,
-) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
-    Ok(stream::select(
+) -> impl Stream<Item = Result<NetworkEvent, Error>> {
+    stream::select(
         Box::pin(get_links(link_socket)),
         stream::select(
             Box::pin(get_addrs(addr4_socket)),
             Box::pin(get_addrs(addr6_socket)),
         ),
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -610,7 +612,7 @@ mod tests {
             NetworkEvent::NewLink(
                 InterfaceIndex(3),
                 "eth0".to_string(),
-                Default::default()
+                Flags::default()
             )
         );
     }
