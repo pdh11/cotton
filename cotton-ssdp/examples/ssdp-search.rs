@@ -480,11 +480,13 @@ impl Service {
     /* @todo advertise() */
 }
 
-#[tokio::main(flavor="current_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    println!("ssdp-search from {} {}",
-             env!("CARGO_PKG_NAME"),
-             env!("CARGO_PKG_VERSION"));
+    println!(
+        "ssdp-search from {} {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    );
 
     let mut s = Service::new().await?;
 
