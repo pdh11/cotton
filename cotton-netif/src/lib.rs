@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn test_index_debug() {
         let ix = InterfaceIndex(3);
-        let s = format!("{ix:?}");
+        let s = format!("{:?}", ix);
         assert_eq!(s, "InterfaceIndex(3)".to_string());
     }
 
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn test_event_debug() {
         let e = NetworkEvent::DelLink(InterfaceIndex(7));
-        let s = format!("{e:?}");
+        let s = format!("{:?}", e);
         assert_eq!(s, "DelLink(InterfaceIndex(7))");
     }
 

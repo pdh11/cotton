@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use std::error::Error;
 
-#[tokio::main(flavor="current_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("static:");
 

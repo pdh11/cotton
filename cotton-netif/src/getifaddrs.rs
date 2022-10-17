@@ -181,8 +181,11 @@ where
                     addr_message = Some(NetworkEvent::NewAddr(
                         InterfaceIndex(index),
                         IpAddr::from(ipv6.ip()),
-                        (u128::from_be_bytes(netmask.as_ref().sin6_addr.s6_addr)
-                            .leading_ones() & 0xFF) as u8,
+                        (u128::from_be_bytes(
+                            netmask.as_ref().sin6_addr.s6_addr,
+                        )
+                        .leading_ones()
+                            & 0xFF) as u8,
                     ));
                 }
             }
