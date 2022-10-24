@@ -22,6 +22,7 @@ For a simple listing of the returned information, just use println:
 
 ```rust
 # use cotton_netif::*;
+# #[cfg(not(miri))]
 for e in get_interfaces()? {
     println!("{:?}", e);
 }
@@ -51,6 +52,7 @@ multicast-capable interfaces:
 
 ```rust
 # use cotton_netif::*;
+# #[cfg(not(miri))]
 for name in get_interfaces()?
     .filter_map(|e| match e {
         NetworkEvent::NewLink(_i, name, flags)
@@ -647,6 +649,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri,ignore)]
     fn zzz_instantiate() {
         assert!(get_interfaces().is_ok());
     }
