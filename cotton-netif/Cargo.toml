@@ -1,6 +1,10 @@
 [package]
 name = "cotton-netif"
 version = "0.0.1"
+description = "Enumerating available network interfaces and their IP addresses"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = ["network-programming"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
