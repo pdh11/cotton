@@ -1,6 +1,6 @@
 [package]
 name = "cotton-netif"
-version = "0.0.1"
+version = "0.0.2"
 description = "Enumerating available network interfaces and their IP addresses"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
