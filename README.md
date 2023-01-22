@@ -1,4 +1,4 @@
-[example workflow](https://github.com/pdh11/cotton/actions/workflows/ci.yml/badge.svg) [![codecov](https://codecov.io/gh/pdh11/cotton/branch/main/graph/badge.svg?token=SMSZEPGRHA)](https://codecov.io/gh/pdh11/cotton) [crates.io](https://img.shields.io/crates/v/cotton-netif) [![License: CC0-1.0](https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg)](http://creativecommons.org/publicdomain/zero/1.0/)
+![example workflow](https://github.com/pdh11/cotton/actions/workflows/ci.yml/badge.svg) [![codecov](https://codecov.io/gh/pdh11/cotton/branch/main/graph/badge.svg?token=SMSZEPGRHA)](https://codecov.io/gh/pdh11/cotton) ![Crates.io](https://img.shields.io/crates/v/cotton-netif) [![License: CC0-1.0](https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg)](http://creativecommons.org/publicdomain/zero/1.0/)
 
 # Cotton
 
@@ -19,3 +19,4 @@ My long-term goals for this project as a whole:
    distributing, and publicising of it, after a career spent with C++
 
 Everything is licensed under Creative Commons CCO, qv.
+![Crates.io](https://img.shields.io/crates/v/cotton-netif)
