@@ -9,8 +9,5 @@ authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
 
-[target.'cfg(not(target_os="none"))'.dependencies]
-log = "0.4.17"
-
 [target.'cfg(target_os="none")'.dependencies]
 defmt = "0.3.0"
