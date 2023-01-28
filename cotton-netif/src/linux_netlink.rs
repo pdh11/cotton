@@ -257,6 +257,10 @@ while let Some(e) = s.next().await {
 # Ok::<(), std::io::Error>(())
 ```
 
+# Errors
+
+Returns Err if the underlying netlink socket failed to open, see netlink(7).
+
  */
 pub async fn get_interfaces_async(
 ) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
