@@ -1,22 +1,20 @@
-cargo-features = ["per-package-target"]
-
 [package]
 authors = ["Peter Hartley <peter@electricimp.com>"]
 name = "cross-stm32f7-nucleo"
 publish = false
 edition = "2021"
 version = "0.0.1"
-forced-target = "thumbv7em-none-eabi"
 
 [[bin]]
 name="hello"
-harness=false
 
 [dependencies]
-cotton-stm32-eth = { path = ".." }
+cotton-stm32-eth-core = { path = "../core" }
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"]}
 cortex-m-rt = "0.7"
 defmt = "0.3.2"
 defmt-rtt = "0.4.0"
 #defmt-test = "0.3.0"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
+
+[workspace]

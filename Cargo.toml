@@ -3,7 +3,7 @@ members = [
     "cotton-netif",
     "cotton-ssdp",
     "cotton-stm32-eth",
-    "cotton-stm32-eth/cross-stm32f7-nucleo",
+    "cotton-stm32-eth/core",
 ]
 
 resolver = "2"

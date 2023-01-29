@@ -7,7 +7,7 @@ use cortex_m::asm;
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
-    cotton_stm32_eth::hello();
+    cotton_stm32_eth_core::hello();
 
     loop {
         asm::bkpt()

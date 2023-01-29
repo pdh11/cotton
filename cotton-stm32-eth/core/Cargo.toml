@@ -1,5 +1,5 @@
 [package]
-name = "cotton-stm32-eth"
+name = "cotton-stm32-eth-core"
 version = "0.0.1"
 description = "Low-level driver for STM32 Ethernet peripheral"
 homepage = "https://github.com/pdh11/cotton"
@@ -9,9 +9,5 @@ authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
 
-[dependencies]
-cotton-stm32-eth-core = { path = "core" }
-
-[features]
-arm=[]
-stm32f7-nucleo=["arm"]
+[target.'cfg(target_os="none")'.dependencies]
+defmt = "0.3.0"
