@@ -649,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     fn zzz_instantiate() {
         assert!(get_interfaces().is_ok());
     }

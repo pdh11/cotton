@@ -799,7 +799,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn get_links_bad_message() {
         let (infd, outfd) = nix::sys::socket::socketpair(
             nix::sys::socket::AddressFamily::Unix,
@@ -828,7 +828,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn get_links_del() {
         let (infd, outfd) = nix::sys::socket::socketpair(
             nix::sys::socket::AddressFamily::Unix,
@@ -881,7 +881,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn get_addrs_bad_message() {
         let (infd, outfd) = nix::sys::socket::socketpair(
             nix::sys::socket::AddressFamily::Unix,
@@ -910,7 +910,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn get_addr_del() {
         let (infd, outfd) = nix::sys::socket::socketpair(
             nix::sys::socket::AddressFamily::Unix,
@@ -995,7 +995,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     fn create_link_passes_on_send_error() {
         let s = create_link_socket(
             NlSocketHandle::connect,
@@ -1023,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     fn create_ipv4addr_passes_on_send_error() {
         let s = create_ipv4addr_socket(
             NlSocketHandle::connect,
@@ -1044,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     fn create_ipv6addr_passes_on_send_error() {
         let s = create_ipv6addr_socket(
             NlSocketHandle::connect,
@@ -1067,7 +1067,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn get_interfaces_passes_on_addr4_error() {
         let s = get_interfaces_async_inner(
             |x, y, g| {
@@ -1086,7 +1086,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn get_interfaces_passes_on_addr6_error() {
         let s = get_interfaces_async_inner(
             |x, y, g| {
@@ -1105,7 +1105,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri,ignore)]
+    #[cfg_attr(miri, ignore)]
     fn zzz_instantiate() {
         assert!(block_on(get_interfaces_async()).is_ok());
     }
