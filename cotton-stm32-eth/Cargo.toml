@@ -8,10 +8,17 @@ categories = ["network-programming"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
+autotests = false
 
 [dependencies]
 cotton-stm32-eth-core = { path = "core" }
+serial_test = { version = "0.6" }
 
 [features]
-arm=[]
-stm32f7-nucleo=["arm"]
+arm = []
+stm32f7-nucleo = ["arm"]
+
+[[test]]
+name = "stm32f7-nucleo"
+path = "tests/stm32f7-nucleo.rs"
+required-features = ["stm32f7-nucleo"]

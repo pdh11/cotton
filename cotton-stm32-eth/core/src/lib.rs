@@ -1,8 +1,8 @@
-#![cfg_attr(target_os="none", no_std)]
+#![cfg_attr(target_os = "none", no_std)]
 
-#[cfg(target_os="none")]
+#[cfg(target_os = "none")]
 use defmt as log;
-#[cfg(not(target_os="none"))]
+#[cfg(not(target_os = "none"))]
 use std as log;
 
 pub fn hello() {
