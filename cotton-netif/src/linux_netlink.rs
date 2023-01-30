@@ -262,6 +262,7 @@ while let Some(e) = s.next().await {
 Returns Err if the underlying netlink socket failed to open, see netlink(7).
 
  */
+#[allow(clippy::unused_async)]
 pub async fn get_interfaces_async(
 ) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
     /* Pass through to an inner function for testability. Hopefully
