@@ -20,7 +20,7 @@ fn main() {
             .arg("thumbv7em-none-eabi")
             .arg("--target-dir")
             .arg("target-arm")
-            .current_dir("cross-stm32f7-nucleo")
+            .current_dir("../cross-stm32f7-nucleo")
             .env_clear()
             .envs(&filtered_env)
             .status()

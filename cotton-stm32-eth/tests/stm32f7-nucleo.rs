@@ -14,7 +14,7 @@ fn arm_stm32f7_hello() {
     let output = Command::new("probe-run")
         .arg("--chip")
         .arg("STM32F746ZGTx")
-        .arg("cross-stm32f7-nucleo/target-arm/thumbv7em-none-eabi/debug/hello")
+        .arg("../cross-stm32f7-nucleo/target-arm/thumbv7em-none-eabi/debug/hello")
         .output()
         .expect("failed to flash STM32F7 Nucleo");
 
