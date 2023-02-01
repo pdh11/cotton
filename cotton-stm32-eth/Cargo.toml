@@ -12,12 +12,12 @@ autotests = false
 
 [dependencies]
 cotton-stm32-eth-core = { path = "core" }
-cross-stm32f7-nucleo = { path = "../cross-stm32f7-nucleo", optional = true }
+#cross-stm32f7-nucleo = { path = "../cross-stm32f7-nucleo", optional = true }
 serial_test = { version = "0.6" }
 
 [features]
 arm = []
-stm32f7-nucleo = ["arm", "dep:cross-stm32f7-nucleo"]
+stm32f7-nucleo = ["arm"]#, "dep:cross-stm32f7-nucleo"]
 
 [[test]]
 name = "stm32f7-nucleo"

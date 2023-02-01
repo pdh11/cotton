@@ -4,9 +4,15 @@ name = "cross-stm32f7-nucleo"
 publish = false
 edition = "2021"
 version = "0.0.1"
+autotests = false
+doctest = false
+harness = false
 
 [[bin]]
 name="hello"
+test = false
+doctest = false
+harness = false
 
 [dependencies]
 cotton-stm32-eth-core = { path = "../cotton-stm32-eth/core" }
