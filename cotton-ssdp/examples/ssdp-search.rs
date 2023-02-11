@@ -2,7 +2,6 @@ use cotton_netif::*;
 use cotton_ssdp::*;
 use futures::Stream;
 use futures_util::StreamExt;
-use libc;
 use nix::cmsg_space;
 use nix::sys::socket::setsockopt;
 use nix::sys::socket::sockopt::Ipv4PacketInfo;
@@ -31,7 +30,7 @@ pub struct IPSettings {
 
 #[derive(Debug)]
 pub struct Interface {
-    ip: Option<IPSettings>,
+    ip: Option<IPSettings>, /// @todo Multiple ip addresses per interface
     up: bool,
     listening: bool,
 }
@@ -51,25 +50,30 @@ fn receive(
     //println!("recvmsg ok");
     let pi = match r.cmsgs().next() {
         Some(ControlMessageOwned::Ipv4PacketInfo(pi)) => pi,
-        _ => return Err(std::io::ErrorKind::InvalidData.into()),
+        _ => {
+            println!("receive: no pktinfo");
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
     };
     let rxon = Ipv4Addr::from(u32::from_be(pi.ipi_spec_dst.s_addr));
-    let wasto = Ipv4Addr::from(u32::from_be(pi.ipi_addr.s_addr));
+    let _wasto = Ipv4Addr::from(u32::from_be(pi.ipi_addr.s_addr));
     let wasfrom = {
         if let Some(ss) = r.address {
             if let Some(sin) = ss.as_sockaddr_in() {
                 SocketAddrV4::new(Ipv4Addr::from(sin.ip()), sin.port())
             } else {
+                println!("receive: wasfrom not ipv4");
                 return Err(std::io::ErrorKind::InvalidData.into());
             }
         } else {
+            println!("receive: wasfrom no address");
             return Err(std::io::ErrorKind::InvalidData.into());
         }
     };
-    println!(
-        "PI ix {} sd {:} ad {:} addr {:?}",
-        pi.ipi_ifindex, rxon, wasto, wasfrom
-    );
+    //    println!(
+    //        "PI ix {} sd {:} ad {:} addr {:?}",
+    //        pi.ipi_ifindex, rxon, wasto, wasfrom
+    //    );
     Ok((r.bytes, IpAddr::V4(rxon), SocketAddr::V4(wasfrom)))
 }
 
@@ -95,7 +99,7 @@ fn send_from(
         ipi_spec_dst: libc::in_addr { s_addr: 0 },
     };
 
-    let cmsg = [ControlMessage::Ipv4PacketInfo(&pi)];
+    let cmsg = ControlMessage::Ipv4PacketInfo(&pi);
     let dest = match to {
         SocketAddr::V4(ipv4) => SockaddrStorage::from(ipv4),
         SocketAddr::V6(ipv6) => SockaddrStorage::from(ipv6),
@@ -103,15 +107,15 @@ fn send_from(
     let r = nix::sys::socket::sendmsg(
         fd,
         &iov,
-        &cmsg,
+        &[cmsg],
         MsgFlags::empty(),
         Some(&dest),
     );
     if let Err(e) = r {
-        //println!("sendmsg {:?}", e);
+        println!("sendmsg {:?}", e);
         return Err(e.into());
     }
-    //println!("sendmsg OK");
+    println!("sendmsg to {:?} OK", to);
     Ok(())
 }
 
@@ -124,9 +128,9 @@ fn parse(packet: &str) -> Result<Message, std::io::Error> {
 
     //println!("  pfx {:?}", prefix);
     let mut map = HashMap::new();
-    while let Some(line) = iter.next() {
+    for line in iter {
         //println!("    line {:?}", line);
-        if let Some((key, value)) = line.split_once(":") {
+        if let Some((key, value)) = line.split_once(':') {
             map.insert(key.to_ascii_uppercase(), value.trim());
         }
     }
@@ -187,6 +191,28 @@ fn parse(packet: &str) -> Result<Message, std::io::Error> {
     Err(std::io::ErrorKind::InvalidData.into())
 }
 
+fn target_match(search: &str, candidate: &str) -> bool {
+    if search == "ssdp:all" {
+        return true;
+    }
+    if search == candidate {
+        return true;
+    }
+    // UPnP DA 1.0 s1.2.3
+    if let Some((sbase, sversion)) = search.rsplit_once(':') {
+        if let Some((cbase, cversion)) = candidate.rsplit_once(':') {
+            if sbase == cbase {
+                if let Ok(sversion) = sversion.parse::<usize>() {
+                    if let Ok(cversion) = cversion.parse::<usize>() {
+                        return cversion <= sversion;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 struct ActiveSearch {
     notification_type: String,
     channel: mpsc::Sender<Response>,
@@ -196,6 +222,7 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 
 struct Inner {
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch>,
+    advertisements: HashMap<String, Advertisement>,
 }
 
 impl Inner {
@@ -212,21 +239,24 @@ impl Inner {
         ReceiverStream::new(rcv)
     }
 
-    fn broadcast(&mut self, response: Response) {
+    fn broadcast(&mut self, response: &Response) {
         self.active_searches.retain(|_, s| {
-            // @todo cleverer matching
-            if s.notification_type == "ssdp:all"
-                || s.notification_type == response.search_target
-            {
-                match s.channel.try_send(response.clone()) {
-                    Ok(_) => true,
-                    Err(mpsc::error::TrySendError::Full(_)) => true,
-                    _ => false,
-                }
+            if target_match(&s.notification_type, &response.search_target) {
+                matches!(s.channel.try_send(response.clone()),
+                         Ok(_) | Err(mpsc::error::TrySendError::Full(_)))
             } else {
                 true
             }
         });
+    }
+
+    fn advertise(
+        &mut self,
+        unique_service_name: String,
+        advertisement: Advertisement,
+    ) {
+        self.advertisements
+            .insert(unique_service_name, advertisement);
     }
 }
 
@@ -239,9 +269,17 @@ struct Task {
 
 impl Task {
     async fn new(inner: Arc<Mutex<Inner>>) -> Result<Task, std::io::Error> {
-        let multicast_socket =
-            UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 1900u16)).await?;
+        let multicast_socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
+            None,
+        )?;
+        multicast_socket.set_nonblocking(true)?;
+        multicast_socket.set_reuse_address(true)?;
+        let multicast_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1900u16);
+        multicast_socket.bind(&socket2::SockAddr::from(multicast_addr))?;
         setsockopt(multicast_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
+        let multicast_socket = UdpSocket::from_std(multicast_socket.into())?;
 
         let search_socket =
             UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
@@ -255,29 +293,84 @@ impl Task {
         })
     }
 
+    fn interface_for(&self, addr: IpAddr) -> Option<InterfaceIndex> {
+        for (k, v) in &self.interfaces {
+            if let Some(settings) = &v.ip {
+                if settings.addr == addr {
+                    return Some(*k);
+                }
+            }
+        }
+        None
+    }
+
     /** Process data arriving on the multicast socket
      *
      * This will be a mixture of notifications and search requests.
      */
     fn process_multicast(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, _wasto, _wasfrom)) = self
+        if let Ok((n, wasto, wasfrom)) = self
             .multicast_socket
             .try_io(tokio::io::Interest::READABLE, || {
                 receive(self.multicast_socket.as_raw_fd(), &mut buf)
             })
         {
-            //println!("RX from {} to {}", wasfrom, wasto);
+            println!("MC RX from {} to {}", wasfrom, wasto);
             if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
                 if let Ok(m) = parse(s) {
                     println!("  {:?}", m);
                     match m {
                         Message::NotifyAlive(a) => {
-                            self.inner.lock().unwrap().broadcast(Response {
+                            self.inner.lock().unwrap().broadcast(&Response {
                                 search_target: a.notification_type,
                                 unique_service_name: a.unique_service_name,
                                 location: a.location,
                             })
+                        },
+                        Message::Search(s) => {
+                            if let Some(ix) = self.interface_for(wasto)
+                            {
+                                println!("Got search for {}", s.search_target);
+                                let inner = self.inner.lock().unwrap();
+                                for (key, value) in &inner.advertisements {
+                                    if target_match(
+                                        &s.search_target,
+                                        &value.notification_type,
+                                    ) {
+                                        println!(
+                                            "  {} matches, replying",
+                                            value.notification_type
+                                        );
+                                        let mut url = value.location.clone();
+                                        let _ = url.set_ip_host(wasto);
+
+                                        let message = format!(
+                                        "HTTP/1.1 200 OK\r
+CACHE-CONTROL: max-age=1800\r
+ST: {}\r
+USN: {}\r
+LOCATION: {}\r
+SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
+\r\n",
+                                            value.notification_type, key,
+                                            url
+                                        );
+                                        let _ = self.search_socket.try_io(
+                                            tokio::io::Interest::WRITABLE,
+                                            || {
+                                                send_from(
+                                                    self.search_socket
+                                                        .as_raw_fd(),
+                                                    message.as_bytes(),
+                                                    wasfrom,
+                                                    ix,
+                                                )
+                                            },
+                                        );
+                                    }
+                                }
+                            }
                         }
                         _ => (),
                     };
@@ -302,12 +395,12 @@ impl Task {
                 receive(self.search_socket.as_raw_fd(), &mut buf)
             })
         {
-            println!("RX from {} to {}", wasfrom, wasto);
+            println!("UC RX from {} to {}", wasfrom, wasto);
             if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
                 if let Ok(m) = parse(s) {
                     println!("  {:?}", m);
                     if let Message::Response(r) = m {
-                        self.inner.lock().unwrap().broadcast(r);
+                        self.inner.lock().unwrap().broadcast(&r);
                     }
                 } else {
                     println!("  BAD {}", s);
@@ -331,6 +424,7 @@ MX: 5\r
 ST: ssdp:all\r
 \r\n";
 
+        println!("if event {:?}", e);
         match e {
             NetworkEvent::NewLink(ix, name, flags) => {
                 let up = flags.contains(
@@ -347,22 +441,23 @@ ST: ssdp:all\r
                                     "239.255.255.250".parse().unwrap(),
                                     ipv4,
                                 )?;
+                                println!("Searching on {:?}", ip);
+                                self.search_socket.try_io(
+                                    tokio::io::Interest::WRITABLE,
+                                    || {
+                                        send_from(
+                                            self.search_socket.as_raw_fd(),
+                                            search_all,
+                                            "239.255.255.250:1900"
+                                                .parse()
+                                                .unwrap(),
+                                            ix,
+                                        )
+                                    },
+                                )?;
+                                println!("New socket on {}", name);
+                                v.listening = true;
                             }
-                            self.search_socket.try_io(
-                                tokio::io::Interest::WRITABLE,
-                                || {
-                                    send_from(
-                                        self.search_socket.as_raw_fd(),
-                                        search_all,
-                                        "239.255.255.250:1900"
-                                            .parse()
-                                            .unwrap(),
-                                        ix,
-                                    )
-                                },
-                            )?;
-                            println!("New socket on {}", name);
-                            v.listening = true;
                         }
                     }
                 } else {
@@ -384,26 +479,34 @@ ST: ssdp:all\r
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if v.up && !v.listening {
                         if let IpAddr::V4(ipv4) = settings.addr {
-                            self.multicast_socket.join_multicast_v4(
-                                "239.255.255.250".parse().unwrap(),
-                                ipv4,
-                            )?;
-                        }
-                        self.search_socket.try_io(
-                            tokio::io::Interest::WRITABLE,
-                            || {
-                                send_from(
-                                    self.search_socket.as_raw_fd(),
-                                    search_all,
-                                    "239.255.255.250:1900".parse().unwrap(),
-                                    ix,
+                            self.multicast_socket
+                                .join_multicast_v4(
+                                    "239.255.255.250".parse().unwrap(),
+                                    ipv4,
                                 )
-                            },
-                        )?;
-                        println!("New socket on {:?}", ix);
-                        v.listening = true;
+                                .map_err(|e| {
+                                    println!("jmg failed {:?}", e);
+                                    e
+                                })?;
+                            println!("Searching on {:?}", settings.addr);
+                            self.search_socket.try_io(
+                                tokio::io::Interest::WRITABLE,
+                                || {
+                                    send_from(
+                                        self.search_socket.as_raw_fd(),
+                                        search_all,
+                                        "239.255.255.250:1900"
+                                            .parse()
+                                            .unwrap(),
+                                        ix,
+                                    )
+                                },
+                            )?;
+                            println!("New socket on {:?}", settings.addr);
+                            v.listening = true;
+                        }
+                        v.ip = Some(settings);
                     }
-                    v.ip = Some(settings);
                 } else {
                     self.interfaces.insert(
                         ix,
@@ -423,7 +526,6 @@ ST: ssdp:all\r
 
 pub struct Service {
     inner: Arc<Mutex<Inner>>,
-    // adverts: ? url::Url::set_ip_host
 }
 
 /** An SSDP service
@@ -434,6 +536,7 @@ impl Service {
     pub async fn new() -> Result<Self, Box<dyn Error>> {
         let inner = Arc::new(Mutex::new(Inner {
             active_searches: SlotMap::with_key(),
+            advertisements: HashMap::default(),
         }));
 
         let (mut s, mut task) = tokio::try_join!(
@@ -443,15 +546,13 @@ impl Service {
 
         tokio::spawn(async move {
             loop {
-                //println!("select");
+                println!("select");
 
                 tokio::select! {
-                    e = s.next() => if let Some(result) = e {
-                        if let Ok(event) = result {
-                            task.process_interface_event(event)
-                                .unwrap_or_else(
-                                    |err| println!("SSDP error {}", err))
-                        }
+                    e = s.next() => if let Some(Ok(event)) = e {
+                        task.process_interface_event(event)
+                            .unwrap_or_else(
+                                |err| println!("SSDP error {}", err))
                     },
                     _ = task.multicast_socket.readable() => task.process_multicast(),
                     _ = task.search_socket.readable() => task.process_search(),
@@ -477,7 +578,18 @@ impl Service {
             .subscribe(notification_type.into())
     }
 
-    /* @todo advertise() */
+    pub fn advertise<USN>(
+        &mut self,
+        unique_service_name: USN,
+        advertisement: Advertisement,
+    ) where
+        USN: Into<String>,
+    {
+        self.inner
+            .lock()
+            .unwrap()
+            .advertise(unique_service_name.into(), advertisement);
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -491,6 +603,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut s = Service::new().await?;
 
     let mut map = HashMap::new();
+
+    let uuid = uuid::Uuid::new_v4();
+
+    s.advertise(
+        uuid.to_string(),
+        Advertisement {
+            notification_type: "test".to_string(),
+            location: url::Url::parse("http://127.0.0.1/test").unwrap(),
+        },
+    );
 
     while let Some(r) = s.subscribe("ssdp:all").next().await {
         //println!("GOT {:?}", r);

@@ -36,6 +36,11 @@ pub enum Message {
     Response(Response),
 }
 
+pub struct Advertisement {
+    pub notification_type: String,
+    pub location: url::Url,
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
