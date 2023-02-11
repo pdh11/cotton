@@ -1,4 +1,5 @@
 use cotton_netif::*;
+use cotton_ssdp::ssdp;
 use cotton_ssdp::*;
 use futures::Stream;
 use futures_util::StreamExt;
@@ -30,7 +31,8 @@ pub struct IPSettings {
 
 #[derive(Debug)]
 pub struct Interface {
-    ip: Option<IPSettings>, /// @todo Multiple ip addresses per interface
+    ip: Option<IPSettings>,
+    /// @todo Multiple ip addresses per interface
     up: bool,
     listening: bool,
 }
@@ -119,78 +121,6 @@ fn send_from(
     Ok(())
 }
 
-fn parse(packet: &str) -> Result<Message, std::io::Error> {
-    let mut iter = packet.lines();
-
-    let prefix = iter
-        .next()
-        .ok_or(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
-
-    //println!("  pfx {:?}", prefix);
-    let mut map = HashMap::new();
-    for line in iter {
-        //println!("    line {:?}", line);
-        if let Some((key, value)) = line.split_once(':') {
-            map.insert(key.to_ascii_uppercase(), value.trim());
-        }
-    }
-    match prefix {
-        "NOTIFY * HTTP/1.1" => {
-            if let Some(&nts) = map.get("NTS") {
-                match nts {
-                    "ssdp:alive" => {
-                        if let (Some(nt), Some(usn), Some(loc)) = (
-                            map.get("NT"),
-                            map.get("USN"),
-                            map.get("LOCATION"),
-                        ) {
-                            return Ok(Message::NotifyAlive(Alive {
-                                notification_type: nt.to_string(),
-                                unique_service_name: usn.to_string(),
-                                location: loc.to_string(),
-                            }));
-                        }
-                    }
-                    "ssdp:byebye" => {
-                        if let (Some(nt), Some(usn)) =
-                            (map.get("NT"), map.get("USN"))
-                        {
-                            return Ok(Message::NotifyByeBye(ByeBye {
-                                notification_type: nt.to_string(),
-                                unique_service_name: usn.to_string(),
-                            }));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        "HTTP/1.1 200 OK" => {
-            if let (Some(st), Some(usn), Some(loc)) =
-                (map.get("ST"), map.get("USN"), map.get("LOCATION"))
-            {
-                return Ok(Message::Response(Response {
-                    search_target: st.to_string(),
-                    unique_service_name: usn.to_string(),
-                    location: loc.to_string(),
-                }));
-            }
-        }
-        "M-SEARCH * HTTP/1.1" => {
-            if let (Some(st), Some(mx)) = (map.get("ST"), map.get("MX")) {
-                if let Ok(mxn) = mx.parse::<u8>() {
-                    return Ok(Message::Search(Search {
-                        search_target: st.to_string(),
-                        maximum_wait_sec: mxn,
-                    }));
-                }
-            }
-        }
-        _ => {}
-    }
-    Err(std::io::ErrorKind::InvalidData.into())
-}
-
 fn target_match(search: &str, candidate: &str) -> bool {
     if search == "ssdp:all" {
         return true;
@@ -242,8 +172,10 @@ impl Inner {
     fn broadcast(&mut self, response: &Response) {
         self.active_searches.retain(|_, s| {
             if target_match(&s.notification_type, &response.search_target) {
-                matches!(s.channel.try_send(response.clone()),
-                         Ok(_) | Err(mpsc::error::TrySendError::Full(_)))
+                matches!(
+                    s.channel.try_send(response.clone()),
+                    Ok(_) | Err(mpsc::error::TrySendError::Full(_))
+                )
             } else {
                 true
             }
@@ -317,35 +249,33 @@ impl Task {
             })
         {
             println!("MC RX from {} to {}", wasfrom, wasto);
-            if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
-                if let Ok(m) = parse(s) {
-                    println!("  {:?}", m);
-                    match m {
-                        Message::NotifyAlive(a) => {
-                            self.inner.lock().unwrap().broadcast(&Response {
-                                search_target: a.notification_type,
-                                unique_service_name: a.unique_service_name,
-                                location: a.location,
-                            })
-                        },
-                        Message::Search(s) => {
-                            if let Some(ix) = self.interface_for(wasto)
-                            {
-                                println!("Got search for {}", s.search_target);
-                                let inner = self.inner.lock().unwrap();
-                                for (key, value) in &inner.advertisements {
-                                    if target_match(
-                                        &s.search_target,
-                                        &value.notification_type,
-                                    ) {
-                                        println!(
-                                            "  {} matches, replying",
-                                            value.notification_type
-                                        );
-                                        let mut url = value.location.clone();
-                                        let _ = url.set_ip_host(wasto);
+            if let Ok(m) = ssdp::parse(&buf[0..n]) {
+                println!("  {:?}", m);
+                match m {
+                    Message::NotifyAlive(a) => {
+                        self.inner.lock().unwrap().broadcast(&Response {
+                            search_target: a.notification_type,
+                            unique_service_name: a.unique_service_name,
+                            location: a.location,
+                        })
+                    }
+                    Message::Search(s) => {
+                        if let Some(ix) = self.interface_for(wasto) {
+                            println!("Got search for {}", s.search_target);
+                            let inner = self.inner.lock().unwrap();
+                            for (key, value) in &inner.advertisements {
+                                if target_match(
+                                    &s.search_target,
+                                    &value.notification_type,
+                                ) {
+                                    println!(
+                                        "  {} matches, replying",
+                                        value.notification_type
+                                    );
+                                    let mut url = value.location.clone();
+                                    let _ = url.set_ip_host(wasto);
 
-                                        let message = format!(
+                                    let message = format!(
                                         "HTTP/1.1 200 OK\r
 CACHE-CONTROL: max-age=1800\r
 ST: {}\r
@@ -353,32 +283,25 @@ USN: {}\r
 LOCATION: {}\r
 SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
 \r\n",
-                                            value.notification_type, key,
-                                            url
-                                        );
-                                        let _ = self.search_socket.try_io(
-                                            tokio::io::Interest::WRITABLE,
-                                            || {
-                                                send_from(
-                                                    self.search_socket
-                                                        .as_raw_fd(),
-                                                    message.as_bytes(),
-                                                    wasfrom,
-                                                    ix,
-                                                )
-                                            },
-                                        );
-                                    }
+                                        value.notification_type, key, url
+                                    );
+                                    let _ = self.search_socket.try_io(
+                                        tokio::io::Interest::WRITABLE,
+                                        || {
+                                            send_from(
+                                                self.search_socket.as_raw_fd(),
+                                                message.as_bytes(),
+                                                wasfrom,
+                                                ix,
+                                            )
+                                        },
+                                    );
                                 }
                             }
                         }
-                        _ => (),
-                    };
-                } else {
-                    println!("  BAD {}", s);
-                }
-            } else {
-                println!("  not UTF-8");
+                    }
+                    _ => (),
+                };
             }
         }
     }
@@ -396,17 +319,11 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
             })
         {
             println!("UC RX from {} to {}", wasfrom, wasto);
-            if let Ok(s) = std::str::from_utf8(&buf[0..n]) {
-                if let Ok(m) = parse(s) {
-                    println!("  {:?}", m);
-                    if let Message::Response(r) = m {
-                        self.inner.lock().unwrap().broadcast(&r);
-                    }
-                } else {
-                    println!("  BAD {}", s);
+            if let Ok(m) = ssdp::parse(&buf[0..n]) {
+                println!("  {:?}", m);
+                if let Message::Response(r) = m {
+                    self.inner.lock().unwrap().broadcast(&r);
                 }
-            } else {
-                println!("  not UTF-8");
             }
         }
     }

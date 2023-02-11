@@ -41,11 +41,53 @@ pub struct Advertisement {
     pub location: url::Url,
 }
 
+pub mod ssdp;
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
+    fn can_debug() {
+        println!(
+            "{:?}",
+            Message::NotifyAlive(Alive {
+                notification_type: "".into(),
+                unique_service_name: "".into(),
+                location: "".into(),
+            })
+        );
+        println!(
+            "{:?}",
+            Message::NotifyByeBye(ByeBye {
+                notification_type: "".into(),
+                unique_service_name: "".into(),
+            })
+        );
+        println!(
+            "{:?}",
+            Message::Search(Search {
+                search_target: "".into(),
+                maximum_wait_sec: 3,
+            })
+        );
+        println!(
+            "{:?}",
+            Message::Response(Response {
+                search_target: "".into(),
+                unique_service_name: "".into(),
+                location: "".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn can_clone() {
+        let _ = Response {
+            search_target: "".into(),
+            unique_service_name: "".into(),
+            location: "".into(),
+        }
+        .clone();
     }
 }
