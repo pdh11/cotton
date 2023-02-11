@@ -143,39 +143,35 @@ fn target_match(search: &str, candidate: &str) -> bool {
     false
 }
 
-struct ActiveSearch {
+trait Callback {
+    fn on_response(&self, response: &Response) -> Result<(), ()>;
+}
+
+struct ActiveSearch<CB: Callback> {
     notification_type: String,
-    channel: mpsc::Sender<Response>,
+    callback: CB,
 }
 
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
-struct Inner {
-    active_searches: SlotMap<ActiveSearchKey, ActiveSearch>,
+struct Inner<CB: Callback> {
+    active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: HashMap<String, Advertisement>,
 }
 
-impl Inner {
-    fn subscribe(
-        &mut self,
-        notification_type: String,
-    ) -> impl Stream<Item = Response> {
-        let (snd, rcv) = mpsc::channel(100);
+impl<CB: Callback> Inner<CB> {
+    fn subscribe(&mut self, notification_type: String, callback: CB) {
         let s = ActiveSearch {
             notification_type,
-            channel: snd,
+            callback,
         };
         self.active_searches.insert(s); // @todo notify searchers (another mpsc?)
-        ReceiverStream::new(rcv)
     }
 
     fn broadcast(&mut self, response: &Response) {
         self.active_searches.retain(|_, s| {
             if target_match(&s.notification_type, &response.search_target) {
-                matches!(
-                    s.channel.try_send(response.clone()),
-                    Ok(_) | Err(mpsc::error::TrySendError::Full(_))
-                )
+                s.callback.on_response(response).is_ok()
             } else {
                 true
             }
@@ -192,15 +188,17 @@ impl Inner {
     }
 }
 
-struct Task {
-    inner: Arc<Mutex<Inner>>,
+struct Task<CB: Callback> {
+    inner: Arc<Mutex<Inner<CB>>>,
     multicast_socket: tokio::net::UdpSocket,
     search_socket: tokio::net::UdpSocket,
     interfaces: HashMap<InterfaceIndex, Interface>,
 }
 
-impl Task {
-    async fn new(inner: Arc<Mutex<Inner>>) -> Result<Task, std::io::Error> {
+impl<CB: Callback> Task<CB> {
+    async fn new(
+        inner: Arc<Mutex<Inner<CB>>>,
+    ) -> Result<Task<CB>, std::io::Error> {
         let multicast_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::DGRAM,
@@ -441,15 +439,33 @@ ST: ssdp:all\r
     }
 }
 
-pub struct Service {
-    inner: Arc<Mutex<Inner>>,
+struct AsyncCallback {
+    channel: mpsc::Sender<Response>,
 }
 
-/** An SSDP service
+impl Callback for AsyncCallback {
+    fn on_response(&self, response: &Response) -> Result<(), ()> {
+        if matches!(
+            self.channel.try_send(response.clone()),
+            Ok(_) | Err(mpsc::error::TrySendError::Full(_))
+        ) {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+}
+
+pub struct AsyncService {
+    inner: Arc<Mutex<Inner<AsyncCallback>>>,
+}
+
+/** Asynchronous SSDP service
  *
- * Handles incoming and outgoing searches.
+ * Handles incoming and outgoing searches using async, await, and the
+ * Tokio crate.
  */
-impl Service {
+impl AsyncService {
     pub async fn new() -> Result<Self, Box<dyn Error>> {
         let inner = Arc::new(Mutex::new(Inner {
             active_searches: SlotMap::with_key(),
@@ -477,7 +493,7 @@ impl Service {
             }
         });
 
-        Ok(Service { inner })
+        Ok(AsyncService { inner })
     }
 
     /* @todo Subscriber wants ByeByes as well as Alives!
@@ -489,10 +505,12 @@ impl Service {
     where
         A: Into<String>,
     {
-        self.inner
-            .lock()
-            .unwrap()
-            .subscribe(notification_type.into())
+        let (snd, rcv) = mpsc::channel(100);
+        self.inner.lock().unwrap().subscribe(
+            notification_type.into(),
+            AsyncCallback { channel: snd },
+        );
+        ReceiverStream::new(rcv)
     }
 
     pub fn advertise<USN>(
@@ -517,7 +535,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         env!("CARGO_PKG_VERSION")
     );
 
-    let mut s = Service::new().await?;
+    let mut s = AsyncService::new().await?;
 
     let mut map = HashMap::new();
 
