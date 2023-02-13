@@ -79,7 +79,7 @@ fn receive(
     Ok((r.bytes, IpAddr::V4(rxon), SocketAddr::V4(wasfrom)))
 }
 
-/** Send a UDP datagram from a specific interface
+/** Send a UDP datagram from a specific source IP (and interface)
  *
  * Works even if two interfaces share the same IP range (169.254/16, for
  * instance) so long as they have different addresses.
@@ -92,33 +92,37 @@ fn send_from(
     fd: RawFd,
     buffer: &[u8],
     to: SocketAddr,
-    ix: InterfaceIndex,
+    from: IpAddr,
 ) -> Result<(), std::io::Error> {
-    let iov = [IoSlice::new(buffer)];
-    let pi = libc::in_pktinfo {
-        ipi_ifindex: ix.0 as i32,
-        ipi_addr: libc::in_addr { s_addr: 0 },
-        ipi_spec_dst: libc::in_addr { s_addr: 0 },
-    };
+    if let IpAddr::V4(from) = from {
+        let iov = [IoSlice::new(buffer)];
+        let pi = libc::in_pktinfo {
+            ipi_ifindex: 0,
+            ipi_addr: libc::in_addr { s_addr: 0 },
+            ipi_spec_dst: libc::in_addr { s_addr: u32::to_be(from.into()) },
+        };
 
-    let cmsg = ControlMessage::Ipv4PacketInfo(&pi);
-    let dest = match to {
-        SocketAddr::V4(ipv4) => SockaddrStorage::from(ipv4),
-        SocketAddr::V6(ipv6) => SockaddrStorage::from(ipv6),
-    };
-    let r = nix::sys::socket::sendmsg(
-        fd,
-        &iov,
-        &[cmsg],
-        MsgFlags::empty(),
-        Some(&dest),
-    );
-    if let Err(e) = r {
-        println!("sendmsg {:?}", e);
-        return Err(e.into());
+        let cmsg = ControlMessage::Ipv4PacketInfo(&pi);
+        let dest = match to {
+            SocketAddr::V4(ipv4) => SockaddrStorage::from(ipv4),
+            SocketAddr::V6(ipv6) => SockaddrStorage::from(ipv6),
+        };
+        let r = nix::sys::socket::sendmsg(
+            fd,
+            &iov,
+            &[cmsg],
+            MsgFlags::empty(),
+            Some(&dest),
+        );
+        if let Err(e) = r {
+            println!("sendmsg {:?}", e);
+            return Err(e.into());
+        }
+        println!("sendmsg to {:?} OK", to);
+        Ok(())
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "IPv6 NYI"))
     }
-    println!("sendmsg to {:?} OK", to);
-    Ok(())
 }
 
 fn target_match(search: &str, candidate: &str) -> bool {
@@ -185,6 +189,7 @@ impl<CB: Callback> Inner<CB> {
     ) {
         self.advertisements
             .insert(unique_service_name, advertisement);
+        // @todo send notifies
     }
 }
 
@@ -258,7 +263,7 @@ impl<CB: Callback> Task<CB> {
                         })
                     }
                     Message::Search(s) => {
-                        if let Some(ix) = self.interface_for(wasto) {
+                        if let Some(_) = self.interface_for(wasto) {
                             println!("Got search for {}", s.search_target);
                             let inner = self.inner.lock().unwrap();
                             for (key, value) in &inner.advertisements {
@@ -290,7 +295,7 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
                                                 self.search_socket.as_raw_fd(),
                                                 message.as_bytes(),
                                                 wasfrom,
-                                                ix,
+                                                wasto,
                                             )
                                         },
                                     );
@@ -366,7 +371,7 @@ ST: ssdp:all\r
                                             "239.255.255.250:1900"
                                                 .parse()
                                                 .unwrap(),
-                                            ix,
+                                            ip.addr,
                                         )
                                     },
                                 )?;
@@ -413,7 +418,7 @@ ST: ssdp:all\r
                                         "239.255.255.250:1900"
                                             .parse()
                                             .unwrap(),
-                                        ix,
+                                        settings.addr,
                                     )
                                 },
                             )?;
