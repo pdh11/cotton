@@ -1,23 +1,17 @@
 use cotton_netif::*;
 use cotton_ssdp::ssdp;
+use cotton_ssdp::udp::TargetedReceive;
+use cotton_ssdp::udp::TargetedSend;
 use cotton_ssdp::*;
 use futures::Stream;
 use futures_util::StreamExt;
-use nix::cmsg_space;
 use nix::sys::socket::setsockopt;
 use nix::sys::socket::sockopt::Ipv4PacketInfo;
-use nix::sys::socket::ControlMessage;
-use nix::sys::socket::ControlMessageOwned;
-use nix::sys::socket::MsgFlags;
-use nix::sys::socket::SockaddrStorage;
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::IoSlice;
-use std::io::IoSliceMut;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
-use std::os::unix::prelude::RawFd;
 use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -35,94 +29,6 @@ pub struct Interface {
     /// @todo Multiple ip addresses per interface
     up: bool,
     listening: bool,
-}
-
-fn receive(
-    fd: RawFd,
-    buffer: &mut [u8],
-) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
-    let mut cmsgspace = cmsg_space!(libc::in_pktinfo);
-    let mut iov = [IoSliceMut::new(buffer)];
-    let r = nix::sys::socket::recvmsg::<SockaddrStorage>(
-        fd,
-        &mut iov,
-        Some(&mut cmsgspace),
-        MsgFlags::empty(),
-    )?;
-    //println!("recvmsg ok");
-    let pi = match r.cmsgs().next() {
-        Some(ControlMessageOwned::Ipv4PacketInfo(pi)) => pi,
-        _ => {
-            println!("receive: no pktinfo");
-            return Err(std::io::ErrorKind::InvalidData.into());
-        }
-    };
-    let rxon = Ipv4Addr::from(u32::from_be(pi.ipi_spec_dst.s_addr));
-    let _wasto = Ipv4Addr::from(u32::from_be(pi.ipi_addr.s_addr));
-    let wasfrom = {
-        if let Some(ss) = r.address {
-            if let Some(sin) = ss.as_sockaddr_in() {
-                SocketAddrV4::new(Ipv4Addr::from(sin.ip()), sin.port())
-            } else {
-                println!("receive: wasfrom not ipv4");
-                return Err(std::io::ErrorKind::InvalidData.into());
-            }
-        } else {
-            println!("receive: wasfrom no address");
-            return Err(std::io::ErrorKind::InvalidData.into());
-        }
-    };
-    //    println!(
-    //        "PI ix {} sd {:} ad {:} addr {:?}",
-    //        pi.ipi_ifindex, rxon, wasto, wasfrom
-    //    );
-    Ok((r.bytes, IpAddr::V4(rxon), SocketAddr::V4(wasfrom)))
-}
-
-/** Send a UDP datagram from a specific source IP (and interface)
- *
- * Works even if two interfaces share the same IP range (169.254/16, for
- * instance) so long as they have different addresses.
- *
- * For how this works see https://man7.org/linux/man-pages/man7/ip.7.html
- *
- * This facility probably only works on Linux.
- */
-fn send_from(
-    fd: RawFd,
-    buffer: &[u8],
-    to: SocketAddr,
-    from: IpAddr,
-) -> Result<(), std::io::Error> {
-    if let IpAddr::V4(from) = from {
-        let iov = [IoSlice::new(buffer)];
-        let pi = libc::in_pktinfo {
-            ipi_ifindex: 0,
-            ipi_addr: libc::in_addr { s_addr: 0 },
-            ipi_spec_dst: libc::in_addr { s_addr: u32::to_be(from.into()) },
-        };
-
-        let cmsg = ControlMessage::Ipv4PacketInfo(&pi);
-        let dest = match to {
-            SocketAddr::V4(ipv4) => SockaddrStorage::from(ipv4),
-            SocketAddr::V6(ipv6) => SockaddrStorage::from(ipv6),
-        };
-        let r = nix::sys::socket::sendmsg(
-            fd,
-            &iov,
-            &[cmsg],
-            MsgFlags::empty(),
-            Some(&dest),
-        );
-        if let Err(e) = r {
-            println!("sendmsg {:?}", e);
-            return Err(e.into());
-        }
-        println!("sendmsg to {:?} OK", to);
-        Ok(())
-    } else {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "IPv6 NYI"))
-    }
 }
 
 fn target_match(search: &str, candidate: &str) -> bool {
@@ -245,11 +151,8 @@ impl<CB: Callback> Task<CB> {
      */
     fn process_multicast(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) = self
-            .multicast_socket
-            .try_io(tokio::io::Interest::READABLE, || {
-                receive(self.multicast_socket.as_raw_fd(), &mut buf)
-            })
+        if let Ok((n, wasto, wasfrom)) =
+            self.multicast_socket.receive_to(&mut buf)
         {
             println!("MC RX from {} to {}", wasfrom, wasto);
             if let Ok(m) = ssdp::parse(&buf[0..n]) {
@@ -288,16 +191,10 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
 \r\n",
                                         value.notification_type, key, url
                                     );
-                                    let _ = self.search_socket.try_io(
-                                        tokio::io::Interest::WRITABLE,
-                                        || {
-                                            send_from(
-                                                self.search_socket.as_raw_fd(),
-                                                message.as_bytes(),
-                                                wasfrom,
-                                                wasto,
-                                            )
-                                        },
+                                    let _ = self.search_socket.send_from(
+                                        message.as_bytes(),
+                                        wasfrom,
+                                        wasto,
                                     );
                                 }
                             }
@@ -315,11 +212,8 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
      */
     fn process_search(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) = self
-            .search_socket
-            .try_io(tokio::io::Interest::READABLE, || {
-                receive(self.search_socket.as_raw_fd(), &mut buf)
-            })
+        if let Ok((n, wasto, wasfrom)) =
+            self.search_socket.receive_to(&mut buf)
         {
             println!("UC RX from {} to {}", wasfrom, wasto);
             if let Ok(m) = ssdp::parse(&buf[0..n]) {
@@ -362,18 +256,10 @@ ST: ssdp:all\r
                                     ipv4,
                                 )?;
                                 println!("Searching on {:?}", ip);
-                                self.search_socket.try_io(
-                                    tokio::io::Interest::WRITABLE,
-                                    || {
-                                        send_from(
-                                            self.search_socket.as_raw_fd(),
-                                            search_all,
-                                            "239.255.255.250:1900"
-                                                .parse()
-                                                .unwrap(),
-                                            ip.addr,
-                                        )
-                                    },
+                                self.search_socket.send_from(
+                                    search_all,
+                                    "239.255.255.250:1900".parse().unwrap(),
+                                    ip.addr,
                                 )?;
                                 println!("New socket on {}", name);
                                 v.listening = true;
@@ -409,18 +295,10 @@ ST: ssdp:all\r
                                     e
                                 })?;
                             println!("Searching on {:?}", settings.addr);
-                            self.search_socket.try_io(
-                                tokio::io::Interest::WRITABLE,
-                                || {
-                                    send_from(
-                                        self.search_socket.as_raw_fd(),
-                                        search_all,
-                                        "239.255.255.250:1900"
-                                            .parse()
-                                            .unwrap(),
-                                        settings.addr,
-                                    )
-                                },
+                            self.search_socket.send_from(
+                                search_all,
+                                "239.255.255.250:1900".parse().unwrap(),
+                                settings.addr,
                             )?;
                             println!("New socket on {:?}", settings.addr);
                             v.listening = true;

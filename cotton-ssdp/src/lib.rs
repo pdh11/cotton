@@ -42,6 +42,7 @@ pub struct Advertisement {
 }
 
 pub mod ssdp;
+pub mod udp;
 
 #[cfg(test)]
 mod tests {
