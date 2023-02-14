@@ -7,12 +7,14 @@ use futures::Stream;
 use futures_util::StreamExt;
 use nix::sys::socket::setsockopt;
 use nix::sys::socket::sockopt::Ipv4PacketInfo;
+use rand::Rng;
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -67,9 +69,43 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 struct Inner<CB: Callback> {
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: HashMap<String, Advertisement>,
+    next_salvo: std::time::Instant,
+    phase: u8,
 }
 
 impl<CB: Callback> Inner<CB> {
+    fn new() -> Self {
+        Inner {
+            active_searches: SlotMap::with_key(),
+            advertisements: HashMap::default(),
+            next_salvo: std::time::Instant::now(),
+            phase: 0u8,
+        }
+    }
+
+    fn next_wakeup(&self) -> std::time::Duration {
+        let r = self
+            .next_salvo
+            .saturating_duration_since(std::time::Instant::now());
+        println!("Wakeup in {:?}", r);
+        r
+    }
+
+    fn wakeup(&mut self) {
+        if !self.next_wakeup().is_zero() {
+            return;
+        }
+        let random_offset = rand::thread_rng().gen_range(0..5);
+        let period_sec = if self.phase == 0 { 800 } else { 1 } + random_offset;
+        self.next_salvo = self.next_salvo + Duration::from_secs(period_sec);
+        self.phase = (self.phase + 1) % 4;
+
+        println!(
+            "Re-advertising, re-searching, next wu at {:?} phase {}\n",
+            self.next_salvo, self.phase
+        );
+    }
+
     fn subscribe(&mut self, notification_type: String, callback: CB) {
         let s = ActiveSearch {
             notification_type,
@@ -320,6 +356,14 @@ ST: ssdp:all\r
         }
         Ok(())
     }
+
+    fn next_wakeup(&self) -> Duration {
+        self.inner.lock().unwrap().next_wakeup()
+    }
+
+    fn wakeup(&mut self) {
+        self.inner.lock().unwrap().wakeup()
+    }
 }
 
 struct AsyncCallback {
@@ -350,10 +394,7 @@ pub struct AsyncService {
  */
 impl AsyncService {
     pub async fn new() -> Result<Self, Box<dyn Error>> {
-        let inner = Arc::new(Mutex::new(Inner {
-            active_searches: SlotMap::with_key(),
-            advertisements: HashMap::default(),
-        }));
+        let inner = Arc::new(Mutex::new(Inner::new()));
 
         let (mut s, mut task) = tokio::try_join!(
             get_interfaces_async(),
@@ -372,6 +413,7 @@ impl AsyncService {
                     },
                     _ = task.multicast_socket.readable() => task.process_multicast(),
                     _ = task.search_socket.readable() => task.process_search(),
+                    _ = tokio::time::sleep(task.next_wakeup()) => task.wakeup(),
                 };
             }
         });
