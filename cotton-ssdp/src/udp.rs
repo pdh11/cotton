@@ -10,6 +10,23 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
 
 pub trait TargetedSend {
+    /** Send a UDP datagram from a specific source IP (and interface)
+
+Works even if two interfaces share the same IP range (169.254/16, for
+instance) so long as they have different addresses.
+
+For how this works see <https://man7.org/linux/man-pages/man7/ip.7.html>
+
+This facility probably only works on Linux.
+
+The interface is agnostic about IPv4/IPv6, but the current
+implementation is IPv4-only.
+
+# Errors
+
+Returns Err if the underlying sendmsg call fails, or (currently) if IPv6
+is attempted.
+     */
     fn send_from(
         &mut self,
         buffer: &[u8],
@@ -19,29 +36,31 @@ pub trait TargetedSend {
 }
 
 pub trait TargetedReceive {
+    /** Receive a UDP datagram, recording which IP we received it on
+
+This is not the same as which IP it was addressed to (e.g. in the
+case of broadcast packets); it's the IP from which the peer would
+be expecting a reply to originate.
+
+The socket must have its `Ipv4PacketInfo` option enabled, using
+some equivalent of `nix::sys::socket::setsockopt`(`s.as_raw_fd`(),
+`nix::sys::socket::sockopt::Ipv4PacketInfo`, &true)?;
+
+The interface is agnostic about IPv4/IPv6, but the current
+implementation is IPv4-only.
+
+# Errors
+
+Returns Err if the underlying recvmsg call fails, if no packet
+info is received (check the `setsockopt`), or (currently) if
+IPv6 is attempted.
+     */
     fn receive_to(
         &mut self,
         buffer: &mut [u8],
     ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error>;
 }
 
-/** Send a UDP datagram from a specific source IP (and interface)
- *
- * Works even if two interfaces share the same IP range (169.254/16, for
- * instance) so long as they have different addresses.
- *
- * For how this works see <https://man7.org/linux/man-pages/man7/ip.7.html>
- *
- * This facility probably only works on Linux.
- *
- * The interface is agnostic about IPv4/IPv6, but the current
- * implementation is IPv4-only.
- *
- * # Errors
- *
- * Returns Err if the underlying sendmsg call fails, or (currently) if IPv6
- * is attempted.
- */
 fn send_from(
     fd: RawFd,
     buffer: &[u8],
@@ -81,7 +100,7 @@ fn send_from(
     }
 }
 
-fn receive_inner2(
+fn receive_using_recvmsg(
     fd: RawFd,
     buffer: &mut [u8],
 ) -> Result<(usize, IpAddr, Option<SockaddrStorage>), std::io::Error> {
@@ -106,6 +125,8 @@ fn receive_inner2(
     Ok((r.bytes, IpAddr::V4(rxon), r.address))
 }
 
+/** The type of `receive_using_recvmsg`
+ */
 type ReceiveInnerFn =
     fn(
         RawFd,
@@ -113,51 +134,11 @@ type ReceiveInnerFn =
     )
         -> Result<(usize, IpAddr, Option<SockaddrStorage>), std::io::Error>;
 
-/** Receive a UDP datagram, recording which IP we received it on
- *
- * This is not the same as which IP it was addressed to (e.g. in the
- * case of broadcast packets); it's the IP from which the peer would
- * be expecting a reply to originate.
- *
- * The socket must have its `Ipv4PacketInfo` option enabled, using some
- * equivalent of
-`nix::sys::socket::setsockopt`(`s.as_raw_fd`(), `nix::sys::socket::sockopt::Ipv4PacketInfo`, &true)?;
- *
- * The interface is agnostic about IPv4/IPv6, but the current
- * implementation is IPv4-only.
- *
- * # Errors
- *
- * Returns Err if the underlying recvmsg call fails, if no packet info
- * is received (check the `setsockopt`), or (currently) if IPv6
- * is attempted.
- */
 fn receive_to_inner(
     fd: RawFd,
     buffer: &mut [u8],
     recvmsg: ReceiveInnerFn,
 ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
-    /*
-    let mut cmsgspace = cmsg_space!(libc::in_pktinfo);
-    let mut iov = [IoSliceMut::new(buffer)];
-    let r = nix::sys::socket::recvmsg::<SockaddrStorage>(
-        fd,
-        &mut iov,
-        Some(&mut cmsgspace),
-        MsgFlags::empty(),
-    )?;
-    let pi = if let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) =
-        r.cmsgs().next()
-    {
-        pi
-    } else {
-        println!("receive: no pktinfo");
-        return Err(std::io::ErrorKind::InvalidData.into());
-    };
-    let rxon = Ipv4Addr::from(u32::from_be(pi.ipi_spec_dst.s_addr));
-    let _wasto = Ipv4Addr::from(u32::from_be(pi.ipi_addr.s_addr));
-     */
-
     let (bytes, rxon, address) = recvmsg(fd, buffer)?;
 
     //println!("recvmsg ok");
@@ -174,10 +155,6 @@ fn receive_to_inner(
             return Err(std::io::ErrorKind::InvalidData.into());
         }
     };
-    //    println!(
-    //        "PI ix {} sd {:} ad {:} addr {:?}",
-    //        pi.ipi_ifindex, rxon, wasto, wasfrom
-    //    );
     Ok((bytes, rxon, SocketAddr::V4(wasfrom)))
 }
 
@@ -185,7 +162,10 @@ fn receive_to(
     fd: RawFd,
     buffer: &mut [u8],
 ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
-    receive_to_inner(fd, buffer, receive_inner2)
+    /* The inner function does most of the work, and is parameterised on
+     * the recvmsg call purely for testing reasons.
+     */
+    receive_to_inner(fd, buffer, receive_using_recvmsg)
 }
 
 impl TargetedSend for tokio::net::UdpSocket {
@@ -217,7 +197,6 @@ mod tests {
     use super::*;
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::Ipv4PacketInfo;
-    use std::io::Write;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV6;
 
@@ -237,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn localhost_source_localhost_dest() {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -263,6 +243,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn localhost_source_real_dest() {
         let ipv4 = IpAddr::V4(local_ipv4().unwrap());
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -290,6 +271,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn real_source_localhost_dest() {
         let ipv4 = IpAddr::V4(local_ipv4().unwrap());
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -317,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn real_source_real_dest() {
         let ipv4 = IpAddr::V4(local_ipv4().unwrap());
         //let localhost = IpAddr::V4(Ipv4Addr::new(127,0,0,1));
@@ -344,6 +327,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn ipv6_source_fails() {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -357,6 +341,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn ipv6_dest_fails() {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -370,12 +355,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn recvmsg_error_passed_on() {
         let mut buf = [0u8; 1500];
         assert!(receive_to(0 as RawFd, &mut buf).is_err());
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn recvmsg_no_cmsg_is_error() {
         // cf. localhost_source_localhost_dest()
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -401,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn recvmsg_ipv6_is_error() {
         let localhost = IpAddr::V6(Ipv6Addr::LOCALHOST);
         let tx = std::net::UdpSocket::bind("::1:0").unwrap();
@@ -427,6 +415,10 @@ mod tests {
 
     #[test]
     fn recvmsg_no_address_is_error() {
+        /* nix::sys::socket::recvmsg always returns a Some(address), making
+         * it hard to get coverage of the None case. So we cover that case
+         * using a replacement for recvmsg.
+         */
         let mut buf = [0u8; 1500];
         assert!(receive_to_inner(
             0 as RawFd,
@@ -462,6 +454,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn tokio_traits() {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
