@@ -1,1 +1,2 @@
 msrv = "1.56"
+doc-valid-idents = ["UPnP", ".."]

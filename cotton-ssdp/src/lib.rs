@@ -83,41 +83,42 @@ mod tests {
         println!(
             "{:?}",
             Message::NotifyAlive(Alive {
-                notification_type: "".into(),
-                unique_service_name: "".into(),
-                location: "".into(),
+                notification_type: String::new(),
+                unique_service_name: String::new(),
+                location: String::new(),
             })
         );
         println!(
             "{:?}",
             Message::NotifyByeBye(ByeBye {
-                notification_type: "".into(),
-                unique_service_name: "".into(),
+                notification_type: String::new(),
+                unique_service_name: String::new(),
             })
         );
         println!(
             "{:?}",
             Message::Search(Search {
-                search_target: "".into(),
+                search_target: String::new(),
                 maximum_wait_sec: 3,
             })
         );
         println!(
             "{:?}",
             Message::Response(Response {
-                search_target: "".into(),
-                unique_service_name: "".into(),
-                location: "".into(),
+                search_target: String::new(),
+                unique_service_name: String::new(),
+                location: String::new(),
             })
         );
     }
 
     #[test]
+    #[allow(clippy::redundant_clone)]
     fn can_clone() {
         let _ = Response {
-            search_target: "".into(),
-            unique_service_name: "".into(),
-            location: "".into(),
+            search_target: String::new(),
+            unique_service_name: String::new(),
+            location: String::new(),
         }
         .clone();
     }

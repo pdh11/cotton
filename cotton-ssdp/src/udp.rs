@@ -9,24 +9,27 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
 
+/// Sending UDP datagrams from a specific source IP
 pub trait TargetedSend {
-    /** Send a UDP datagram from a specific source IP (and interface)
-
-    Works even if two interfaces share the same IP range (169.254/16, for
-    instance), so long as they have different addresses.
-
-    For how this works see <https://man7.org/linux/man-pages/man7/ip.7.html>
-
-    This facility probably only works on Linux.
-
-    The interface is agnostic about IPv4/IPv6, but the current
-    implementation is IPv4-only.
-
-    # Errors
-
-    Returns Err if the underlying sendmsg call fails, or (currently) if IPv6
-    is attempted.
-         */
+    /// Send a UDP datagram from a specific source IP (and interface)
+    ///
+    /// Works even if two interfaces share the same IP range
+    /// (169.254/16, for instance), so long as they have different
+    /// addresses.
+    ///
+    /// For how this works see
+    /// <https://man7.org/linux/man-pages/man7/ip.7.html>
+    ///
+    /// This facility probably only works on Linux.
+    ///
+    /// The interface is agnostic about IPv4/IPv6, but the current
+    /// implementation is IPv4-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the underlying sendmsg call fails, or
+    /// (currently) if IPv6 is attempted.
+    ///
     fn send_from(
         &mut self,
         buffer: &[u8],
@@ -35,26 +38,28 @@ pub trait TargetedSend {
     ) -> Result<(), std::io::Error>;
 }
 
+/// Receiving UDP datagrams, recording which IP we received it on
 pub trait TargetedReceive {
-    /** Receive a UDP datagram, recording which IP we received it on
-
-    This is not the same as which IP it was addressed to (e.g. in the
-    case of broadcast packets); it's the IP from which the peer would
-    be expecting a reply to originate.
-
-    The socket must have its `Ipv4PacketInfo` option enabled, using
-    some equivalent of `nix::sys::socket::setsockopt`(`s.as_raw_fd`(),
-    `nix::sys::socket::sockopt::Ipv4PacketInfo`, &true)?;
-
-    The interface is agnostic about IPv4/IPv6, but the current
-    implementation is IPv4-only.
-
-    # Errors
-
-    Returns Err if the underlying recvmsg call fails, if no packet
-    info is received (check the `setsockopt`), or (currently) if
-    IPv6 is attempted.
-         */
+    /// Receive a UDP datagram, recording which IP we received it on
+    ///
+    /// This is not the same as which IP it was addressed to (e.g. in
+    /// the case of broadcast packets); it's the IP from which the
+    /// peer would be expecting a reply to originate.
+    ///
+    /// The socket must have its `Ipv4PacketInfo` option enabled,
+    /// using some equivalent of
+    /// `nix::sys::socket::setsockopt`(`s.as_raw_fd`(),
+    /// `nix::sys::socket::sockopt::Ipv4PacketInfo`, &true)?;
+    ///
+    /// The interface is agnostic about IPv4/IPv6, but the current
+    /// implementation is IPv4-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the underlying recvmsg call fails, if no
+    /// packet info is received (check the `setsockopt`), or
+    /// (currently) if IPv6 is attempted.
+    ///
     fn receive_to(
         &mut self,
         buffer: &mut [u8],
@@ -406,6 +411,7 @@ mod tests {
         assert!(r.is_err());
     }
 
+    #[allow(clippy::unnecessary_wraps)] // needs to match API
     fn mock_recvmsg_no_address(
         _fd: RawFd,
         _buffer: &mut [u8],
@@ -428,6 +434,7 @@ mod tests {
         .is_err());
     }
 
+    #[allow(clippy::unnecessary_wraps)] // needs to match API
     fn mock_recvmsg_not_ipv4(
         _fd: RawFd,
         _buffer: &mut [u8],
@@ -473,9 +480,9 @@ mod tests {
             .unwrap()
             .block_on(async {
                 let mut tx =
-                    tokio::net::UdpSocket::from_std(tx.into()).unwrap();
+                    tokio::net::UdpSocket::from_std(tx).unwrap();
                 let mut rx =
-                    tokio::net::UdpSocket::from_std(rx.into()).unwrap();
+                    tokio::net::UdpSocket::from_std(rx).unwrap();
 
                 tx.writable().await.unwrap();
                 let r = tx.send_from(
