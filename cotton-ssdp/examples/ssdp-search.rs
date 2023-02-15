@@ -1,7 +1,6 @@
 use cotton_netif::*;
 use cotton_ssdp::ssdp;
 use cotton_ssdp::udp::TargetedReceive;
-use cotton_ssdp::udp::TargetedSend;
 use cotton_ssdp::*;
 use futures::Stream;
 use futures_util::StreamExt;
@@ -67,6 +66,7 @@ struct ActiveSearch<CB: Callback> {
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
 struct Inner<CB: Callback> {
+    interfaces: HashMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: HashMap<String, Advertisement>,
     next_salvo: std::time::Instant,
@@ -76,6 +76,7 @@ struct Inner<CB: Callback> {
 impl<CB: Callback> Inner<CB> {
     fn new() -> Self {
         Inner {
+            interfaces: HashMap::default(),
             active_searches: SlotMap::with_key(),
             advertisements: HashMap::default(),
             next_salvo: std::time::Instant::now(),
@@ -182,6 +183,103 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
         }
     }
 
+    fn on_interface_event<MULTICAST, SEARCH>(&mut self,
+                                             e: NetworkEvent,
+                                             multicast: &mut MULTICAST,
+                                             search: &mut SEARCH
+    ) -> Result<(), std::io::Error>
+        where MULTICAST: udp::Multicast,
+              SEARCH: udp::TargetedSend
+    {
+        let search_all = b"M-SEARCH * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+MAN: \"ssdp:discover\"\r
+MX: 5\r
+ST: ssdp:all\r
+\r\n";
+
+        println!("if event {:?}", e);
+        match e {
+            NetworkEvent::NewLink(ix, name, flags) => {
+                let up = flags.contains(
+                    cotton_netif::Flags::RUNNING
+                        | cotton_netif::Flags::UP
+                        | cotton_netif::Flags::MULTICAST,
+                );
+                if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
+                    v.up = up;
+                    if v.up && !v.listening {
+                        if let Some(ref ip) = v.ip {
+                            if ip.addr.is_ipv4() {
+                                multicast.join_multicast_group(
+                                    "239.255.255.250".parse().unwrap(),
+                                    ip.addr,
+                                )?;
+                                println!("Searching on {:?}", ip);
+                                search.send_from(
+                                    search_all,
+                                    "239.255.255.250:1900".parse().unwrap(),
+                                    ip.addr,
+                                )?;
+                                println!("New socket on {}", name);
+                                v.listening = true;
+                            }
+                        }
+                    }
+                } else {
+                    self.interfaces.insert(
+                        ix,
+                        Interface {
+                            ip: None,
+                            up,
+                            listening: false,
+                        },
+                    );
+                }
+            }
+            NetworkEvent::NewAddr(ix, addr, prefix) => {
+                let settings = IPSettings {
+                    addr,
+                    _prefix: prefix,
+                };
+                if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
+                    if v.up && !v.listening {
+                        if settings.addr.is_ipv4() {
+                            multicast.join_multicast_group(
+                                "239.255.255.250".parse().unwrap(),
+                                settings.addr,
+                            )
+                                .map_err(|e| {
+                                    println!("jmg failed {:?}", e);
+                                    e
+                                })?;
+                            println!("Searching on {:?}", settings.addr);
+                            search.send_from(
+                                search_all,
+                                "239.255.255.250:1900".parse().unwrap(),
+                                settings.addr,
+                            )?;
+                            println!("New socket on {:?}", settings.addr);
+                            v.listening = true;
+                        }
+                        v.ip = Some(settings);
+                    }
+                } else {
+                    self.interfaces.insert(
+                        ix,
+                        Interface {
+                            ip: Some(settings),
+                            up: false,
+                            listening: false,
+                        },
+                    );
+                }
+            }
+            _ => {} // @todo network-gone events
+        }
+        Ok(())
+    }
+
     fn advertise(
         &mut self,
         unique_service_name: String,
@@ -197,7 +295,6 @@ struct Task<CB: Callback> {
     inner: Arc<Mutex<Inner<CB>>>,
     multicast_socket: tokio::net::UdpSocket,
     search_socket: tokio::net::UdpSocket,
-    interfaces: HashMap<InterfaceIndex, Interface>,
 }
 
 impl<CB: Callback> Task<CB> {
@@ -224,7 +321,6 @@ impl<CB: Callback> Task<CB> {
             inner,
             multicast_socket,
             search_socket,
-            interfaces: HashMap::new(),
         })
     }
 
@@ -270,94 +366,11 @@ impl<CB: Callback> Task<CB> {
         &mut self,
         e: NetworkEvent,
     ) -> Result<(), std::io::Error> {
-        let search_all = b"M-SEARCH * HTTP/1.1\r
-HOST: 239.255.255.250:1900\r
-MAN: \"ssdp:discover\"\r
-MX: 5\r
-ST: ssdp:all\r
-\r\n";
-
-        println!("if event {:?}", e);
-        match e {
-            NetworkEvent::NewLink(ix, name, flags) => {
-                let up = flags.contains(
-                    cotton_netif::Flags::RUNNING
-                        | cotton_netif::Flags::UP
-                        | cotton_netif::Flags::MULTICAST,
-                );
-                if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
-                    v.up = up;
-                    if v.up && !v.listening {
-                        if let Some(ref ip) = v.ip {
-                            if let IpAddr::V4(ipv4) = ip.addr {
-                                self.multicast_socket.join_multicast_v4(
-                                    "239.255.255.250".parse().unwrap(),
-                                    ipv4,
-                                )?;
-                                println!("Searching on {:?}", ip);
-                                self.search_socket.send_from(
-                                    search_all,
-                                    "239.255.255.250:1900".parse().unwrap(),
-                                    ip.addr,
-                                )?;
-                                println!("New socket on {}", name);
-                                v.listening = true;
-                            }
-                        }
-                    }
-                } else {
-                    self.interfaces.insert(
-                        ix,
-                        Interface {
-                            ip: None,
-                            up,
-                            listening: false,
-                        },
-                    );
-                }
-            }
-            NetworkEvent::NewAddr(ix, addr, prefix) => {
-                let settings = IPSettings {
-                    addr,
-                    _prefix: prefix,
-                };
-                if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
-                    if v.up && !v.listening {
-                        if let IpAddr::V4(ipv4) = settings.addr {
-                            self.multicast_socket
-                                .join_multicast_v4(
-                                    "239.255.255.250".parse().unwrap(),
-                                    ipv4,
-                                )
-                                .map_err(|e| {
-                                    println!("jmg failed {:?}", e);
-                                    e
-                                })?;
-                            println!("Searching on {:?}", settings.addr);
-                            self.search_socket.send_from(
-                                search_all,
-                                "239.255.255.250:1900".parse().unwrap(),
-                                settings.addr,
-                            )?;
-                            println!("New socket on {:?}", settings.addr);
-                            v.listening = true;
-                        }
-                        v.ip = Some(settings);
-                    }
-                } else {
-                    self.interfaces.insert(
-                        ix,
-                        Interface {
-                            ip: Some(settings),
-                            up: false,
-                            listening: false,
-                        },
-                    );
-                }
-            }
-            _ => {} // @todo network-gone events
-        }
-        Ok(())
+        self.inner.lock().unwrap().on_interface_event(
+            e,
+            &mut self.multicast_socket,
+            &mut self.search_socket
+        )
     }
 
     fn next_wakeup(&self) -> Duration {
