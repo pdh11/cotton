@@ -173,7 +173,7 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
                             );
                         }
                     }
-                },
+                }
                 Message::Response(r) => {
                     self.broadcast(&r);
                 }

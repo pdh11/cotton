@@ -66,6 +66,14 @@ pub trait TargetedReceive {
     ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error>;
 }
 
+pub trait Multicast {
+    fn join_multicast_group(
+        &mut self,
+        multicast_address: IpAddr,
+        my_address: IpAddr,
+    ) -> Result<(), std::io::Error>;
+}
+
 fn send_from(
     fd: RawFd,
     buffer: &[u8],
@@ -186,6 +194,7 @@ impl TargetedSend for tokio::net::UdpSocket {
     }
 }
 
+/*
 impl TargetedSend for std::net::UdpSocket {
     fn send_from(
         &mut self,
@@ -195,7 +204,7 @@ impl TargetedSend for std::net::UdpSocket {
     ) -> Result<(), std::io::Error> {
         send_from(self.as_raw_fd(), buffer, to, from)
     }
-}
+}*/
 
 impl TargetedReceive for tokio::net::UdpSocket {
     fn receive_to(
@@ -208,12 +217,28 @@ impl TargetedReceive for tokio::net::UdpSocket {
     }
 }
 
+/*
 impl TargetedReceive for std::net::UdpSocket {
     fn receive_to(
         &mut self,
         buffer: &mut [u8],
     ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
         receive_to(self.as_raw_fd(), buffer)
+    }
+}*/
+
+impl Multicast for tokio::net::UdpSocket {
+    fn join_multicast_group(
+        &mut self,
+        multicast_address: IpAddr,
+        my_address: IpAddr,
+    ) -> Result<(), std::io::Error> {
+        match (multicast_address, my_address) {
+            (IpAddr::V4(mcast), IpAddr::V4(me)) => {
+                self.join_multicast_v4(mcast, me)
+            }
+            _ => Err(std::io::ErrorKind::Unsupported.into()),
+        }
     }
 }
 
@@ -518,6 +543,20 @@ mod tests {
                 assert!(n == 3);
                 assert!(wasto == localhost);
                 assert!(wasfrom == SocketAddr::new(localhost, tx_port));
+
+                let r = rx.join_multicast_group(
+                    IpAddr::V4("239.255.255.250".parse().unwrap()),
+                    IpAddr::V6(Ipv6Addr::LOCALHOST),
+                ); // IPv4/IPv6 mismatch
+                assert!(r.is_err());
+
+                let ipv4 = IpAddr::V4(local_ipv4().unwrap());
+                let r = rx.join_multicast_group(
+                    IpAddr::V4("239.255.255.250".parse().unwrap()),
+                    ipv4,
+                );
+                println!("r={:?}", r);
+                assert!(r.is_ok());
             });
     }
 }
