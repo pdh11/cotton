@@ -15,15 +15,14 @@
 //! a network, including in ad hoc settings which don't necessarily
 //! have expert network administrators close at hand.
 //!
-//! The crate provides an SSDP `Service`, which can be used both to
+//! The crate provides two different interfaces for working with SSDP,
+//! `Service` and `AsyncService`. Either one can be used both to
 //! discover other devices (`Service::search`) and to advertise
 //! resources itself (`Service::advertise`).
 //!
-//! The `Service` facility is easy to understand, but is synchronous
-//! and blocking, so is not convenient for some use cases. Client code
-//! using the Tokio crate might wish to use `AsyncService` instead,
-//! which integrates with that system; client code using the MIO crate
-//! might wish to use `ActorService`.
+//! Client code using the MIO crate, or a custom polling loop, should
+//! use plain `Service`; client code using the Tokio crate might wish
+//! to use `AsyncService` instead, which integrates with that system.
 
 //#![warn(missing_docs)] // @todo
 #![warn(rustdoc::missing_crate_level_docs)]

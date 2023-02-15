@@ -11,7 +11,7 @@ use rand::Rng;
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::error::Error;
-use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -124,6 +124,64 @@ impl<CB: Callback> Inner<CB> {
         });
     }
 
+    fn on_data<REPLY>(
+        &mut self,
+        buf: &[u8],
+        socket: &mut REPLY,
+        wasto: IpAddr,
+        wasfrom: SocketAddr,
+    ) where
+        REPLY: udp::TargetedSend,
+    {
+        println!("RX from {} to {}", wasfrom, wasto);
+        if let Ok(m) = ssdp::parse(buf) {
+            println!("  {:?}", m);
+            match m {
+                Message::NotifyAlive(a) => self.broadcast(&Response {
+                    search_target: a.notification_type,
+                    unique_service_name: a.unique_service_name,
+                    location: a.location,
+                }),
+                Message::Search(s) => {
+                    println!("Got search for {}", s.search_target);
+                    for (key, value) in &self.advertisements {
+                        if target_match(
+                            &s.search_target,
+                            &value.notification_type,
+                        ) {
+                            println!(
+                                "  {} matches, replying",
+                                value.notification_type
+                            );
+                            let mut url = value.location.clone();
+                            let _ = url.set_ip_host(wasto);
+
+                            let message = format!(
+                                "HTTP/1.1 200 OK\r
+CACHE-CONTROL: max-age=1800\r
+ST: {}\r
+USN: {}\r
+LOCATION: {}\r
+SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
+\r\n",
+                                value.notification_type, key, url
+                            );
+                            let _ = socket.send_from(
+                                message.as_bytes(),
+                                wasfrom,
+                                wasto,
+                            );
+                        }
+                    }
+                },
+                Message::Response(r) => {
+                    self.broadcast(&r);
+                }
+                _ => (),
+            };
+        }
+    }
+
     fn advertise(
         &mut self,
         unique_service_name: String,
@@ -170,17 +228,6 @@ impl<CB: Callback> Task<CB> {
         })
     }
 
-    fn interface_for(&self, addr: IpAddr) -> Option<InterfaceIndex> {
-        for (k, v) in &self.interfaces {
-            if let Some(settings) = &v.ip {
-                if settings.addr == addr {
-                    return Some(*k);
-                }
-            }
-        }
-        None
-    }
-
     /** Process data arriving on the multicast socket
      *
      * This will be a mixture of notifications and search requests.
@@ -190,55 +237,12 @@ impl<CB: Callback> Task<CB> {
         if let Ok((n, wasto, wasfrom)) =
             self.multicast_socket.receive_to(&mut buf)
         {
-            println!("MC RX from {} to {}", wasfrom, wasto);
-            if let Ok(m) = ssdp::parse(&buf[0..n]) {
-                println!("  {:?}", m);
-                match m {
-                    Message::NotifyAlive(a) => {
-                        self.inner.lock().unwrap().broadcast(&Response {
-                            search_target: a.notification_type,
-                            unique_service_name: a.unique_service_name,
-                            location: a.location,
-                        })
-                    }
-                    Message::Search(s) => {
-                        if let Some(_) = self.interface_for(wasto) {
-                            println!("Got search for {}", s.search_target);
-                            let inner = self.inner.lock().unwrap();
-                            for (key, value) in &inner.advertisements {
-                                if target_match(
-                                    &s.search_target,
-                                    &value.notification_type,
-                                ) {
-                                    println!(
-                                        "  {} matches, replying",
-                                        value.notification_type
-                                    );
-                                    let mut url = value.location.clone();
-                                    let _ = url.set_ip_host(wasto);
-
-                                    let message = format!(
-                                        "HTTP/1.1 200 OK\r
-CACHE-CONTROL: max-age=1800\r
-ST: {}\r
-USN: {}\r
-LOCATION: {}\r
-SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
-\r\n",
-                                        value.notification_type, key, url
-                                    );
-                                    let _ = self.search_socket.send_from(
-                                        message.as_bytes(),
-                                        wasfrom,
-                                        wasto,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    _ => (),
-                };
-            }
+            self.inner.lock().unwrap().on_data(
+                &buf[0..n],
+                &mut self.search_socket,
+                wasto,
+                wasfrom,
+            );
         }
     }
 
@@ -251,13 +255,12 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
         if let Ok((n, wasto, wasfrom)) =
             self.search_socket.receive_to(&mut buf)
         {
-            println!("UC RX from {} to {}", wasfrom, wasto);
-            if let Ok(m) = ssdp::parse(&buf[0..n]) {
-                println!("  {:?}", m);
-                if let Message::Response(r) = m {
-                    self.inner.lock().unwrap().broadcast(&r);
-                }
-            }
+            self.inner.lock().unwrap().on_data(
+                &buf[0..n],
+                &mut self.search_socket,
+                wasto,
+                wasfrom,
+            );
         }
     }
 

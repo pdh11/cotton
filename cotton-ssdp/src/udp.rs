@@ -186,6 +186,17 @@ impl TargetedSend for tokio::net::UdpSocket {
     }
 }
 
+impl TargetedSend for std::net::UdpSocket {
+    fn send_from(
+        &mut self,
+        buffer: &[u8],
+        to: SocketAddr,
+        from: IpAddr,
+    ) -> Result<(), std::io::Error> {
+        send_from(self.as_raw_fd(), buffer, to, from)
+    }
+}
+
 impl TargetedReceive for tokio::net::UdpSocket {
     fn receive_to(
         &mut self,
@@ -194,6 +205,15 @@ impl TargetedReceive for tokio::net::UdpSocket {
         self.try_io(tokio::io::Interest::READABLE, || {
             receive_to(self.as_raw_fd(), buffer)
         })
+    }
+}
+
+impl TargetedReceive for std::net::UdpSocket {
+    fn receive_to(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
+        receive_to(self.as_raw_fd(), buffer)
     }
 }
 
@@ -479,10 +499,8 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async {
-                let mut tx =
-                    tokio::net::UdpSocket::from_std(tx).unwrap();
-                let mut rx =
-                    tokio::net::UdpSocket::from_std(rx).unwrap();
+                let mut tx = tokio::net::UdpSocket::from_std(tx).unwrap();
+                let mut rx = tokio::net::UdpSocket::from_std(rx).unwrap();
 
                 tx.writable().await.unwrap();
                 let r = tx.send_from(
