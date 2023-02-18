@@ -830,6 +830,91 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn get_links_bad_message2() {
+        let (infd, outfd) = nix::sys::socket::socketpair(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Datagram,
+            None,
+            nix::sys::socket::SockFlag::empty(),
+        )
+        .unwrap();
+
+        let nlsocket = unsafe {
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+        };
+
+        // First a duff message (no name)
+        //
+        // We want one that passes the initial test, but fails in
+        // translate_link_message (here, because it has no interface
+        // name).
+
+        let buf = RtBuffer::new();
+        //buf.push(Rtattr::new(None, Ifla::Ifname, "eth0".to_string()).unwrap());
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifinfomsg::new(
+                RtAddrFamily::Inet,
+                Arphrd::Ether,
+                3,
+                IffFlags::empty(),
+                IffFlags::empty(),
+                buf,
+            )),
+        );
+        let mut v = std::io::Cursor::new(Vec::new());
+        msg.to_bytes(&mut v).unwrap();
+
+        nix::sys::socket::sendto(
+            infd,
+            &v.into_inner(),
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+            .unwrap();
+
+        // Next an OK message
+
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifla::Ifname, "eth0".to_string()).unwrap());
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Newlink,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifinfomsg::new(
+                RtAddrFamily::Inet,
+                Arphrd::Ether,
+                3,
+                IffFlags::empty(),
+                IffFlags::empty(),
+                buf,
+            )),
+        );
+        let mut v = std::io::Cursor::new(Vec::new());
+        msg.to_bytes(&mut v).unwrap();
+
+        nix::sys::socket::sendto(
+            infd,
+            &v.into_inner(),
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+            .unwrap();
+
+        let s = Box::pin(get_links(nlsocket)).next().await;
+        assert!(s.is_some());
+        let result = s.unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn get_links_del() {
         let (infd, outfd) = nix::sys::socket::socketpair(
             nix::sys::socket::AddressFamily::Unix,
@@ -908,6 +993,93 @@ mod tests {
         assert!(s.is_some());
         let result = s.unwrap();
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn get_addrs_bad_message2() {
+        let (infd, outfd) = nix::sys::socket::socketpair(
+            nix::sys::socket::AddressFamily::Unix,
+            nix::sys::socket::SockType::Datagram,
+            None,
+            nix::sys::socket::SockFlag::empty(),
+        )
+        .unwrap();
+
+        let nlsocket = unsafe {
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+        };
+
+        // First a bogus message (no address, so it looks like a message
+        // but fails translate_addr_message).
+
+        let buf = RtBuffer::new();
+        //buf.push(Rtattr::new(None, Ifa::Address, 65535u32).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Deladdr,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 24,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: buf,
+            }),
+        );
+
+        let mut v = std::io::Cursor::new(Vec::new());
+        msg.to_bytes(&mut v).unwrap();
+
+        nix::sys::socket::sendto(
+            infd,
+            &v.into_inner(),
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+            .unwrap();
+
+        // Then an OK message
+
+        let mut buf = RtBuffer::new();
+        buf.push(Rtattr::new(None, Ifa::Address, 65535u32).unwrap());
+
+        let msg = Nlmsghdr::new(
+            None,
+            Rtm::Deladdr,
+            NlmFFlags::empty(),
+            None,
+            None,
+            NlPayload::Payload(Ifaddrmsg {
+                ifa_family: RtAddrFamily::Inet,
+                ifa_prefixlen: 24,
+                ifa_flags: IfaFFlags::empty(),
+                ifa_scope: 0,
+                ifa_index: 2,
+                rtattrs: buf,
+            }),
+        );
+
+        let mut v = std::io::Cursor::new(Vec::new());
+        msg.to_bytes(&mut v).unwrap();
+
+        nix::sys::socket::sendto(
+            infd,
+            &v.into_inner(),
+            &(),
+            nix::sys::socket::MsgFlags::empty(),
+        )
+            .unwrap();
+
+
+        let s = Box::pin(get_addrs(nlsocket)).next().await;
+        assert!(s.is_some());
+        let result = s.unwrap();
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
