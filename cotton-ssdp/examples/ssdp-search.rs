@@ -55,7 +55,7 @@ fn target_match(search: &str, candidate: &str) -> bool {
 }
 
 trait Callback {
-    fn on_response(&self, response: &Response) -> Result<(), ()>;
+    fn on_notification(&self, notification: &Notification) -> Result<(), ()>;
 }
 
 struct ActiveSearch<CB: Callback> {
@@ -115,10 +115,13 @@ impl<CB: Callback> Inner<CB> {
         self.active_searches.insert(s); // @todo notify searchers (another mpsc?)
     }
 
-    fn broadcast(&mut self, response: &Response) {
+    fn broadcast(&mut self, notification: &Notification) {
         self.active_searches.retain(|_, s| {
-            if target_match(&s.notification_type, &response.search_target) {
-                s.callback.on_response(response).is_ok()
+            if target_match(
+                &s.notification_type,
+                &notification.notification_type,
+            ) {
+                s.callback.on_notification(&notification).is_ok()
             } else {
                 true
             }
@@ -138,10 +141,12 @@ impl<CB: Callback> Inner<CB> {
         if let Ok(m) = ssdp::parse(buf) {
             println!("  {:?}", m);
             match m {
-                Message::NotifyAlive(a) => self.broadcast(&Response {
-                    search_target: a.notification_type,
+                Message::NotifyAlive(a) => self.broadcast(&Notification {
+                    notification_type: a.notification_type,
                     unique_service_name: a.unique_service_name,
-                    location: a.location,
+                    notification_subtype: NotificationSubtype::AliveLocation(
+                        a.location,
+                    ),
                 }),
                 Message::Search(s) => {
                     println!("Got search for {}", s.search_target);
@@ -175,21 +180,27 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
                         }
                     }
                 }
-                Message::Response(r) => {
-                    self.broadcast(&r);
-                }
+                Message::Response(r) => self.broadcast(&Notification {
+                    notification_type: r.search_target,
+                    unique_service_name: r.unique_service_name,
+                    notification_subtype: NotificationSubtype::AliveLocation(
+                        r.location,
+                    ),
+                }),
                 _ => (),
             };
         }
     }
 
-    fn on_interface_event<MULTICAST, SEARCH>(&mut self,
-                                             e: NetworkEvent,
-                                             multicast: &mut MULTICAST,
-                                             search: &mut SEARCH
+    fn on_interface_event<MULTICAST, SEARCH>(
+        &mut self,
+        e: NetworkEvent,
+        multicast: &mut MULTICAST,
+        search: &mut SEARCH,
     ) -> Result<(), std::io::Error>
-        where MULTICAST: udp::Multicast,
-              SEARCH: udp::TargetedSend
+    where
+        MULTICAST: udp::Multicast,
+        SEARCH: udp::TargetedSend,
     {
         let search_all = b"M-SEARCH * HTTP/1.1\r
 HOST: 239.255.255.250:1900\r
@@ -245,10 +256,11 @@ ST: ssdp:all\r
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if v.up && !v.listening {
                         if settings.addr.is_ipv4() {
-                            multicast.join_multicast_group(
-                                "239.255.255.250".parse().unwrap(),
-                                settings.addr,
-                            )
+                            multicast
+                                .join_multicast_group(
+                                    "239.255.255.250".parse().unwrap(),
+                                    settings.addr,
+                                )
                                 .map_err(|e| {
                                     println!("jmg failed {:?}", e);
                                     e
@@ -369,7 +381,7 @@ impl<CB: Callback> Task<CB> {
         self.inner.lock().unwrap().on_interface_event(
             e,
             &mut self.multicast_socket,
-            &mut self.search_socket
+            &mut self.search_socket,
         )
     }
 
@@ -383,13 +395,13 @@ impl<CB: Callback> Task<CB> {
 }
 
 struct AsyncCallback {
-    channel: mpsc::Sender<Response>,
+    channel: mpsc::Sender<Notification>,
 }
 
 impl Callback for AsyncCallback {
-    fn on_response(&self, response: &Response) -> Result<(), ()> {
+    fn on_notification(&self, n: &Notification) -> Result<(), ()> {
         if matches!(
-            self.channel.try_send(response.clone()),
+            self.channel.try_send(n.clone()),
             Ok(_) | Err(mpsc::error::TrySendError::Full(_))
         ) {
             Ok(())
@@ -437,12 +449,10 @@ impl AsyncService {
         Ok(AsyncService { inner })
     }
 
-    /* @todo Subscriber wants ByeByes as well as Alives!
-     */
     pub fn subscribe<A>(
         &mut self,
         notification_type: A,
-    ) -> impl Stream<Item = Response>
+    ) -> impl Stream<Item = Notification>
     where
         A: Into<String>,
     {
@@ -491,11 +501,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     while let Some(r) = s.subscribe("ssdp:all").next().await {
-        //println!("GOT {:?}", r);
-        if !map.contains_key(&r.unique_service_name) {
-            println!("+ {}", r.search_target);
-            println!("  {} at {}", r.unique_service_name, r.location);
-            map.insert(r.unique_service_name.clone(), r);
+        println!("GOT {:?}", r);
+        if let NotificationSubtype::AliveLocation(loc) =
+            &r.notification_subtype
+        {
+            if !map.contains_key(&r.unique_service_name) {
+                println!("+ {}", r.notification_type);
+                println!("  {} at {}", r.unique_service_name, loc);
+                map.insert(r.unique_service_name.clone(), r);
+            }
         }
     }
 

@@ -40,17 +40,13 @@ pub struct ByeBye {
     pub unique_service_name: String,
 }
 
-/** An incoming SSDP search
- *
- * Might match a USN or an NT or might be "ssdp:all".
- */
 #[derive(Debug)]
 pub struct Search {
     pub search_target: String,
     pub maximum_wait_sec: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Response {
     pub search_target: String,
     pub unique_service_name: String,
@@ -63,6 +59,19 @@ pub enum Message {
     NotifyByeBye(ByeBye),
     Search(Search),
     Response(Response),
+}
+
+#[derive(Debug, Clone)]
+pub enum NotificationSubtype {
+    AliveLocation(String),
+    ByeBye,
+}
+
+#[derive(Debug, Clone)]
+pub struct Notification {
+    pub notification_type: String,
+    pub unique_service_name: String,
+    pub notification_subtype: NotificationSubtype,
 }
 
 pub struct Advertisement {
@@ -109,15 +118,27 @@ mod tests {
                 location: String::new(),
             })
         );
+        println!(
+            "{:?}",
+            Notification {
+                notification_type: String::new(),
+                unique_service_name: String::new(),
+                notification_subtype: NotificationSubtype::AliveLocation(
+                    String::new()
+                ),
+            }
+        );
     }
 
     #[test]
     #[allow(clippy::redundant_clone)]
     fn can_clone() {
-        let _ = Response {
-            search_target: String::new(),
+        let _ = Notification {
+            notification_type: String::new(),
             unique_service_name: String::new(),
-            location: String::new(),
+            notification_subtype: NotificationSubtype::AliveLocation(
+                String::new(),
+            ),
         }
         .clone();
     }
