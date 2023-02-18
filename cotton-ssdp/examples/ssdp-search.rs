@@ -66,7 +66,7 @@ struct ActiveSearch<CB: Callback> {
 
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
-struct Inner<CB: Callback> {
+struct Engine<CB: Callback> {
     interfaces: HashMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: HashMap<String, Advertisement>,
@@ -74,9 +74,9 @@ struct Inner<CB: Callback> {
     phase: u8,
 }
 
-impl<CB: Callback> Inner<CB> {
+impl<CB: Callback> Engine<CB> {
     fn new() -> Self {
-        Inner {
+        Engine {
             interfaces: HashMap::default(),
             active_searches: SlotMap::with_key(),
             advertisements: HashMap::default(),
@@ -304,16 +304,16 @@ ST: ssdp:all\r
     }
 }
 
-struct Task<CB: Callback> {
-    inner: Arc<Mutex<Inner<CB>>>,
+struct Inner<CB: Callback> {
+    inner: Arc<Mutex<Engine<CB>>>,
     multicast_socket: tokio::net::UdpSocket,
     search_socket: tokio::net::UdpSocket,
 }
 
-impl<CB: Callback> Task<CB> {
+impl<CB: Callback> Inner<CB> {
     async fn new(
-        inner: Arc<Mutex<Inner<CB>>>,
-    ) -> Result<Task<CB>, std::io::Error> {
+        inner: Arc<Mutex<Engine<CB>>>,
+    ) -> Result<Inner<CB>, std::io::Error> {
         let multicast_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::DGRAM,
@@ -330,7 +330,7 @@ impl<CB: Callback> Task<CB> {
             UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
         setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
 
-        Ok(Task {
+        Ok(Inner {
             inner,
             multicast_socket,
             search_socket,
@@ -413,7 +413,7 @@ impl Callback for AsyncCallback {
 }
 
 pub struct AsyncService {
-    inner: Arc<Mutex<Inner<AsyncCallback>>>,
+    inner: Arc<Mutex<Engine<AsyncCallback>>>,
 }
 
 /** Asynchronous SSDP service
@@ -423,11 +423,11 @@ pub struct AsyncService {
  */
 impl AsyncService {
     pub async fn new() -> Result<Self, Box<dyn Error>> {
-        let inner = Arc::new(Mutex::new(Inner::new()));
+        let inner = Arc::new(Mutex::new(Engine::new()));
 
         let (mut s, mut task) = tokio::try_join!(
             get_interfaces_async(),
-            Task::new(inner.clone())
+            Inner::new(inner.clone())
         )?;
 
         tokio::spawn(async move {
