@@ -1,5 +1,6 @@
 use cotton_netif::*;
-use cotton_ssdp::ssdp;
+use cotton_ssdp::message;
+use cotton_ssdp::message::Message;
 use cotton_ssdp::udp::TargetedReceive;
 use cotton_ssdp::*;
 use futures::Stream;
@@ -138,7 +139,7 @@ impl<CB: Callback> Inner<CB> {
         REPLY: udp::TargetedSend,
     {
         println!("RX from {} to {}", wasfrom, wasto);
-        if let Ok(m) = ssdp::parse(buf) {
+        if let Ok(m) = message::parse(buf) {
             println!("  {:?}", m);
             match m {
                 Message::NotifyAlive(a) => self.broadcast(&Notification {
@@ -187,7 +188,7 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
                         r.location,
                     ),
                 }),
-                _ => (),
+                _ => (), // @todo ByeBye events
             };
         }
     }

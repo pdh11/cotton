@@ -27,40 +27,6 @@
 //#![warn(missing_docs)] // @todo
 #![warn(rustdoc::missing_crate_level_docs)]
 
-#[derive(Debug)]
-pub struct Alive {
-    pub notification_type: String,
-    pub unique_service_name: String,
-    pub location: String,
-}
-
-#[derive(Debug)]
-pub struct ByeBye {
-    pub notification_type: String,
-    pub unique_service_name: String,
-}
-
-#[derive(Debug)]
-pub struct Search {
-    pub search_target: String,
-    pub maximum_wait_sec: u8,
-}
-
-#[derive(Debug)]
-pub struct Response {
-    pub search_target: String,
-    pub unique_service_name: String,
-    pub location: String,
-}
-
-#[derive(Debug)]
-pub enum Message {
-    NotifyAlive(Alive),
-    NotifyByeBye(ByeBye),
-    Search(Search),
-    Response(Response),
-}
-
 #[derive(Debug, Clone)]
 pub enum NotificationSubtype {
     AliveLocation(String),
@@ -79,7 +45,7 @@ pub struct Advertisement {
     pub location: url::Url,
 }
 
-pub mod ssdp;
+pub mod message;
 pub mod udp;
 
 #[cfg(test)]
@@ -88,36 +54,6 @@ mod tests {
 
     #[test]
     fn can_debug() {
-        println!(
-            "{:?}",
-            Message::NotifyAlive(Alive {
-                notification_type: String::new(),
-                unique_service_name: String::new(),
-                location: String::new(),
-            })
-        );
-        println!(
-            "{:?}",
-            Message::NotifyByeBye(ByeBye {
-                notification_type: String::new(),
-                unique_service_name: String::new(),
-            })
-        );
-        println!(
-            "{:?}",
-            Message::Search(Search {
-                search_target: String::new(),
-                maximum_wait_sec: 3,
-            })
-        );
-        println!(
-            "{:?}",
-            Message::Response(Response {
-                search_target: String::new(),
-                unique_service_name: String::new(),
-                location: String::new(),
-            })
-        );
         println!(
             "{:?}",
             Notification {

@@ -1,5 +1,38 @@
-use crate::*;
 use std::collections::HashMap;
+
+#[derive(Debug)]
+pub struct Alive {
+    pub notification_type: String,
+    pub unique_service_name: String,
+    pub location: String,
+}
+
+#[derive(Debug)]
+pub struct ByeBye {
+    pub notification_type: String,
+    pub unique_service_name: String,
+}
+
+#[derive(Debug)]
+pub struct Search {
+    pub search_target: String,
+    pub maximum_wait_sec: u8,
+}
+
+#[derive(Debug)]
+pub struct Response {
+    pub search_target: String,
+    pub unique_service_name: String,
+    pub location: String,
+}
+
+#[derive(Debug)]
+pub enum Message {
+    NotifyAlive(Alive),
+    NotifyByeBye(ByeBye),
+    Search(Search),
+    Response(Response),
+}
 
 pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
     let packet = std::str::from_utf8(buf)
@@ -76,8 +109,41 @@ pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
-    use crate::Message;
+    use super::*;
+
+    #[test]
+    fn can_debug() {
+        println!(
+            "{:?}",
+            Message::NotifyAlive(Alive {
+                notification_type: String::new(),
+                unique_service_name: String::new(),
+                location: String::new(),
+            })
+        );
+        println!(
+            "{:?}",
+            Message::NotifyByeBye(ByeBye {
+                notification_type: String::new(),
+                unique_service_name: String::new(),
+            })
+        );
+        println!(
+            "{:?}",
+            Message::Search(Search {
+                search_target: String::new(),
+                maximum_wait_sec: 3,
+            })
+        );
+        println!(
+            "{:?}",
+            Message::Response(Response {
+                search_target: String::new(),
+                unique_service_name: String::new(),
+                location: String::new(),
+            })
+        );
+    }
 
     #[test]
     fn rejects_non_utf8() {
