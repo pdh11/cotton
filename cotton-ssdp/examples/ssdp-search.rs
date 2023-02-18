@@ -235,6 +235,7 @@ ST: ssdp:all\r
                                 )?;
                                 println!("New socket on {}", name);
                                 v.listening = true;
+                                // @todo Send adverts
                             }
                         }
                     }
@@ -274,6 +275,7 @@ ST: ssdp:all\r
                             )?;
                             println!("New socket on {:?}", settings.addr);
                             v.listening = true;
+                            // @todo Send adverts
                         }
                         v.ip = Some(settings);
                     }
@@ -293,14 +295,40 @@ ST: ssdp:all\r
         Ok(())
     }
 
-    fn advertise(
+    fn advertise<SOCKET>(
         &mut self,
         unique_service_name: String,
         advertisement: Advertisement,
-    ) {
+        socket: &SOCKET
+    ) where SOCKET: udp::TargetedSend {
+        println!("Advertising {}", unique_service_name);
+        for (_, interface) in &self.interfaces {
+            if let Some(ip) = &interface.ip {
+                let mut url = advertisement.location.clone();
+                let _ = url.set_ip_host(ip.addr);
+
+                let message = format!(
+                                "NOTIFY * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+CACHE-CONTROL: max-age=1800\r
+LOCATION: {}\r
+NT: {}\r
+NTS: ssdp:alive\r
+SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
+USN: {}\r
+\r\n",
+                    url, advertisement.notification_type, unique_service_name
+                );
+                println!("Advertising {:?} from {:?}", url, ip);
+                let _ = socket.send_from(
+                    message.as_bytes(),
+                    "239.255.255.250:1900".parse().unwrap(),
+                    ip.addr,
+                );
+            }
+        }
         self.advertisements
             .insert(unique_service_name, advertisement);
-        // @todo send notifies
     }
 }
 
@@ -449,7 +477,11 @@ impl AsyncService {
             .engine
             .lock()
             .unwrap()
-            .advertise(unique_service_name.into(), advertisement);
+            .advertise(
+                unique_service_name.into(),
+                advertisement,
+                &self.inner.search_socket
+            );
     }
 }
 
