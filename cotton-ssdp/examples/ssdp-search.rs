@@ -132,7 +132,7 @@ impl<CB: Callback> Engine<CB> {
     fn on_data<REPLY>(
         &mut self,
         buf: &[u8],
-        socket: &mut REPLY,
+        socket: &REPLY,
         wasto: IpAddr,
         wasfrom: SocketAddr,
     ) where
@@ -196,8 +196,8 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
     fn on_interface_event<MULTICAST, SEARCH>(
         &mut self,
         e: NetworkEvent,
-        multicast: &mut MULTICAST,
-        search: &mut SEARCH,
+        multicast: &MULTICAST,
+        search: &SEARCH,
     ) -> Result<(), std::io::Error>
     where
         MULTICAST: udp::Multicast,
@@ -304,97 +304,6 @@ ST: ssdp:all\r
     }
 }
 
-struct Inner<CB: Callback> {
-    inner: Arc<Mutex<Engine<CB>>>,
-    multicast_socket: tokio::net::UdpSocket,
-    search_socket: tokio::net::UdpSocket,
-}
-
-impl<CB: Callback> Inner<CB> {
-    async fn new(
-        inner: Arc<Mutex<Engine<CB>>>,
-    ) -> Result<Inner<CB>, std::io::Error> {
-        let multicast_socket = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::DGRAM,
-            None,
-        )?;
-        multicast_socket.set_nonblocking(true)?;
-        multicast_socket.set_reuse_address(true)?;
-        let multicast_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1900u16);
-        multicast_socket.bind(&socket2::SockAddr::from(multicast_addr))?;
-        setsockopt(multicast_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
-        let multicast_socket = UdpSocket::from_std(multicast_socket.into())?;
-
-        let search_socket =
-            UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
-        setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
-
-        Ok(Inner {
-            inner,
-            multicast_socket,
-            search_socket,
-        })
-    }
-
-    /** Process data arriving on the multicast socket
-     *
-     * This will be a mixture of notifications and search requests.
-     */
-    fn process_multicast(&mut self) {
-        let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) =
-            self.multicast_socket.receive_to(&mut buf)
-        {
-            self.inner.lock().unwrap().on_data(
-                &buf[0..n],
-                &mut self.search_socket,
-                wasto,
-                wasfrom,
-            );
-        }
-    }
-
-    /** Process data arriving on the search socket
-     *
-     * This should only be response packets.
-     */
-    fn process_search(&mut self) {
-        let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) =
-            self.search_socket.receive_to(&mut buf)
-        {
-            self.inner.lock().unwrap().on_data(
-                &buf[0..n],
-                &mut self.search_socket,
-                wasto,
-                wasfrom,
-            );
-        }
-    }
-
-    /** Process changes (from cotton_netif) to the list of IP interfaces
-     */
-    fn process_interface_event(
-        &mut self,
-        e: NetworkEvent,
-    ) -> Result<(), std::io::Error> {
-        self.inner.lock().unwrap().on_interface_event(
-            e,
-            &mut self.multicast_socket,
-            &mut self.search_socket,
-        )
-    }
-
-    fn next_wakeup(&self) -> Duration {
-        self.inner.lock().unwrap().next_wakeup()
-    }
-
-    fn wakeup(&mut self) {
-        self.inner.lock().unwrap().wakeup()
-    }
-}
-
 struct AsyncCallback {
     channel: mpsc::Sender<Notification>,
 }
@@ -412,8 +321,40 @@ impl Callback for AsyncCallback {
     }
 }
 
+struct Inner {
+    engine: Mutex<Engine<AsyncCallback>>,
+    multicast_socket: tokio::net::UdpSocket,
+    search_socket: tokio::net::UdpSocket,
+}
+
+impl Inner {
+    async fn new(engine: Engine<AsyncCallback>) -> Result<Inner, std::io::Error> {
+        let multicast_socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
+            None,
+        )?;
+        multicast_socket.set_nonblocking(true)?;
+        multicast_socket.set_reuse_address(true)?;
+        let multicast_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1900u16);
+        multicast_socket.bind(&socket2::SockAddr::from(multicast_addr))?;
+        setsockopt(multicast_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
+        let multicast_socket = UdpSocket::from_std(multicast_socket.into())?;
+
+        let search_socket =
+            UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
+        setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
+
+        Ok(Inner {
+            engine: Mutex::new(engine),
+            multicast_socket,
+            search_socket,
+        })
+    }
+}
+
 pub struct AsyncService {
-    inner: Arc<Mutex<Engine<AsyncCallback>>>,
+    inner: Arc<Inner>,
 }
 
 /** Asynchronous SSDP service
@@ -423,12 +364,13 @@ pub struct AsyncService {
  */
 impl AsyncService {
     pub async fn new() -> Result<Self, Box<dyn Error>> {
-        let inner = Arc::new(Mutex::new(Engine::new()));
-
-        let (mut s, mut task) = tokio::try_join!(
+        let (mut s, inner) = tokio::try_join!(
             get_interfaces_async(),
-            Inner::new(inner.clone())
+            Inner::new(Engine::new()),
         )?;
+
+        let inner = Arc::new(inner);
+        let inner2 = inner.clone();
 
         tokio::spawn(async move {
             loop {
@@ -436,18 +378,49 @@ impl AsyncService {
 
                 tokio::select! {
                     e = s.next() => if let Some(Ok(event)) = e {
-                        task.process_interface_event(event)
+                        inner.engine.lock().unwrap().on_interface_event(
+                            event,
+                            &inner.multicast_socket,
+                            &inner.search_socket,
+                        )
                             .unwrap_or_else(
                                 |err| println!("SSDP error {}", err))
                     },
-                    _ = task.multicast_socket.readable() => task.process_multicast(),
-                    _ = task.search_socket.readable() => task.process_search(),
-                    _ = tokio::time::sleep(task.next_wakeup()) => task.wakeup(),
+                    _ = inner.multicast_socket.readable() => {
+                        let mut buf = [0u8; 1500];
+                        if let Ok((n, wasto, wasfrom)) =
+                            inner.multicast_socket.receive_to(&mut buf) {
+                            inner.engine.lock().unwrap().on_data(
+                                &buf[0..n],
+                                &inner.search_socket,
+                                wasto,
+                                wasfrom,
+                            );
+                        }
+                    },
+                    _ = inner.search_socket.readable() => {
+                        let mut buf = [0u8; 1500];
+                        if let Ok((n, wasto, wasfrom)) =
+                            inner.search_socket.receive_to(&mut buf)
+                        {
+                            inner.engine.lock().unwrap().on_data(
+                                &buf[0..n],
+                                &inner.search_socket,
+                                wasto,
+                                wasfrom,
+                            );
+                        }
+                    },
+                    _ = tokio::time::sleep(
+                        inner.engine.lock().unwrap().next_wakeup()
+                    ) => {
+                        inner.engine.lock().unwrap().wakeup()
+                    },
                 };
             }
         });
 
-        Ok(AsyncService { inner })
+        Ok(AsyncService { inner: inner2 })
     }
 
     pub fn subscribe<A>(
@@ -458,7 +431,7 @@ impl AsyncService {
         A: Into<String>,
     {
         let (snd, rcv) = mpsc::channel(100);
-        self.inner.lock().unwrap().subscribe(
+        self.inner.engine.lock().unwrap().subscribe(
             notification_type.into(),
             AsyncCallback { channel: snd },
         );
@@ -473,6 +446,7 @@ impl AsyncService {
         USN: Into<String>,
     {
         self.inner
+            .engine
             .lock()
             .unwrap()
             .advertise(unique_service_name.into(), advertisement);

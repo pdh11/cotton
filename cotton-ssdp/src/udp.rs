@@ -31,7 +31,7 @@ pub trait TargetedSend {
     /// (currently) if IPv6 is attempted.
     ///
     fn send_from(
-        &mut self,
+        &self,
         buffer: &[u8],
         to: SocketAddr,
         from: IpAddr,
@@ -61,14 +61,14 @@ pub trait TargetedReceive {
     /// (currently) if IPv6 is attempted.
     ///
     fn receive_to(
-        &mut self,
+        &self,
         buffer: &mut [u8],
     ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error>;
 }
 
 pub trait Multicast {
     fn join_multicast_group(
-        &mut self,
+        &self,
         multicast_address: IpAddr,
         my_address: IpAddr,
     ) -> Result<(), std::io::Error>;
@@ -183,7 +183,7 @@ fn receive_to(
 
 impl TargetedSend for tokio::net::UdpSocket {
     fn send_from(
-        &mut self,
+        &self,
         buffer: &[u8],
         to: SocketAddr,
         from: IpAddr,
@@ -208,7 +208,7 @@ impl TargetedSend for std::net::UdpSocket {
 
 impl TargetedReceive for tokio::net::UdpSocket {
     fn receive_to(
-        &mut self,
+        &self,
         buffer: &mut [u8],
     ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
         self.try_io(tokio::io::Interest::READABLE, || {
@@ -229,7 +229,7 @@ impl TargetedReceive for std::net::UdpSocket {
 
 impl Multicast for tokio::net::UdpSocket {
     fn join_multicast_group(
-        &mut self,
+        &self,
         multicast_address: IpAddr,
         my_address: IpAddr,
     ) -> Result<(), std::io::Error> {
@@ -524,8 +524,8 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async {
-                let mut tx = tokio::net::UdpSocket::from_std(tx).unwrap();
-                let mut rx = tokio::net::UdpSocket::from_std(rx).unwrap();
+                let tx = tokio::net::UdpSocket::from_std(tx).unwrap();
+                let rx = tokio::net::UdpSocket::from_std(rx).unwrap();
 
                 tx.writable().await.unwrap();
                 let r = tx.send_from(
