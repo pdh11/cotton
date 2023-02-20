@@ -119,7 +119,8 @@ impl<CB: Callback> Engine<CB> {
         if let Some(all) = self
             .active_searches
             .iter()
-            .find(|x| x.1.notification_type == "ssdp:all") {
+            .find(|x| x.1.notification_type == "ssdp:all")
+        {
             self.search_on_all(&all.1.notification_type, socket);
         } else {
             for s in self.active_searches.values() {
@@ -128,12 +129,14 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    fn search_on_all<SOCKET>(&self, search_type: &String, socket: &SOCKET)
-    where
+    fn search_on<SOCKET>(
+        &self,
+        search_type: &String,
+        source: IpAddr,
+        socket: &SOCKET,
+    ) where
         SOCKET: udp::TargetedSend,
     {
-        println!("search_on_all({})", search_type);
-
         let message = format!(
             "M-SEARCH * HTTP/1.1\r
 HOST: 239.255.255.250:1900\r
@@ -143,15 +146,23 @@ ST: {}\r
 \r\n",
             search_type
         );
+        let _ = socket.send_from(
+            message.as_bytes(),
+            "239.255.255.250:1900".parse().unwrap(),
+            source,
+        );
+    }
+
+    fn search_on_all<SOCKET>(&self, search_type: &String, socket: &SOCKET)
+    where
+        SOCKET: udp::TargetedSend,
+    {
+        println!("search_on_all({})", search_type);
 
         for (_, interface) in &self.interfaces {
             if let Some(ip) = &interface.ip {
                 if ip.addr.is_ipv4() {
-                    let _ = socket.send_from(
-                        message.as_bytes(),
-                        "239.255.255.250:1900".parse().unwrap(),
-                        ip.addr,
-                    );
+                    self.search_on(search_type, ip.addr, socket);
                 }
             }
         }
@@ -260,16 +271,10 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
         MULTICAST: udp::Multicast,
         SEARCH: udp::TargetedSend,
     {
-        let search_all = b"M-SEARCH * HTTP/1.1\r
-HOST: 239.255.255.250:1900\r
-MAN: \"ssdp:discover\"\r
-MX: 5\r
-ST: ssdp:all\r
-\r\n";
-
         println!("if event {:?}", e);
+        let mut new_ip = None;
         match e {
-            NetworkEvent::NewLink(ix, name, flags) => {
+            NetworkEvent::NewLink(ix, _name, flags) => {
                 let up = flags.contains(
                     cotton_netif::Flags::RUNNING
                         | cotton_netif::Flags::UP
@@ -284,15 +289,8 @@ ST: ssdp:all\r
                                     "239.255.255.250".parse().unwrap(),
                                     ip.addr,
                                 )?;
-                                println!("Searching on {:?}", ip);
-                                search.send_from(
-                                    search_all,
-                                    "239.255.255.250:1900".parse().unwrap(),
-                                    ip.addr,
-                                )?;
-                                println!("New socket on {}", name);
+                                new_ip = Some(ip.addr);
                                 v.listening = true;
-                                // @todo Send adverts
                             }
                         }
                     }
@@ -324,15 +322,8 @@ ST: ssdp:all\r
                                     println!("jmg failed {:?}", e);
                                     e
                                 })?;
-                            println!("Searching on {:?}", settings.addr);
-                            search.send_from(
-                                search_all,
-                                "239.255.255.250:1900".parse().unwrap(),
-                                settings.addr,
-                            )?;
-                            println!("New socket on {:?}", settings.addr);
+                            new_ip = Some(settings.addr);
                             v.listening = true;
-                            // @todo Send adverts
                         }
                         v.ip = Some(settings);
                     }
@@ -349,7 +340,58 @@ ST: ssdp:all\r
             }
             _ => {} // @todo network-gone events
         }
+
+        if let Some(ip) = new_ip {
+            println!("Searching on {:?}", ip);
+            if let Some(all) = self
+                .active_searches
+                .iter()
+                .find(|x| x.1.notification_type == "ssdp:all")
+            {
+                self.search_on(&all.1.notification_type, ip, search);
+            } else {
+                for s in self.active_searches.values() {
+                    self.search_on(&s.notification_type, ip, search);
+                }
+            }
+
+            for (key, value) in &self.advertisements {
+                self.advertise_on(key, value, ip, search);
+            }
+        }
         Ok(())
+    }
+
+    fn advertise_on<SOCKET>(
+        &self,
+        unique_service_name: &String,
+        advertisement: &Advertisement,
+        source: IpAddr,
+        socket: &SOCKET,
+    ) where
+        SOCKET: udp::TargetedSend,
+    {
+        let mut url = advertisement.location.clone();
+        let _ = url.set_ip_host(source);
+
+        let message = format!(
+            "NOTIFY * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+CACHE-CONTROL: max-age=1800\r
+LOCATION: {}\r
+NT: {}\r
+NTS: ssdp:alive\r
+SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
+USN: {}\r
+\r\n",
+            url, advertisement.notification_type, unique_service_name
+        );
+        println!("Advertising {:?} from {:?}", url, source);
+        let _ = socket.send_from(
+            message.as_bytes(),
+            "239.255.255.250:1900".parse().unwrap(),
+            source,
+        );
     }
 
     fn advertise_on_all<SOCKET>(
@@ -363,28 +405,11 @@ ST: ssdp:all\r
         for (_, interface) in &self.interfaces {
             if let Some(ip) = &interface.ip {
                 if ip.addr.is_ipv4() {
-                    let mut url = advertisement.location.clone();
-                    let _ = url.set_ip_host(ip.addr);
-
-                    let message = format!(
-                        "NOTIFY * HTTP/1.1\r
-HOST: 239.255.255.250:1900\r
-CACHE-CONTROL: max-age=1800\r
-LOCATION: {}\r
-NT: {}\r
-NTS: ssdp:alive\r
-SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
-USN: {}\r
-\r\n",
-                        url,
-                        advertisement.notification_type,
-                        unique_service_name
-                    );
-                    println!("Advertising {:?} from {:?}", url, ip);
-                    let _ = socket.send_from(
-                        message.as_bytes(),
-                        "239.255.255.250:1900".parse().unwrap(),
+                    self.advertise_on(
+                        unique_service_name,
+                        advertisement,
                         ip.addr,
+                        socket,
                     );
                 }
             }
