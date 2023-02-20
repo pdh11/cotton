@@ -12,7 +12,8 @@ exit 0
 fi
 
 export RUSTFLAGS="-Cinstrument-coverage"
-export LLVM_PROFILE_FILE="/home/peter/src/cotton/profile/tmp-%p-%m.profraw"
+export LLVM_PROFILE_FILE="`pwd`/profile/tmp-%p-%m.profraw"
+rm -rf profile/*
 cargo +nightly test --offline --lib
 rustup run nightly cargo-profdata -- merge -sparse `find profile -name '*.profraw'` -o cotton.profdata
 rustup run nightly cargo-cov -- show \

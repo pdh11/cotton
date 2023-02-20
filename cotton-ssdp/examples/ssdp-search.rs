@@ -93,7 +93,8 @@ impl<CB: Callback> Engine<CB> {
         r
     }
 
-    fn wakeup(&mut self) {
+    fn wakeup<SOCKET>(&mut self, socket: &SOCKET)
+        where SOCKET: udp::TargetedSend {
         if !self.next_wakeup().is_zero() {
             return;
         }
@@ -106,9 +107,53 @@ impl<CB: Callback> Engine<CB> {
             "Re-advertising, re-searching, next wu at {:?} phase {}\n",
             self.next_salvo, self.phase
         );
+
+        for (key, value) in &self.advertisements {
+            self.advertise_on_all(key, value, socket);
+        }
+        if let Some(all) = self.active_searches.iter().find(|x| x.1.notification_type == "ssdp:all") {
+            println!("wakeup calls search_on_all(all)");
+            self.search_on_all(&all.1.notification_type, socket);
+        } else {
+            for s in self.active_searches.values() {
+                println!("wakeup calls search_on_all({})",
+                         s.notification_type);
+                self.search_on_all(&s.notification_type, socket);
+            }
+        }
     }
 
-    fn subscribe(&mut self, notification_type: String, callback: CB) {
+    fn search_on_all<SOCKET>(&self, search_type: &String, socket: &SOCKET)
+        where SOCKET: udp::TargetedSend {
+        println!("search_on_all({})", search_type);
+
+        let message = format!("M-SEARCH * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+MAN: \"ssdp:discover\"\r
+MX: 5\r
+ST: {}\r
+\r\n", search_type);
+
+        for (_, interface) in &self.interfaces {
+            if let Some(ip) = &interface.ip {
+                if ip.addr.is_ipv4() {
+                    println!("Searching for {} from {:?}", search_type,
+                             ip.addr);
+                    let _ = socket.send_from(
+                        message.as_bytes(),
+                        "239.255.255.250:1900".parse().unwrap(),
+                        ip.addr,
+                    );
+                }
+            }
+        }
+    }
+
+    fn subscribe<SOCKET>(&mut self, notification_type: String, callback: CB,
+                         socket: &SOCKET)
+        where SOCKET: udp::TargetedSend {
+        println!("subscribe({}) calls search_on_all", notification_type);
+        self.search_on_all(&notification_type, socket);
         let s = ActiveSearch {
             notification_type,
             callback,
@@ -295,20 +340,20 @@ ST: ssdp:all\r
         Ok(())
     }
 
-    fn advertise<SOCKET>(
-        &mut self,
-        unique_service_name: String,
-        advertisement: Advertisement,
+    fn advertise_on_all<SOCKET>(
+        &self,
+        unique_service_name: &String,
+        advertisement: &Advertisement,
         socket: &SOCKET
     ) where SOCKET: udp::TargetedSend {
-        println!("Advertising {}", unique_service_name);
         for (_, interface) in &self.interfaces {
             if let Some(ip) = &interface.ip {
-                let mut url = advertisement.location.clone();
-                let _ = url.set_ip_host(ip.addr);
+                if ip.addr.is_ipv4() {
+                    let mut url = advertisement.location.clone();
+                    let _ = url.set_ip_host(ip.addr);
 
-                let message = format!(
-                                "NOTIFY * HTTP/1.1\r
+                    let message = format!(
+                        "NOTIFY * HTTP/1.1\r
 HOST: 239.255.255.250:1900\r
 CACHE-CONTROL: max-age=1800\r
 LOCATION: {}\r
@@ -317,16 +362,27 @@ NTS: ssdp:alive\r
 SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
 USN: {}\r
 \r\n",
-                    url, advertisement.notification_type, unique_service_name
-                );
-                println!("Advertising {:?} from {:?}", url, ip);
-                let _ = socket.send_from(
-                    message.as_bytes(),
-                    "239.255.255.250:1900".parse().unwrap(),
-                    ip.addr,
-                );
+                        url, advertisement.notification_type, unique_service_name
+                    );
+                    println!("Advertising {:?} from {:?}", url, ip);
+                    let _ = socket.send_from(
+                        message.as_bytes(),
+                        "239.255.255.250:1900".parse().unwrap(),
+                        ip.addr,
+                    );
+                }
             }
         }
+    }
+
+    fn advertise<SOCKET>(
+        &mut self,
+        unique_service_name: String,
+        advertisement: Advertisement,
+        socket: &SOCKET
+    ) where SOCKET: udp::TargetedSend {
+        println!("Advertising {}", unique_service_name);
+        self.advertise_on_all(&unique_service_name, &advertisement, socket);
         self.advertisements
             .insert(unique_service_name, advertisement);
     }
@@ -373,6 +429,7 @@ impl Inner {
             UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
         setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
 
+        // @todo IPv6 https://stackoverflow.com/questions/3062205/setting-the-source-ip-for-a-udp-socket
         Ok(Inner {
             engine: Mutex::new(engine),
             multicast_socket,
@@ -442,7 +499,8 @@ impl AsyncService {
                     _ = tokio::time::sleep(
                         inner.engine.lock().unwrap().next_wakeup()
                     ) => {
-                        inner.engine.lock().unwrap().wakeup()
+                        inner.engine.lock().unwrap().wakeup(
+                            &inner.search_socket)
                     },
                 };
             }
@@ -462,6 +520,7 @@ impl AsyncService {
         self.inner.engine.lock().unwrap().subscribe(
             notification_type.into(),
             AsyncCallback { channel: snd },
+            &self.inner.search_socket
         );
         ReceiverStream::new(rcv)
     }
@@ -507,7 +566,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
     );
 
-    while let Some(r) = s.subscribe("ssdp:all").next().await {
+    let mut stream = s.subscribe("ssdp:all");
+    while let Some(r) = stream.next().await {
         println!("GOT {:?}", r);
         if let NotificationSubtype::AliveLocation(loc) =
             &r.notification_subtype
