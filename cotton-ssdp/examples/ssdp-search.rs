@@ -94,7 +94,9 @@ impl<CB: Callback> Engine<CB> {
     }
 
     fn wakeup<SOCKET>(&mut self, socket: &SOCKET)
-        where SOCKET: udp::TargetedSend {
+    where
+        SOCKET: udp::TargetedSend,
+    {
         if !self.next_wakeup().is_zero() {
             return;
         }
@@ -111,34 +113,40 @@ impl<CB: Callback> Engine<CB> {
         for (key, value) in &self.advertisements {
             self.advertise_on_all(key, value, socket);
         }
-        if let Some(all) = self.active_searches.iter().find(|x| x.1.notification_type == "ssdp:all") {
-            println!("wakeup calls search_on_all(all)");
+
+        // If anybody is doing an ssdp:all search, then we don't need to
+        // do any of the other searches.
+        if let Some(all) = self
+            .active_searches
+            .iter()
+            .find(|x| x.1.notification_type == "ssdp:all") {
             self.search_on_all(&all.1.notification_type, socket);
         } else {
             for s in self.active_searches.values() {
-                println!("wakeup calls search_on_all({})",
-                         s.notification_type);
                 self.search_on_all(&s.notification_type, socket);
             }
         }
     }
 
     fn search_on_all<SOCKET>(&self, search_type: &String, socket: &SOCKET)
-        where SOCKET: udp::TargetedSend {
+    where
+        SOCKET: udp::TargetedSend,
+    {
         println!("search_on_all({})", search_type);
 
-        let message = format!("M-SEARCH * HTTP/1.1\r
+        let message = format!(
+            "M-SEARCH * HTTP/1.1\r
 HOST: 239.255.255.250:1900\r
 MAN: \"ssdp:discover\"\r
 MX: 5\r
 ST: {}\r
-\r\n", search_type);
+\r\n",
+            search_type
+        );
 
         for (_, interface) in &self.interfaces {
             if let Some(ip) = &interface.ip {
                 if ip.addr.is_ipv4() {
-                    println!("Searching for {} from {:?}", search_type,
-                             ip.addr);
                     let _ = socket.send_from(
                         message.as_bytes(),
                         "239.255.255.250:1900".parse().unwrap(),
@@ -149,16 +157,20 @@ ST: {}\r
         }
     }
 
-    fn subscribe<SOCKET>(&mut self, notification_type: String, callback: CB,
-                         socket: &SOCKET)
-        where SOCKET: udp::TargetedSend {
-        println!("subscribe({}) calls search_on_all", notification_type);
+    fn subscribe<SOCKET>(
+        &mut self,
+        notification_type: String,
+        callback: CB,
+        socket: &SOCKET,
+    ) where
+        SOCKET: udp::TargetedSend,
+    {
         self.search_on_all(&notification_type, socket);
         let s = ActiveSearch {
             notification_type,
             callback,
         };
-        self.active_searches.insert(s); // @todo notify searchers (another mpsc?)
+        self.active_searches.insert(s);
     }
 
     fn broadcast(&mut self, notification: &Notification) {
@@ -344,8 +356,10 @@ ST: ssdp:all\r
         &self,
         unique_service_name: &String,
         advertisement: &Advertisement,
-        socket: &SOCKET
-    ) where SOCKET: udp::TargetedSend {
+        socket: &SOCKET,
+    ) where
+        SOCKET: udp::TargetedSend,
+    {
         for (_, interface) in &self.interfaces {
             if let Some(ip) = &interface.ip {
                 if ip.addr.is_ipv4() {
@@ -362,7 +376,9 @@ NTS: ssdp:alive\r
 SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
 USN: {}\r
 \r\n",
-                        url, advertisement.notification_type, unique_service_name
+                        url,
+                        advertisement.notification_type,
+                        unique_service_name
                     );
                     println!("Advertising {:?} from {:?}", url, ip);
                     let _ = socket.send_from(
@@ -379,8 +395,10 @@ USN: {}\r
         &mut self,
         unique_service_name: String,
         advertisement: Advertisement,
-        socket: &SOCKET
-    ) where SOCKET: udp::TargetedSend {
+        socket: &SOCKET,
+    ) where
+        SOCKET: udp::TargetedSend,
+    {
         println!("Advertising {}", unique_service_name);
         self.advertise_on_all(&unique_service_name, &advertisement, socket);
         self.advertisements
@@ -412,7 +430,9 @@ struct Inner {
 }
 
 impl Inner {
-    async fn new(engine: Engine<AsyncCallback>) -> Result<Inner, std::io::Error> {
+    async fn new(
+        engine: Engine<AsyncCallback>,
+    ) -> Result<Inner, std::io::Error> {
         let multicast_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::DGRAM,
@@ -520,7 +540,7 @@ impl AsyncService {
         self.inner.engine.lock().unwrap().subscribe(
             notification_type.into(),
             AsyncCallback { channel: snd },
-            &self.inner.search_socket
+            &self.inner.search_socket,
         );
         ReceiverStream::new(rcv)
     }
@@ -532,15 +552,11 @@ impl AsyncService {
     ) where
         USN: Into<String>,
     {
-        self.inner
-            .engine
-            .lock()
-            .unwrap()
-            .advertise(
-                unique_service_name.into(),
-                advertisement,
-                &self.inner.search_socket
-            );
+        self.inner.engine.lock().unwrap().advertise(
+            unique_service_name.into(),
+            advertisement,
+            &self.inner.search_socket,
+        );
     }
 }
 
