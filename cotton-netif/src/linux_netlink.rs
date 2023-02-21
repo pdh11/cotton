@@ -875,7 +875,7 @@ mod tests {
             &(),
             nix::sys::socket::MsgFlags::empty(),
         )
-            .unwrap();
+        .unwrap();
 
         // Next an OK message
 
@@ -905,7 +905,7 @@ mod tests {
             &(),
             nix::sys::socket::MsgFlags::empty(),
         )
-            .unwrap();
+        .unwrap();
 
         let s = Box::pin(get_links(nlsocket)).next().await;
         assert!(s.is_some());
@@ -1041,7 +1041,7 @@ mod tests {
             &(),
             nix::sys::socket::MsgFlags::empty(),
         )
-            .unwrap();
+        .unwrap();
 
         // Then an OK message
 
@@ -1073,8 +1073,7 @@ mod tests {
             &(),
             nix::sys::socket::MsgFlags::empty(),
         )
-            .unwrap();
-
+        .unwrap();
 
         let s = Box::pin(get_addrs(nlsocket)).next().await;
         assert!(s.is_some());
