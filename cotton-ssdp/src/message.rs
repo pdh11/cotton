@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{Cursor, Write};
 
 #[derive(Debug)]
 pub struct Alive {
@@ -105,6 +106,76 @@ pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
         _ => {}
     }
     Err(std::io::ErrorKind::InvalidData.into())
+}
+
+#[allow(clippy::cast_possible_truncation)]
+pub fn build_search(buf: &mut [u8], search_type: &str) -> usize {
+    let mut cursor = Cursor::new(buf);
+    let _ = write!(
+        cursor,
+        "M-SEARCH * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+MAN: \"ssdp:discover\"\r
+MX: 5\r
+ST: {}\r
+\r\n",
+        search_type
+    );
+    cursor.position() as usize
+}
+
+#[allow(clippy::cast_possible_truncation)]
+pub fn build_response(
+    buf: &mut [u8],
+    search_target: &str,
+    unique_service_name: &str,
+    location: &str,
+) -> usize {
+    let mut cursor = Cursor::new(buf);
+    let _ = write!(
+        cursor,
+        "HTTP/1.1 200 OK\r
+CACHE-CONTROL: max-age=1800\r
+ST: {}\r
+USN: {}\r
+LOCATION: {}\r
+SERVER: UPnP/1.0 {}/{}\r
+\r\n",
+        search_target,
+        unique_service_name,
+        location,
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+    );
+    cursor.position() as usize
+}
+
+#[allow(clippy::cast_possible_truncation)]
+pub fn build_notify(
+    buf: &mut [u8],
+    notification_type: &str,
+    unique_service_name: &str,
+    location: &str,
+) -> usize {
+    let mut cursor = Cursor::new(buf);
+    let _ = write!(
+        cursor,
+        "NOTIFY * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+CACHE-CONTROL: max-age=1800\r
+LOCATION: {}\r
+NT: {}\r
+NTS: ssdp:alive\r
+USN: {}\r
+SERVER: UPnP/1.0 {}/{}\r
+\r\n",
+        location,
+        notification_type,
+        unique_service_name,
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+    );
+    cursor.position() as usize
 }
 
 #[cfg(test)]
@@ -369,5 +440,114 @@ Location\r\n\
     fn rejects_search_bad_mx() {
         let r = parse(b"M-SEARCH * HTTP/1.1\r\nST: foo\r\nMX: a\r\n\r\n");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn builds_search() {
+        let mut buf = [0u8; 512];
+
+        let n = build_search(&mut buf, "upnp::rootdevice");
+
+        let expected = b"M-SEARCH * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+MAN: \"ssdp:discover\"\r
+MX: 5\r
+ST: upnp::rootdevice\r
+\r\n";
+        assert!(expected.len() == n);
+        assert!(expected[0..n] == buf[0..n]);
+    }
+
+    #[test]
+    fn builds_response() {
+        let mut buf = [0u8; 512];
+
+        let n = build_response(
+            &mut buf,
+            "upnp::rootdevice",
+            "uuid:37",
+            "http://me",
+        );
+        let expected = format!(
+            "HTTP/1.1 200 OK\r
+CACHE-CONTROL: max-age=1800\r
+ST: upnp::rootdevice\r
+USN: uuid:37\r
+LOCATION: http://me\r
+SERVER: UPnP/1.0 {}/{}\r
+\r\n",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+        );
+        assert!(expected.len() == n);
+        assert!(expected.as_bytes()[0..n] == buf[0..n]);
+    }
+
+    #[test]
+    fn builds_notify() {
+        let mut buf = [0u8; 512];
+
+        let n =
+            build_notify(&mut buf, "upnp::rootdevice", "uuid:37", "http://me");
+        let expected = format!(
+            "NOTIFY * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+CACHE-CONTROL: max-age=1800\r
+LOCATION: http://me\r
+NT: upnp::rootdevice\r
+NTS: ssdp:alive\r
+USN: uuid:37\r
+SERVER: UPnP/1.0 {}/{}\r
+\r\n",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+        );
+        assert!(expected.len() == n);
+        assert!(expected.as_bytes()[0..n] == buf[0..n]);
+    }
+
+    #[test]
+    fn search_round_trip() {
+        let mut buf = [0u8; 512];
+        let n = build_search(&mut buf, "upnp::rootdevice");
+        let msg = parse(&buf[0..n]).unwrap();
+        assert!(matches!(msg,
+                     Message::Search(s)
+                     if s.search_target == "upnp::rootdevice"
+                         && s.maximum_wait_sec == 5));
+    }
+
+    #[test]
+    fn response_round_trip() {
+        let mut buf = [0u8; 512];
+        let n = build_response(
+            &mut buf,
+            "upnp::rootdevice",
+            "uuid:xyz",
+            "https://you",
+        );
+        let msg = parse(&buf[0..n]).unwrap();
+        assert!(matches!(msg,
+                     Message::Response(s)
+                     if s.search_target == "upnp::rootdevice"
+                         && s.unique_service_name == "uuid:xyz"
+                         && s.location == "https://you"));
+    }
+
+    #[test]
+    fn notify_round_trip() {
+        let mut buf = [0u8; 512];
+        let n = build_notify(
+            &mut buf,
+            "upnp::rootdevice",
+            "uuid:xyz",
+            "https://you",
+        );
+        let msg = parse(&buf[0..n]).unwrap();
+        assert!(matches!(msg,
+                     Message::NotifyAlive(s)
+                     if s.notification_type == "upnp::rootdevice"
+                         && s.unique_service_name == "uuid:xyz"
+                         && s.location == "https://you"));
     }
 }

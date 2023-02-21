@@ -19,6 +19,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+const MAX_PACKET_SIZE: usize = 512;
+
 #[derive(Debug)]
 pub struct IPSettings {
     addr: IpAddr,
@@ -111,7 +113,7 @@ impl<CB: Callback> Engine<CB> {
         );
 
         for (key, value) in &self.advertisements {
-            self.advertise_on_all(key, value, socket);
+            self.notify_on_all(key, value, socket);
         }
 
         // If anybody is doing an ssdp:all search, then we don't need to
@@ -137,19 +139,11 @@ impl<CB: Callback> Engine<CB> {
     ) where
         SOCKET: udp::TargetedSend,
     {
-        let message = format!(
-            "M-SEARCH * HTTP/1.1\r
-HOST: 239.255.255.250:1900\r
-MAN: \"ssdp:discover\"\r
-MX: 5\r
-ST: {}\r
-\r\n",
-            search_type
-        );
-        let _ = socket.send_from(
-            message.as_bytes(),
+        let _ = socket.send_with(
+            MAX_PACKET_SIZE,
             "239.255.255.250:1900".parse().unwrap(),
             source,
+            |b| message::build_search(b, search_type),
         );
     }
 
@@ -206,9 +200,7 @@ ST: {}\r
     ) where
         REPLY: udp::TargetedSend,
     {
-        println!("RX from {} to {}", wasfrom, wasto);
         if let Ok(m) = message::parse(buf) {
-            println!("  {:?}", m);
             match m {
                 Message::NotifyAlive(a) => self.broadcast(&Notification {
                     notification_type: a.notification_type,
@@ -231,20 +223,18 @@ ST: {}\r
                             let mut url = value.location.clone();
                             let _ = url.set_ip_host(wasto);
 
-                            let message = format!(
-                                "HTTP/1.1 200 OK\r
-CACHE-CONTROL: max-age=1800\r
-ST: {}\r
-USN: {}\r
-LOCATION: {}\r
-SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
-\r\n",
-                                value.notification_type, key, url
-                            );
-                            let _ = socket.send_from(
-                                message.as_bytes(),
+                            let _ = socket.send_with(
+                                MAX_PACKET_SIZE,
                                 wasfrom,
                                 wasto,
+                                |b| {
+                                    message::build_response(
+                                        b,
+                                        &value.notification_type,
+                                        key,
+                                        url.as_str(),
+                                    )
+                                },
                             );
                         }
                     }
@@ -356,13 +346,13 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
             }
 
             for (key, value) in &self.advertisements {
-                self.advertise_on(key, value, ip, search);
+                self.notify_on(key, value, ip, search);
             }
         }
         Ok(())
     }
 
-    fn advertise_on<SOCKET>(
+    fn notify_on<SOCKET>(
         &self,
         unique_service_name: &String,
         advertisement: &Advertisement,
@@ -373,28 +363,23 @@ SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
     {
         let mut url = advertisement.location.clone();
         let _ = url.set_ip_host(source);
-
-        let message = format!(
-            "NOTIFY * HTTP/1.1\r
-HOST: 239.255.255.250:1900\r
-CACHE-CONTROL: max-age=1800\r
-LOCATION: {}\r
-NT: {}\r
-NTS: ssdp:alive\r
-SERVER: none/0.0 UPnP/1.0 cotton/0.1\r
-USN: {}\r
-\r\n",
-            url, advertisement.notification_type, unique_service_name
-        );
-        println!("Advertising {:?} from {:?}", url, source);
-        let _ = socket.send_from(
-            message.as_bytes(),
+        let _ = socket.send_with(
+            MAX_PACKET_SIZE,
             "239.255.255.250:1900".parse().unwrap(),
             source,
+            |b| {
+                message::build_notify(
+                    b,
+                    &advertisement.notification_type,
+                    unique_service_name,
+                    url.as_str(),
+                )
+            },
         );
+        println!("Advertising {:?} from {:?}", url, source);
     }
 
-    fn advertise_on_all<SOCKET>(
+    fn notify_on_all<SOCKET>(
         &self,
         unique_service_name: &String,
         advertisement: &Advertisement,
@@ -405,7 +390,7 @@ USN: {}\r
         for (_, interface) in &self.interfaces {
             if let Some(ip) = &interface.ip {
                 if ip.addr.is_ipv4() {
-                    self.advertise_on(
+                    self.notify_on(
                         unique_service_name,
                         advertisement,
                         ip.addr,
@@ -425,7 +410,7 @@ USN: {}\r
         SOCKET: udp::TargetedSend,
     {
         println!("Advertising {}", unique_service_name);
-        self.advertise_on_all(&unique_service_name, &advertisement, socket);
+        self.notify_on_all(&unique_service_name, &advertisement, socket);
         self.advertisements
             .insert(unique_service_name, advertisement);
     }

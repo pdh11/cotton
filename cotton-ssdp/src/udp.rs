@@ -30,12 +30,15 @@ pub trait TargetedSend {
     /// Returns `Err` if the underlying sendmsg call fails, or
     /// (currently) if IPv6 is attempted.
     ///
-    fn send_from(
+    fn send_with<F>(
         &self,
-        buffer: &[u8],
+        size: usize,
         to: SocketAddr,
         from: IpAddr,
-    ) -> Result<(), std::io::Error>;
+        f: F,
+    ) -> Result<(), std::io::Error>
+    where
+        F: FnOnce(&mut [u8]) -> usize;
 }
 
 /// Receiving UDP datagrams, recording which IP we received it on
@@ -182,29 +185,23 @@ fn receive_to(
 }
 
 impl TargetedSend for tokio::net::UdpSocket {
-    fn send_from(
+    fn send_with<F>(
         &self,
-        buffer: &[u8],
+        size: usize,
         to: SocketAddr,
         from: IpAddr,
-    ) -> Result<(), std::io::Error> {
+        f: F,
+    ) -> Result<(), std::io::Error>
+    where
+        F: FnOnce(&mut [u8]) -> usize,
+    {
+        let mut buffer = vec![0u8; size];
+        let actual_size = f(&mut buffer);
         self.try_io(tokio::io::Interest::WRITABLE, || {
-            send_from(self.as_raw_fd(), buffer, to, from)
+            send_from(self.as_raw_fd(), &buffer[0..actual_size], to, from)
         })
     }
 }
-
-/*
-impl TargetedSend for std::net::UdpSocket {
-    fn send_from(
-        &mut self,
-        buffer: &[u8],
-        to: SocketAddr,
-        from: IpAddr,
-    ) -> Result<(), std::io::Error> {
-        send_from(self.as_raw_fd(), buffer, to, from)
-    }
-}*/
 
 impl TargetedReceive for tokio::net::UdpSocket {
     fn receive_to(
@@ -528,10 +525,14 @@ mod tests {
                 let rx = tokio::net::UdpSocket::from_std(rx).unwrap();
 
                 tx.writable().await.unwrap();
-                let r = tx.send_from(
-                    b"foo",
+                let r = tx.send_with(
+                    512,
                     SocketAddr::new(localhost, rx_port),
                     IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    |b| {
+                        b[0..3].copy_from_slice(b"foo");
+                        3
+                    },
                 );
                 assert!(r.is_ok());
 
