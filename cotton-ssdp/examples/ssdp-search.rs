@@ -11,6 +11,7 @@ use rand::Rng;
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::error::Error;
+use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
@@ -68,15 +69,16 @@ struct ActiveSearch<CB: Callback> {
 
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
-struct Engine<CB: Callback> {
+struct Engine<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> {
     interfaces: HashMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: HashMap<String, Advertisement>,
     next_salvo: std::time::Instant,
     phase: u8,
+    _socket: PhantomData<SCK>,
 }
 
-impl<CB: Callback> Engine<CB> {
+impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
     fn new() -> Self {
         Engine {
             interfaces: HashMap::default(),
@@ -84,6 +86,7 @@ impl<CB: Callback> Engine<CB> {
             advertisements: HashMap::default(),
             next_salvo: std::time::Instant::now(),
             phase: 0u8,
+            _socket: PhantomData::<SCK>::default(),
         }
     }
 
@@ -95,10 +98,7 @@ impl<CB: Callback> Engine<CB> {
         r
     }
 
-    fn wakeup<SOCKET>(&mut self, socket: &SOCKET)
-    where
-        SOCKET: udp::TargetedSend,
-    {
+    fn wakeup(&mut self, socket: &SCK) {
         if !self.next_wakeup().is_zero() {
             return;
         }
@@ -131,14 +131,7 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    fn search_on<SOCKET>(
-        &self,
-        search_type: &String,
-        source: IpAddr,
-        socket: &SOCKET,
-    ) where
-        SOCKET: udp::TargetedSend,
-    {
+    fn search_on(&self, search_type: &String, source: IpAddr, socket: &SCK) {
         let _ = socket.send_with(
             MAX_PACKET_SIZE,
             "239.255.255.250:1900".parse().unwrap(),
@@ -147,10 +140,7 @@ impl<CB: Callback> Engine<CB> {
         );
     }
 
-    fn search_on_all<SOCKET>(&self, search_type: &String, socket: &SOCKET)
-    where
-        SOCKET: udp::TargetedSend,
-    {
+    fn search_on_all(&self, search_type: &String, socket: &SCK) {
         println!("search_on_all({})", search_type);
 
         for (_, interface) in &self.interfaces {
@@ -162,14 +152,12 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    fn subscribe<SOCKET>(
+    fn subscribe(
         &mut self,
         notification_type: String,
         callback: CB,
-        socket: &SOCKET,
-    ) where
-        SOCKET: udp::TargetedSend,
-    {
+        socket: &SCK,
+    ) {
         self.search_on_all(&notification_type, socket);
         let s = ActiveSearch {
             notification_type,
@@ -178,7 +166,7 @@ impl<CB: Callback> Engine<CB> {
         self.active_searches.insert(s);
     }
 
-    fn broadcast(&mut self, notification: &Notification) {
+    fn call_subscribers(&mut self, notification: &Notification) {
         self.active_searches.retain(|_, s| {
             if target_match(
                 &s.notification_type,
@@ -191,24 +179,30 @@ impl<CB: Callback> Engine<CB> {
         });
     }
 
-    fn on_data<REPLY>(
+    fn on_data(
         &mut self,
         buf: &[u8],
-        socket: &REPLY,
+        socket: &SCK,
         wasto: IpAddr,
         wasfrom: SocketAddr,
-    ) where
-        REPLY: udp::TargetedSend,
-    {
+    ) {
         if let Ok(m) = message::parse(buf) {
             match m {
-                Message::NotifyAlive(a) => self.broadcast(&Notification {
-                    notification_type: a.notification_type,
-                    unique_service_name: a.unique_service_name,
-                    notification_subtype: NotificationSubtype::AliveLocation(
-                        a.location,
-                    ),
-                }),
+                Message::NotifyAlive(a) => {
+                    self.call_subscribers(&Notification {
+                        notification_type: a.notification_type,
+                        unique_service_name: a.unique_service_name,
+                        notification_subtype:
+                            NotificationSubtype::AliveLocation(a.location),
+                    })
+                }
+                Message::NotifyByeBye(a) => {
+                    self.call_subscribers(&Notification {
+                        notification_type: a.notification_type,
+                        unique_service_name: a.unique_service_name,
+                        notification_subtype: NotificationSubtype::ByeBye,
+                    })
+                }
                 Message::Search(s) => {
                     println!("Got search for {}", s.search_target);
                     for (key, value) in &self.advertisements {
@@ -239,28 +233,23 @@ impl<CB: Callback> Engine<CB> {
                         }
                     }
                 }
-                Message::Response(r) => self.broadcast(&Notification {
+                Message::Response(r) => self.call_subscribers(&Notification {
                     notification_type: r.search_target,
                     unique_service_name: r.unique_service_name,
                     notification_subtype: NotificationSubtype::AliveLocation(
                         r.location,
                     ),
                 }),
-                _ => (), // @todo ByeBye events
             };
         }
     }
 
-    fn on_interface_event<MULTICAST, SEARCH>(
+    fn on_interface_event(
         &mut self,
         e: NetworkEvent,
-        multicast: &MULTICAST,
-        search: &SEARCH,
-    ) -> Result<(), std::io::Error>
-    where
-        MULTICAST: udp::Multicast,
-        SEARCH: udp::TargetedSend,
-    {
+        multicast: &SCK,
+        search: &SCK,
+    ) -> Result<(), std::io::Error> {
         println!("if event {:?}", e);
         let mut new_ip = None;
         match e {
@@ -352,15 +341,13 @@ impl<CB: Callback> Engine<CB> {
         Ok(())
     }
 
-    fn notify_on<SOCKET>(
+    fn notify_on(
         &self,
         unique_service_name: &String,
         advertisement: &Advertisement,
         source: IpAddr,
-        socket: &SOCKET,
-    ) where
-        SOCKET: udp::TargetedSend,
-    {
+        socket: &SCK,
+    ) {
         let mut url = advertisement.location.clone();
         let _ = url.set_ip_host(source);
         let _ = socket.send_with(
@@ -379,14 +366,12 @@ impl<CB: Callback> Engine<CB> {
         println!("Advertising {:?} from {:?}", url, source);
     }
 
-    fn notify_on_all<SOCKET>(
+    fn notify_on_all(
         &self,
         unique_service_name: &String,
         advertisement: &Advertisement,
-        socket: &SOCKET,
-    ) where
-        SOCKET: udp::TargetedSend,
-    {
+        socket: &SCK,
+    ) {
         for (_, interface) in &self.interfaces {
             if let Some(ip) = &interface.ip {
                 if ip.addr.is_ipv4() {
@@ -401,14 +386,12 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    fn advertise<SOCKET>(
+    fn advertise(
         &mut self,
         unique_service_name: String,
         advertisement: Advertisement,
-        socket: &SOCKET,
-    ) where
-        SOCKET: udp::TargetedSend,
-    {
+        socket: &SCK,
+    ) {
         println!("Advertising {}", unique_service_name);
         self.notify_on_all(&unique_service_name, &advertisement, socket);
         self.advertisements
@@ -434,14 +417,14 @@ impl Callback for AsyncCallback {
 }
 
 struct Inner {
-    engine: Mutex<Engine<AsyncCallback>>,
+    engine: Mutex<Engine<AsyncCallback, tokio::net::UdpSocket>>,
     multicast_socket: tokio::net::UdpSocket,
     search_socket: tokio::net::UdpSocket,
 }
 
 impl Inner {
     async fn new(
-        engine: Engine<AsyncCallback>,
+        engine: Engine<AsyncCallback, tokio::net::UdpSocket>,
     ) -> Result<Inner, std::io::Error> {
         let multicast_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
