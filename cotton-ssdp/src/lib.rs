@@ -45,6 +45,7 @@ pub struct Advertisement {
     pub location: url::Url,
 }
 
+pub mod engine;
 pub mod message;
 pub mod udp;
 
