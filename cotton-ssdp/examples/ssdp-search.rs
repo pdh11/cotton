@@ -23,17 +23,9 @@ use tokio_stream::wrappers::ReceiverStream;
 const MAX_PACKET_SIZE: usize = 512;
 
 #[derive(Debug)]
-pub struct IPSettings {
-    addr: IpAddr,
-    _prefix: u8,
-}
-
-#[derive(Debug)]
 pub struct Interface {
-    ip: Option<IPSettings>,
-    /// @todo Multiple ip addresses per interface
+    ips: Vec<IpAddr>,
     up: bool,
-    listening: bool,
 }
 
 fn target_match(search: &str, candidate: &str) -> bool {
@@ -131,10 +123,10 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
         }
     }
 
-    fn search_on(&self, search_type: &String, source: IpAddr, socket: &SCK) {
+    fn search_on(&self, search_type: &String, source: &IpAddr, socket: &SCK) {
         let _ = socket.send_with(
             MAX_PACKET_SIZE,
-            "239.255.255.250:1900".parse().unwrap(),
+            &"239.255.255.250:1900".parse().unwrap(),
             source,
             |b| message::build_search(b, search_type),
         );
@@ -144,9 +136,9 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
         println!("search_on_all({})", search_type);
 
         for (_, interface) in &self.interfaces {
-            if let Some(ip) = &interface.ip {
-                if ip.addr.is_ipv4() {
-                    self.search_on(search_type, ip.addr, socket);
+            for ip in &interface.ips {
+                if ip.is_ipv4() {
+                    self.search_on(search_type, ip, socket);
                 }
             }
         }
@@ -219,8 +211,8 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
 
                             let _ = socket.send_with(
                                 MAX_PACKET_SIZE,
-                                wasfrom,
-                                wasto,
+                                &wasfrom,
+                                &wasto,
                                 |b| {
                                     message::build_response(
                                         b,
@@ -244,6 +236,73 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
         }
     }
 
+    fn join_multicast(
+        ip: &IpAddr,
+        multicast: &SCK,
+    ) -> Result<(), std::io::Error> {
+        if ip.is_ipv4() {
+            multicast
+                .join_multicast_group(&"239.255.255.250".parse().unwrap(), ip)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn leave_multicast(
+        ip: &IpAddr,
+        multicast: &SCK,
+    ) -> Result<(), std::io::Error> {
+        if ip.is_ipv4() {
+            multicast
+                .leave_multicast_group(&"239.255.255.250".parse().unwrap(), ip)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn join_all_multicasts(
+        interface: &Interface,
+        multicast: &SCK,
+    ) -> Result<(), std::io::Error> {
+        for ip in &interface.ips {
+            Self::join_multicast(ip, multicast)?;
+        }
+        Ok(())
+    }
+
+    fn leave_all_multicasts(
+        interface: &Interface,
+        multicast: &SCK,
+    ) -> Result<(), std::io::Error> {
+        for ip in &interface.ips {
+            Self::leave_multicast(ip, multicast)?;
+        }
+        Ok(())
+    }
+
+    fn send_all(&self, ips: &[IpAddr], search: &SCK) {
+        for ip in ips {
+            if ip.is_ipv4() {
+                println!("Searching on {:?}", ip);
+                if let Some(all) = self
+                    .active_searches
+                    .iter()
+                    .find(|x| x.1.notification_type == "ssdp:all")
+                {
+                    self.search_on(&all.1.notification_type, ip, search);
+                } else {
+                    for s in self.active_searches.values() {
+                        self.search_on(&s.notification_type, ip, search);
+                    }
+                }
+
+                for (key, value) in &self.advertisements {
+                    self.notify_on(key, value, ip, search);
+                }
+            }
+        }
+    }
+
     fn on_interface_event(
         &mut self,
         e: NetworkEvent,
@@ -251,7 +310,6 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
         search: &SCK,
     ) -> Result<(), std::io::Error> {
         println!("if event {:?}", e);
-        let mut new_ip = None;
         match e {
             NetworkEvent::NewLink(ix, _name, flags) => {
                 let up = flags.contains(
@@ -259,83 +317,63 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
                         | cotton_netif::Flags::UP
                         | cotton_netif::Flags::MULTICAST,
                 );
+                let mut new_ix = None;
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
+                    if up && !v.up {
+                        Self::join_all_multicasts(v, multicast)?;
+                        new_ix = Some(ix);
+                    } else if !up && v.up {
+                        Self::leave_all_multicasts(v, multicast)?;
+                    }
                     v.up = up;
-                    if v.up && !v.listening {
-                        if let Some(ref ip) = v.ip {
-                            if ip.addr.is_ipv4() {
-                                multicast.join_multicast_group(
-                                    "239.255.255.250".parse().unwrap(),
-                                    ip.addr,
-                                )?;
-                                new_ip = Some(ip.addr);
-                                v.listening = true;
-                            }
-                        }
-                    }
                 } else {
                     self.interfaces.insert(
                         ix,
                         Interface {
-                            ip: None,
+                            ips: Vec::new(),
                             up,
-                            listening: false,
                         },
                     );
                 }
+                if let Some(ix) = new_ix {
+                    if let Some(v) = self.interfaces.get(&ix) {
+                        self.send_all(&v.ips, search);
+                    }
+                }
             }
-            NetworkEvent::NewAddr(ix, addr, prefix) => {
-                let settings = IPSettings {
-                    addr,
-                    _prefix: prefix,
-                };
+            NetworkEvent::DelLink(ix) => {
+                if let Some(ref v) = self.interfaces.remove(&ix) {
+                    Self::leave_all_multicasts(v, multicast)?;
+                }
+            }
+            NetworkEvent::NewAddr(ix, addr, _prefix) => {
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
-                    if v.up && !v.listening {
-                        if settings.addr.is_ipv4() {
-                            multicast
-                                .join_multicast_group(
-                                    "239.255.255.250".parse().unwrap(),
-                                    settings.addr,
-                                )
-                                .map_err(|e| {
-                                    println!("jmg failed {:?}", e);
-                                    e
-                                })?;
-                            new_ip = Some(settings.addr);
-                            v.listening = true;
+                    if !v.ips.contains(&addr) {
+                        v.ips.push(addr);
+                        if v.up {
+                            Self::join_multicast(&addr, multicast)?;
+                            self.send_all(&[addr], search);
                         }
-                        v.ip = Some(settings);
                     }
                 } else {
                     self.interfaces.insert(
                         ix,
                         Interface {
-                            ip: Some(settings),
+                            ips: vec![addr],
                             up: false,
-                            listening: false,
                         },
                     );
                 }
             }
-            _ => {} // @todo network-gone events
-        }
-
-        if let Some(ip) = new_ip {
-            println!("Searching on {:?}", ip);
-            if let Some(all) = self
-                .active_searches
-                .iter()
-                .find(|x| x.1.notification_type == "ssdp:all")
-            {
-                self.search_on(&all.1.notification_type, ip, search);
-            } else {
-                for s in self.active_searches.values() {
-                    self.search_on(&s.notification_type, ip, search);
+            NetworkEvent::DelAddr(ix, addr, _prefix) => {
+                if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
+                    if let Some(n) = v.ips.iter().position(|&a| a == addr) {
+                        if v.up {
+                            Self::leave_multicast(&addr, multicast)?;
+                        }
+                        v.ips.swap_remove(n);
+                    }
                 }
-            }
-
-            for (key, value) in &self.advertisements {
-                self.notify_on(key, value, ip, search);
             }
         }
         Ok(())
@@ -345,14 +383,14 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
         &self,
         unique_service_name: &String,
         advertisement: &Advertisement,
-        source: IpAddr,
+        source: &IpAddr,
         socket: &SCK,
     ) {
         let mut url = advertisement.location.clone();
-        let _ = url.set_ip_host(source);
+        let _ = url.set_ip_host(*source);
         let _ = socket.send_with(
             MAX_PACKET_SIZE,
-            "239.255.255.250:1900".parse().unwrap(),
+            &"239.255.255.250:1900".parse().unwrap(),
             source,
             |b| {
                 message::build_notify(
@@ -373,12 +411,12 @@ impl<CB: Callback, SCK: udp::TargetedSend + udp::Multicast> Engine<CB, SCK> {
         socket: &SCK,
     ) {
         for (_, interface) in &self.interfaces {
-            if let Some(ip) = &interface.ip {
-                if ip.addr.is_ipv4() {
+            for ip in &interface.ips {
+                if ip.is_ipv4() {
                     self.notify_on(
                         unique_service_name,
                         advertisement,
-                        ip.addr,
+                        &ip,
                         socket,
                     );
                 }

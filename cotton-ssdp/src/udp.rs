@@ -33,8 +33,8 @@ pub trait TargetedSend {
     fn send_with<F>(
         &self,
         size: usize,
-        to: SocketAddr,
-        from: IpAddr,
+        to: &SocketAddr,
+        from: &IpAddr,
         f: F,
     ) -> Result<(), std::io::Error>
     where
@@ -72,16 +72,22 @@ pub trait TargetedReceive {
 pub trait Multicast {
     fn join_multicast_group(
         &self,
-        multicast_address: IpAddr,
-        my_address: IpAddr,
+        multicast_address: &IpAddr,
+        my_address: &IpAddr,
+    ) -> Result<(), std::io::Error>;
+
+    fn leave_multicast_group(
+        &self,
+        multicast_address: &IpAddr,
+        my_address: &IpAddr,
     ) -> Result<(), std::io::Error>;
 }
 
 fn send_from(
     fd: RawFd,
     buffer: &[u8],
-    to: SocketAddr,
-    from: IpAddr,
+    to: &SocketAddr,
+    from: &IpAddr,
 ) -> Result<(), std::io::Error> {
     if let IpAddr::V4(from) = from {
         let iov = [IoSlice::new(buffer)];
@@ -89,14 +95,14 @@ fn send_from(
             ipi_ifindex: 0,
             ipi_addr: libc::in_addr { s_addr: 0 },
             ipi_spec_dst: libc::in_addr {
-                s_addr: u32::to_be(from.into()),
+                s_addr: u32::to_be((*from).into()),
             },
         };
 
         let cmsg = ControlMessage::Ipv4PacketInfo(&pi);
         let dest = match to {
-            SocketAddr::V4(ipv4) => SockaddrStorage::from(ipv4),
-            SocketAddr::V6(ipv6) => SockaddrStorage::from(ipv6),
+            SocketAddr::V4(ipv4) => SockaddrStorage::from(*ipv4),
+            SocketAddr::V6(ipv6) => SockaddrStorage::from(*ipv6),
         };
         let r = nix::sys::socket::sendmsg(
             fd,
@@ -188,8 +194,8 @@ impl TargetedSend for tokio::net::UdpSocket {
     fn send_with<F>(
         &self,
         size: usize,
-        to: SocketAddr,
-        from: IpAddr,
+        to: &SocketAddr,
+        from: &IpAddr,
         f: F,
     ) -> Result<(), std::io::Error>
     where
@@ -227,12 +233,25 @@ impl TargetedReceive for std::net::UdpSocket {
 impl Multicast for tokio::net::UdpSocket {
     fn join_multicast_group(
         &self,
-        multicast_address: IpAddr,
-        my_address: IpAddr,
+        multicast_address: &IpAddr,
+        my_address: &IpAddr,
     ) -> Result<(), std::io::Error> {
         match (multicast_address, my_address) {
-            (IpAddr::V4(mcast), IpAddr::V4(me)) => {
+            (&IpAddr::V4(mcast), &IpAddr::V4(me)) => {
                 self.join_multicast_v4(mcast, me)
+            }
+            _ => Err(std::io::ErrorKind::Unsupported.into()),
+        }
+    }
+
+    fn leave_multicast_group(
+        &self,
+        multicast_address: &IpAddr,
+        my_address: &IpAddr,
+    ) -> Result<(), std::io::Error> {
+        match (multicast_address, my_address) {
+            (&IpAddr::V4(mcast), &IpAddr::V4(me)) => {
+                self.leave_multicast_v4(mcast, me)
             }
             _ => Err(std::io::ErrorKind::Unsupported.into()),
         }
@@ -277,8 +296,8 @@ mod tests {
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
-            SocketAddr::new(localhost, rx_port),
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            &SocketAddr::new(localhost, rx_port),
+            &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         )
         .is_ok());
         let mut buf = [0u8; 1500];
@@ -305,8 +324,8 @@ mod tests {
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
-            SocketAddr::new(ipv4, rx_port),
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            &SocketAddr::new(ipv4, rx_port),
+            &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         )
         .is_ok());
         let mut buf = [0u8; 1500];
@@ -333,8 +352,8 @@ mod tests {
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
-            SocketAddr::new(localhost, rx_port),
-            ipv4,
+            &SocketAddr::new(localhost, rx_port),
+            &ipv4,
         )
         .is_ok());
         let mut buf = [0u8; 1500];
@@ -361,8 +380,8 @@ mod tests {
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
-            SocketAddr::new(ipv4, rx_port),
-            ipv4,
+            &SocketAddr::new(ipv4, rx_port),
+            &ipv4,
         )
         .is_ok());
         let mut buf = [0u8; 1500];
@@ -381,8 +400,8 @@ mod tests {
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
-            SocketAddr::new(localhost, 0),
-            IpAddr::V6(Ipv6Addr::LOCALHOST)
+            &SocketAddr::new(localhost, 0),
+            &IpAddr::V6(Ipv6Addr::LOCALHOST)
         )
         .is_err());
     }
@@ -395,8 +414,8 @@ mod tests {
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
-            localhost
+            &SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+            &localhost
         )
         .is_err());
     }
@@ -425,8 +444,8 @@ mod tests {
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
-            SocketAddr::new(localhost, rx_port),
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            &SocketAddr::new(localhost, rx_port),
+            &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         )
         .is_ok());
         let mut buf = [0u8; 1500];
@@ -527,8 +546,8 @@ mod tests {
                 tx.writable().await.unwrap();
                 let r = tx.send_with(
                     512,
-                    SocketAddr::new(localhost, rx_port),
-                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    &SocketAddr::new(localhost, rx_port),
+                    &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                     |b| {
                         b[0..3].copy_from_slice(b"foo");
                         3
@@ -546,15 +565,29 @@ mod tests {
                 assert!(wasfrom == SocketAddr::new(localhost, tx_port));
 
                 let r = rx.join_multicast_group(
-                    IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    IpAddr::V6(Ipv6Addr::LOCALHOST),
+                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
+                    &IpAddr::V6(Ipv6Addr::LOCALHOST),
                 ); // IPv4/IPv6 mismatch
                 assert!(r.is_err());
 
                 let ipv4 = IpAddr::V4(local_ipv4().unwrap());
                 let r = rx.join_multicast_group(
-                    IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    ipv4,
+                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
+                    &ipv4,
+                );
+                println!("r={:?}", r);
+                assert!(r.is_ok());
+
+                let r = rx.leave_multicast_group(
+                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
+                    &IpAddr::V6(Ipv6Addr::LOCALHOST),
+                ); // IPv4/IPv6 mismatch
+                assert!(r.is_err());
+
+                let ipv4 = IpAddr::V4(local_ipv4().unwrap());
+                let r = rx.leave_multicast_group(
+                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
+                    &ipv4,
                 );
                 println!("r={:?}", r);
                 assert!(r.is_ok());
