@@ -161,12 +161,10 @@ impl AsyncService {
         );
     }
 
-    pub fn deadvertise<USN>(&mut self, unique_service_name: USN)
-    where
-        USN: Into<String>,
+    pub fn deadvertise(&mut self, unique_service_name: &str)
     {
         self.inner.engine.lock().unwrap().deadvertise(
-            unique_service_name.into(),
+            unique_service_name,
             &self.inner.search_socket,
         );
     }
