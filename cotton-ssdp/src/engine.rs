@@ -9,6 +9,12 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
+#[cfg(test)]
+use mock_instant::Instant;
+
+#[cfg(not(test))]
+use std::time::Instant;
+
 const MAX_PACKET_SIZE: usize = 512;
 
 pub struct Interface {
@@ -53,7 +59,7 @@ pub struct Engine<CB: Callback> {
     interfaces: HashMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: HashMap<String, Advertisement>,
-    next_salvo: std::time::Instant,
+    next_salvo: Instant,
     phase: u8,
 }
 
@@ -70,7 +76,7 @@ impl<CB: Callback> Engine<CB> {
             interfaces: HashMap::default(),
             active_searches: SlotMap::with_key(),
             advertisements: HashMap::default(),
-            next_salvo: std::time::Instant::now(),
+            next_salvo: Instant::now(),
             phase: 0u8,
         }
     }
@@ -78,7 +84,7 @@ impl<CB: Callback> Engine<CB> {
     #[must_use]
     pub fn next_wakeup(&self) -> std::time::Duration {
         self.next_salvo
-            .saturating_duration_since(std::time::Instant::now())
+            .saturating_duration_since(Instant::now())
     }
 
     pub fn wakeup<SCK: udp::TargetedSend + udp::Multicast>(
@@ -92,11 +98,6 @@ impl<CB: Callback> Engine<CB> {
         let period_sec = if self.phase == 0 { 800 } else { 1 } + random_offset;
         self.next_salvo += Duration::from_secs(period_sec);
         self.phase = (self.phase + 1) % 4;
-
-        println!(
-            "Re-advertising, re-searching, next wu at {:?} phase {}\n",
-            self.next_salvo, self.phase
-        );
 
         for (key, value) in &self.advertisements {
             self.notify_on_all(key, value, socket);
@@ -135,8 +136,6 @@ impl<CB: Callback> Engine<CB> {
         search_type: &String,
         socket: &SCK,
     ) {
-        println!("search_on_all({})", search_type);
-
         for interface in self.interfaces.values() {
             for ip in &interface.ips {
                 if ip.is_ipv4() {
@@ -196,16 +195,11 @@ impl<CB: Callback> Engine<CB> {
                     });
                 }
                 Message::Search(s) => {
-                    println!("Got search for {}", s.search_target);
                     for (key, value) in &self.advertisements {
                         if target_match(
                             &s.search_target,
                             &value.notification_type,
                         ) {
-                            println!(
-                                "  {} matches, replying",
-                                value.notification_type
-                            );
                             let mut url = value.location.clone();
                             let _ = url.set_ip_host(wasto);
 
@@ -263,7 +257,6 @@ impl<CB: Callback> Engine<CB> {
     ) {
         for ip in ips {
             if ip.is_ipv4() {
-                println!("Searching on {:?}", ip);
                 if let Some(all) = self
                     .active_searches
                     .iter()
@@ -289,7 +282,6 @@ impl<CB: Callback> Engine<CB> {
         multicast: &SCK,
         search: &SCK,
     ) -> Result<(), std::io::Error> {
-        println!("if event {:?}", e);
         match e {
             NetworkEvent::NewLink(ix, _name, flags) => {
                 let up = flags.contains(
@@ -355,10 +347,6 @@ impl<CB: Callback> Engine<CB> {
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if let Some(n) = v.ips.iter().position(|&a| a == addr) {
                         v.ips.swap_remove(n);
-                        println!(
-                            "Found IP, removed up={}, ips now {:?}",
-                            v.up, v.ips
-                        );
                         if v.up && v.ips.is_empty() {
                             Self::leave_multicast(&addr, multicast)?;
                         }
@@ -390,7 +378,6 @@ impl<CB: Callback> Engine<CB> {
                 )
             },
         );
-        println!("Advertising {:?} from {:?}", url, source);
     }
 
     fn notify_on_all<SCK: udp::TargetedSend + udp::Multicast>(
@@ -419,7 +406,6 @@ impl<CB: Callback> Engine<CB> {
         advertisement: Advertisement,
         socket: &SCK,
     ) {
-        println!("Advertising {}", unique_service_name);
         self.notify_on_all(&unique_service_name, &advertisement, socket);
         self.advertisements
             .insert(unique_service_name, advertisement);
@@ -521,6 +507,10 @@ mod tests {
 
         fn no_mcasts(&self) -> bool {
             self.mcasts.lock().unwrap().is_empty()
+        }
+
+        fn mcast_count(&self) -> usize {
+            self.mcasts.lock().unwrap().len()
         }
 
         fn clear(&self) {
@@ -703,6 +693,14 @@ mod tests {
         Advertisement {
             notification_type: "upnp:rootdevice".to_string(),
             location: url::Url::parse("http://127.0.0.1/description.xml")
+                .unwrap(),
+        }
+    }
+
+    fn root_advert_2() -> Advertisement {
+        Advertisement {
+            notification_type: "upnp:rootdevice".to_string(),
+            location: url::Url::parse("http://127.0.0.1/nested/description.xml")
                 .unwrap(),
         }
     }
@@ -967,6 +965,7 @@ mod tests {
 
         f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
+        assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, true));
     }
 
@@ -995,6 +994,7 @@ mod tests {
         // interface we're trying to leave multicast on, if the
         // address has already gone away?
 
+        assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
     }
 
@@ -1035,6 +1035,7 @@ mod tests {
 
         f.e.on_interface_event(DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
 
+        assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC_2, false));
     }
 
@@ -1060,6 +1061,7 @@ mod tests {
 
         f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
 
+        assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, true));
     }
 
@@ -1073,6 +1075,7 @@ mod tests {
         f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
             .unwrap();
 
+        assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
     }
 
@@ -1085,6 +1088,129 @@ mod tests {
 
         f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
 
+        assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
+    }
+
+    /* ==== Tests for timer handling ==== */
+
+    #[test]
+    fn retransmit_due_immediately() {
+        let f = Fixture::default();
+
+        assert!(f.e.next_wakeup().is_zero());
+    }
+
+    #[test]
+    fn retransmit_sets_timeouts() {
+        let mut f = Fixture::default();
+
+        f.e.wakeup(&f.s);
+        let t = f.e.next_wakeup();
+        assert!(t > Duration::from_secs(780)
+                && t < Duration::from_secs(820));
+        mock_instant::MockClock::advance(t);
+
+        f.e.wakeup(&f.s);
+        let t = f.e.next_wakeup();
+        assert!(t < Duration::from_secs(20));
+        mock_instant::MockClock::advance(t);
+
+        f.e.wakeup(&f.s);
+        let t = f.e.next_wakeup();
+        assert!(t < Duration::from_secs(20));
+        mock_instant::MockClock::advance(t);
+
+        f.e.wakeup(&f.s);
+        let t = f.e.next_wakeup();
+        assert!(t < Duration::from_secs(20));
+        mock_instant::MockClock::advance(t);
+
+        f.e.wakeup(&f.s);
+        let t = f.e.next_wakeup();
+        assert!(t > Duration::from_secs(780)
+                && t < Duration::from_secs(820));
+
+        // note no advance
+        f.e.wakeup(&f.s);
+        let t2 = f.e.next_wakeup();
+        assert!(t == t2);
+    }
+
+    #[test]
+    fn timeout_retransmits_adverts() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+            f.e.advertise("uuid:XYZ".to_string(), root_advert_2(), &f.s);
+        });
+
+        f.e.wakeup(&f.s);
+
+        assert!(f.s.send_count() == 2);
+        assert!(f.s.contains_send(
+            multicast_dest(), LOCAL_SRC,
+            |m| matches!(m,
+                         Message::NotifyAlive(s)
+                         if s.notification_type == "upnp:rootdevice"
+                         && s.unique_service_name == "uuid:137"
+                         && s.location == "http://192.168.100.1/description.xml")));
+        assert!(f.s.contains_send(
+            multicast_dest(), LOCAL_SRC,
+            |m| matches!(m,
+                         Message::NotifyAlive(s)
+                         if s.notification_type == "upnp:rootdevice"
+                         && s.unique_service_name == "uuid:XYZ"
+                         && s.location == "http://192.168.100.1/nested/description.xml")));
+    }
+
+    #[test]
+    fn timeout_retransmits_searches() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
+            f.e.subscribe("upnp::Content:2".to_string(), f.c.clone(), &f.s);
+        });
+
+        f.e.wakeup(&f.s);
+
+        assert!(f.s.send_count() == 2);
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Search(s)
+                         if s.search_target == "upnp::Renderer:3")
+        ));
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Search(s)
+                         if s.search_target == "upnp::Content:2")
+        ));
+    }
+
+    #[test]
+    fn timeout_retransmits_generic_search() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
+            f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+        });
+
+        f.e.wakeup(&f.s);
+
+        assert!(f.s.send_count() == 1);
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Search(s)
+                         if s.search_target == "ssdp:all")
+        ));
     }
 }
