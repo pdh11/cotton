@@ -307,9 +307,7 @@ impl<CB: Callback> Engine<CB> {
                     );
                 }
                 if let Some(ix) = new_ix {
-                    if let Some(v) = self.interfaces.get(&ix) {
-                        self.send_all(&v.ips, search);
-                    }
+                    self.send_all(&self.interfaces[&ix].ips, search);
                 }
             }
             NetworkEvent::DelLink(ix) => {
@@ -469,7 +467,7 @@ impl<CB: Callback> Engine<CB> {
 mod tests {
     use super::*;
     use crate::message::parse;
-    use std::net::SocketAddrV4;
+    use std::net::{SocketAddrV4, Ipv6Addr};
     use std::sync::{Arc, Mutex};
 
     /* ==== Tests for target_match() ==== */
@@ -584,7 +582,7 @@ mod tests {
             buf[0..n].to_vec()
         }
 
-        fn build_byebye(notification_type: &str) -> Vec<u8> {
+         fn build_byebye(notification_type: &str) -> Vec<u8> {
             let mut buf = [0u8; 512];
 
             let n =
@@ -681,21 +679,19 @@ mod tests {
     impl FakeCallback {
         fn contains_notify(&self, notification_type: &str) -> bool {
             self.calls.lock().unwrap().iter().any(|n| {
-                n.notification_type == notification_type
-                    && matches!(
+                matches!(
                         n.notification_subtype,
                         NotificationSubtype::AliveLocation(_)
-                    )
+                ) && n.notification_type == notification_type
             })
         }
 
         fn contains_byebye(&self, notification_type: &str) -> bool {
             self.calls.lock().unwrap().iter().any(|n| {
-                n.notification_type == notification_type
-                    && matches!(
-                        n.notification_subtype,
-                        NotificationSubtype::ByeBye
-                    )
+                matches!(
+                    n.notification_subtype,
+                    NotificationSubtype::ByeBye
+                ) && n.notification_type == notification_type
             })
         }
 
@@ -762,6 +758,9 @@ mod tests {
         NetworkEvent::DelAddr(InterfaceIndex(4), LOCAL_SRC, 8);
     const DEL_ETH0_ADDR_2: NetworkEvent =
         NetworkEvent::DelAddr(InterfaceIndex(4), LOCAL_SRC_2, 8);
+
+    const NEW_IPV6_ADDR: NetworkEvent =
+        NetworkEvent::NewAddr(InterfaceIndex(4), IpAddr::V6(Ipv6Addr::LOCALHOST), 64);
 
     fn root_advert() -> Advertisement {
         Advertisement {
@@ -901,6 +900,7 @@ mod tests {
         let n = FakeSocket::build_notify("upnp::Renderer:3");
         f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
+        assert!(!f.c.contains_byebye("upnp::Renderer:3"));
         assert!(f.c.contains_notify("upnp::Renderer:3"));
     }
 
@@ -1060,6 +1060,7 @@ mod tests {
         let n = FakeSocket::build_byebye("upnp::Renderer:3");
         f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
+        assert!(!f.c.contains_notify("upnp::Renderer:3"));
         assert!(f.c.contains_byebye("upnp::Renderer:3"));
     }
 
@@ -1446,5 +1447,70 @@ mod tests {
         let mut f = Fixture::default();
 
         f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
+    }
+
+    #[test]
+    fn repeat_address_ignored() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn address_before_link_ignored() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+        });
+
+        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn ipv6_address_ignored() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(NEW_IPV6_ADDR, &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn bogus_deladdr_ignored() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn bogus_deladdr_ignored_2() {
+        let mut f = Fixture::default();
+
+        f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn bogus_deadvertise_ignored() {
+        let mut f = Fixture::default();
+
+        f.e.deadvertise("uuid:137", &f.s);
+
+        assert!(f.s.no_sends());
     }
 }
