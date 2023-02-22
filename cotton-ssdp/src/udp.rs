@@ -1,3 +1,4 @@
+use cotton_netif::InterfaceIndex;
 use nix::cmsg_space;
 use nix::sys::socket::ControlMessage;
 use nix::sys::socket::ControlMessageOwned;
@@ -73,13 +74,13 @@ pub trait Multicast {
     fn join_multicast_group(
         &self,
         multicast_address: &IpAddr,
-        my_address: &IpAddr,
+        interface: InterfaceIndex,
     ) -> Result<(), std::io::Error>;
 
     fn leave_multicast_group(
         &self,
         multicast_address: &IpAddr,
-        my_address: &IpAddr,
+        interface: InterfaceIndex,
     ) -> Result<(), std::io::Error>;
 }
 
@@ -220,41 +221,71 @@ impl TargetedReceive for tokio::net::UdpSocket {
     }
 }
 
-/*
-impl TargetedReceive for std::net::UdpSocket {
-    fn receive_to(
-        &mut self,
-        buffer: &mut [u8],
-    ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
-        receive_to(self.as_raw_fd(), buffer)
+#[allow(clippy::cast_possible_truncation)] // socklen_t
+#[allow(clippy::cast_possible_wrap)] // ifindex
+fn ipv4_multicast_operation(
+    fd: RawFd,
+    op: libc::c_int,
+    multicast_address: &IpAddr,
+    interface: InterfaceIndex,
+) -> Result<(), std::io::Error> {
+    match *multicast_address {
+        IpAddr::V4(mcast) => {
+            // The tokio socket API (and indeed the std::net one) only
+            // allow joining by IP address, for IPv4 at least. But that's
+            // not robust, and Linux at least has long supported joining
+            // by interface index. We need to use a lower-level API to
+            // access that.
+            let mreqn = libc::ip_mreqn {
+                imr_multiaddr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(mcast.octets()),
+                },
+                imr_address: libc::in_addr { s_addr: 0 },
+                imr_ifindex: interface.0 as libc::c_int,
+            };
+            unsafe {
+                let ret = libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_IP,
+                    op,
+                    std::ptr::addr_of!(mreqn).cast::<libc::c_void>(),
+                    std::mem::size_of_val(&mreqn) as libc::socklen_t,
+                );
+                if ret != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        }
+        IpAddr::V6(_) => Err(std::io::ErrorKind::Unsupported.into()),
     }
-}*/
+}
 
 impl Multicast for tokio::net::UdpSocket {
     fn join_multicast_group(
         &self,
-        multicast_address: &IpAddr,
-        my_address: &IpAddr,
+        address: &IpAddr,
+        interface: InterfaceIndex,
     ) -> Result<(), std::io::Error> {
-        match (multicast_address, my_address) {
-            (&IpAddr::V4(mcast), &IpAddr::V4(me)) => {
-                self.join_multicast_v4(mcast, me)
-            }
-            _ => Err(std::io::ErrorKind::Unsupported.into()),
-        }
+        ipv4_multicast_operation(
+            self.as_raw_fd(),
+            libc::IP_ADD_MEMBERSHIP,
+            address,
+            interface,
+        )
     }
 
     fn leave_multicast_group(
         &self,
-        multicast_address: &IpAddr,
-        my_address: &IpAddr,
+        address: &IpAddr,
+        interface: InterfaceIndex,
     ) -> Result<(), std::io::Error> {
-        match (multicast_address, my_address) {
-            (&IpAddr::V4(mcast), &IpAddr::V4(me)) => {
-                self.leave_multicast_v4(mcast, me)
-            }
-            _ => Err(std::io::ErrorKind::Unsupported.into()),
-        }
+        ipv4_multicast_operation(
+            self.as_raw_fd(),
+            libc::IP_DROP_MEMBERSHIP,
+            address,
+            interface,
+        )
     }
 }
 
@@ -565,29 +596,39 @@ mod tests {
                 assert!(wasfrom == SocketAddr::new(localhost, tx_port));
 
                 let r = rx.join_multicast_group(
-                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    &IpAddr::V6(Ipv6Addr::LOCALHOST),
-                ); // IPv4/IPv6 mismatch
+                    &IpAddr::V4("127.0.0.1".parse().unwrap()),
+                    InterfaceIndex(1),
+                ); // Not a mcast addr
                 assert!(r.is_err());
 
-                let ipv4 = IpAddr::V4(local_ipv4().unwrap());
+                let r = rx.join_multicast_group(
+                    &IpAddr::V6("::1".parse().unwrap()),
+                    InterfaceIndex(1),
+                ); // IPv6 NYI
+                assert!(r.is_err());
+
                 let r = rx.join_multicast_group(
                     &IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    &ipv4,
+                    InterfaceIndex(1),
                 );
                 println!("r={:?}", r);
                 assert!(r.is_ok());
 
                 let r = rx.leave_multicast_group(
-                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    &IpAddr::V6(Ipv6Addr::LOCALHOST),
-                ); // IPv4/IPv6 mismatch
+                    &IpAddr::V6("::1".parse().unwrap()),
+                    InterfaceIndex(1),
+                ); // IPv6 NYI
                 assert!(r.is_err());
 
-                let ipv4 = IpAddr::V4(local_ipv4().unwrap());
+                let r = rx.leave_multicast_group(
+                    &IpAddr::V4("127.0.0.1".parse().unwrap()),
+                    InterfaceIndex(1),
+                ); // Not a mcast addr
+                assert!(r.is_err());
+
                 let r = rx.leave_multicast_group(
                     &IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    &ipv4,
+                    InterfaceIndex(1),
                 );
                 println!("r={:?}", r);
                 assert!(r.is_ok());

@@ -228,22 +228,22 @@ impl<CB: Callback> Engine<CB> {
     }
 
     fn join_multicast<SCK: udp::TargetedSend + udp::Multicast>(
-        ip: &IpAddr,
+        interface: InterfaceIndex,
         multicast: &SCK,
     ) -> Result<(), std::io::Error> {
         multicast.join_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
-            ip,
+            interface,
         )
     }
 
     fn leave_multicast<SCK: udp::TargetedSend + udp::Multicast>(
-        ip: &IpAddr,
+        interface: InterfaceIndex,
         multicast: &SCK,
     ) -> Result<(), std::io::Error> {
         multicast.leave_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
-            ip,
+            interface,
         )
     }
 
@@ -287,14 +287,12 @@ impl<CB: Callback> Engine<CB> {
                 let mut new_ix = None;
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if up && !v.up {
-                        if let Some(ip) = v.ips.get(0) {
-                            Self::join_multicast(ip, multicast)?;
+                        if !v.ips.is_empty() {
+                            Self::join_multicast(ix, multicast)?;
                         }
                         new_ix = Some(ix);
-                    } else if !up && v.up {
-                        if let Some(ip) = v.ips.get(0) {
-                            Self::leave_multicast(ip, multicast)?;
-                        }
+                    } else if !up && v.up && !v.ips.is_empty() {
+                        Self::leave_multicast(ix, multicast)?;
                     }
                     v.up = up;
                 } else {
@@ -312,10 +310,8 @@ impl<CB: Callback> Engine<CB> {
             }
             NetworkEvent::DelLink(ix) => {
                 if let Some(ref v) = self.interfaces.remove(&ix) {
-                    if v.up {
-                        if let Some(ip) = v.ips.get(0) {
-                            Self::leave_multicast(ip, multicast)?;
-                        }
+                    if v.up && !v.ips.is_empty() {
+                        Self::leave_multicast(ix, multicast)?;
                     }
                 }
             }
@@ -326,7 +322,7 @@ impl<CB: Callback> Engine<CB> {
                     if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                         if !v.ips.contains(&addr) {
                             if v.ips.is_empty() && v.up {
-                                Self::join_multicast(&addr, multicast)?;
+                                Self::join_multicast(ix, multicast)?;
                             }
                             v.ips.push(addr);
                             if v.up {
@@ -341,7 +337,7 @@ impl<CB: Callback> Engine<CB> {
                     if let Some(n) = v.ips.iter().position(|&a| a == addr) {
                         v.ips.swap_remove(n);
                         if v.up && v.ips.is_empty() {
-                            Self::leave_multicast(&addr, multicast)?;
+                            Self::leave_multicast(ix, multicast)?;
                         }
                     }
                 }
@@ -467,7 +463,7 @@ impl<CB: Callback> Engine<CB> {
 mod tests {
     use super::*;
     use crate::message::parse;
-    use std::net::{SocketAddrV4, Ipv6Addr};
+    use std::net::{Ipv6Addr, SocketAddrV4};
     use std::sync::{Arc, Mutex};
 
     /* ==== Tests for target_match() ==== */
@@ -519,7 +515,7 @@ mod tests {
     #[derive(Default)]
     struct FakeSocket {
         sends: Mutex<Vec<(SocketAddr, IpAddr, Message)>>,
-        mcasts: Mutex<Vec<(IpAddr, IpAddr, bool)>>,
+        mcasts: Mutex<Vec<(IpAddr, InterfaceIndex, bool)>>,
         injecting_multicast_error: bool,
     }
 
@@ -549,11 +545,11 @@ mod tests {
         fn contains_mcast(
             &self,
             group: IpAddr,
-            host: IpAddr,
+            interface: InterfaceIndex,
             join: bool,
         ) -> bool {
-            self.mcasts.lock().unwrap().iter().any(|(gp, hst, jn)| {
-                *gp == group && *hst == host && *jn == join
+            self.mcasts.lock().unwrap().iter().any(|(gp, ix, jn)| {
+                *gp == group && *ix == interface && *jn == join
             })
         }
 
@@ -582,7 +578,7 @@ mod tests {
             buf[0..n].to_vec()
         }
 
-         fn build_byebye(notification_type: &str) -> Vec<u8> {
+        fn build_byebye(notification_type: &str) -> Vec<u8> {
             let mut buf = [0u8; 512];
 
             let n =
@@ -639,14 +635,14 @@ mod tests {
         fn join_multicast_group(
             &self,
             multicast_address: &IpAddr,
-            my_address: &IpAddr,
+            interface: InterfaceIndex,
         ) -> Result<(), std::io::Error> {
             if self.injecting_multicast_error {
                 Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
             } else {
                 self.mcasts.lock().unwrap().push((
                     *multicast_address,
-                    *my_address,
+                    interface,
                     true,
                 ));
                 Ok(())
@@ -656,14 +652,14 @@ mod tests {
         fn leave_multicast_group(
             &self,
             multicast_address: &IpAddr,
-            my_address: &IpAddr,
+            interface: InterfaceIndex,
         ) -> Result<(), std::io::Error> {
             if self.injecting_multicast_error {
                 Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
             } else {
                 self.mcasts.lock().unwrap().push((
                     *multicast_address,
-                    *my_address,
+                    interface,
                     false,
                 ));
                 Ok(())
@@ -680,18 +676,16 @@ mod tests {
         fn contains_notify(&self, notification_type: &str) -> bool {
             self.calls.lock().unwrap().iter().any(|n| {
                 matches!(
-                        n.notification_subtype,
-                        NotificationSubtype::AliveLocation(_)
+                    n.notification_subtype,
+                    NotificationSubtype::AliveLocation(_)
                 ) && n.notification_type == notification_type
             })
         }
 
         fn contains_byebye(&self, notification_type: &str) -> bool {
             self.calls.lock().unwrap().iter().any(|n| {
-                matches!(
-                    n.notification_subtype,
-                    NotificationSubtype::ByeBye
-                ) && n.notification_type == notification_type
+                matches!(n.notification_subtype, NotificationSubtype::ByeBye)
+                    && n.notification_type == notification_type
             })
         }
 
@@ -717,6 +711,7 @@ mod tests {
         ))
     }
 
+    const LOCAL_IX: InterfaceIndex = InterfaceIndex(4);
     const LOCAL_SRC: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 100, 1));
     const LOCAL_SRC_2: IpAddr = IpAddr::V4(Ipv4Addr::new(169, 254, 33, 203));
     const MULTICAST_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250));
@@ -730,7 +725,7 @@ mod tests {
 
     fn new_eth0_if() -> NetworkEvent {
         NetworkEvent::NewLink(
-            InterfaceIndex(4),
+            LOCAL_IX,
             "jeth0".to_string(),
             cotton_netif::Flags::UP
                 | cotton_netif::Flags::RUNNING
@@ -740,27 +735,27 @@ mod tests {
 
     fn new_eth0_if_down() -> NetworkEvent {
         NetworkEvent::NewLink(
-            InterfaceIndex(4),
+            LOCAL_IX,
             "jeth0".to_string(),
             cotton_netif::Flags::MULTICAST,
         )
     }
 
     fn del_eth0() -> NetworkEvent {
-        NetworkEvent::DelLink(InterfaceIndex(4))
+        NetworkEvent::DelLink(LOCAL_IX)
     }
 
     const NEW_ETH0_ADDR: NetworkEvent =
-        NetworkEvent::NewAddr(InterfaceIndex(4), LOCAL_SRC, 8);
+        NetworkEvent::NewAddr(LOCAL_IX, LOCAL_SRC, 8);
     const NEW_ETH0_ADDR_2: NetworkEvent =
-        NetworkEvent::NewAddr(InterfaceIndex(4), LOCAL_SRC_2, 8);
+        NetworkEvent::NewAddr(LOCAL_IX, LOCAL_SRC_2, 8);
     const DEL_ETH0_ADDR: NetworkEvent =
-        NetworkEvent::DelAddr(InterfaceIndex(4), LOCAL_SRC, 8);
+        NetworkEvent::DelAddr(LOCAL_IX, LOCAL_SRC, 8);
     const DEL_ETH0_ADDR_2: NetworkEvent =
-        NetworkEvent::DelAddr(InterfaceIndex(4), LOCAL_SRC_2, 8);
+        NetworkEvent::DelAddr(LOCAL_IX, LOCAL_SRC_2, 8);
 
     const NEW_IPV6_ADDR: NetworkEvent =
-        NetworkEvent::NewAddr(InterfaceIndex(4), IpAddr::V6(Ipv6Addr::LOCALHOST), 64);
+        NetworkEvent::NewAddr(LOCAL_IX, IpAddr::V6(Ipv6Addr::LOCALHOST), 64);
 
     fn root_advert() -> Advertisement {
         Advertisement {
@@ -1075,7 +1070,7 @@ mod tests {
         f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, true));
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, true));
     }
 
     #[test]
@@ -1099,12 +1094,8 @@ mod tests {
 
         f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
 
-        // Wait, does this even work? How does the kernel know which
-        // interface we're trying to leave multicast on, if the
-        // address has already gone away?
-
         assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
     }
 
     #[test]
@@ -1145,7 +1136,7 @@ mod tests {
         f.e.on_interface_event(DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
 
         assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC_2, false));
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
     }
 
     #[test]
@@ -1171,7 +1162,7 @@ mod tests {
         f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
 
         assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, true));
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, true));
     }
 
     #[test]
@@ -1211,7 +1202,7 @@ mod tests {
             .unwrap();
 
         assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
     }
 
     #[test]
@@ -1236,7 +1227,7 @@ mod tests {
         f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
 
         assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
     }
 
     #[test]
@@ -1253,7 +1244,8 @@ mod tests {
     #[test]
     fn dont_leave_multicast_on_down_interface_gone() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
             f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
@@ -1305,7 +1297,9 @@ mod tests {
             f.s.inject_multicast_error(true);
         });
 
-        assert!(f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+        assert!(f
+            .e
+            .on_interface_event(new_eth0_if_down(), &f.s, &f.s)
             .is_err());
     }
 

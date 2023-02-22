@@ -161,12 +161,12 @@ impl AsyncService {
         );
     }
 
-    pub fn deadvertise(&mut self, unique_service_name: &str)
-    {
-        self.inner.engine.lock().unwrap().deadvertise(
-            unique_service_name,
-            &self.inner.search_socket,
-        );
+    pub fn deadvertise(&mut self, unique_service_name: &str) {
+        self.inner
+            .engine
+            .lock()
+            .unwrap()
+            .deadvertise(unique_service_name, &self.inner.search_socket);
     }
 }
 
