@@ -6,7 +6,7 @@ use cotton_netif::{InterfaceIndex, NetworkEvent};
 use rand::Rng;
 use slotmap::SlotMap;
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 const MAX_PACKET_SIZE: usize = 512;
@@ -240,24 +240,20 @@ impl<CB: Callback> Engine<CB> {
         ip: &IpAddr,
         multicast: &SCK,
     ) -> Result<(), std::io::Error> {
-        if ip.is_ipv4() {
-            multicast
-                .join_multicast_group(&"239.255.255.250".parse().unwrap(), ip)
-        } else {
-            Ok(())
-        }
+        multicast.join_multicast_group(
+            &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
+            ip,
+        )
     }
 
     fn leave_multicast<SCK: udp::TargetedSend + udp::Multicast>(
         ip: &IpAddr,
         multicast: &SCK,
     ) -> Result<(), std::io::Error> {
-        if ip.is_ipv4() {
-            multicast
-                .leave_multicast_group(&"239.255.255.250".parse().unwrap(), ip)
-        } else {
-            Ok(())
-        }
+        multicast.leave_multicast_group(
+            &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
+            ip,
+        )
     }
 
     fn send_all<SCK: udp::TargetedSend + udp::Multicast>(
@@ -305,12 +301,12 @@ impl<CB: Callback> Engine<CB> {
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if up && !v.up {
                         if let Some(ip) = v.ips.get(0) {
-                            Self::join_multicast(&ip, multicast)?;
+                            Self::join_multicast(ip, multicast)?;
                         }
                         new_ix = Some(ix);
                     } else if !up && v.up {
                         if let Some(ip) = v.ips.get(0) {
-                            Self::leave_multicast(&ip, multicast)?;
+                            Self::leave_multicast(ip, multicast)?;
                         }
                     }
                     v.up = up;
@@ -333,16 +329,18 @@ impl<CB: Callback> Engine<CB> {
                 if let Some(ref v) = self.interfaces.remove(&ix) {
                     if v.up {
                         if let Some(ip) = v.ips.get(0) {
-                            Self::leave_multicast(&ip, multicast)?;
+                            Self::leave_multicast(ip, multicast)?;
                         }
                     }
                 }
             }
             NetworkEvent::NewAddr(ix, addr, _prefix) => {
                 if addr.is_ipv4() {
+                    // cotton-netif guarantees we get a NewLink before
+                    // any NewAddr
                     if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                         if !v.ips.contains(&addr) {
-                            if v.ips.is_empty() {
+                            if v.ips.is_empty() && v.up {
                                 Self::join_multicast(&addr, multicast)?;
                             }
                             v.ips.push(addr);
@@ -350,14 +348,6 @@ impl<CB: Callback> Engine<CB> {
                                 self.send_all(&[addr], search);
                             }
                         }
-                    } else {
-                        self.interfaces.insert(
-                            ix,
-                            Interface {
-                                ips: vec![addr],
-                                up: false,
-                            },
-                        );
                     }
                 }
             }
@@ -365,8 +355,10 @@ impl<CB: Callback> Engine<CB> {
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if let Some(n) = v.ips.iter().position(|&a| a == addr) {
                         v.ips.swap_remove(n);
-                        println!("Found IP, removed up={}, ips now {:?}",
-                                 v.up, v.ips);
+                        println!(
+                            "Found IP, removed up={}, ips now {:?}",
+                            v.up, v.ips
+                        );
                         if v.up && v.ips.is_empty() {
                             Self::leave_multicast(&addr, multicast)?;
                         }
@@ -438,7 +430,7 @@ impl<CB: Callback> Engine<CB> {
 mod tests {
     use super::*;
     use crate::message::parse;
-    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::net::SocketAddrV4;
     use std::sync::{Arc, Mutex};
 
     /* ==== Tests for target_match() ==== */
@@ -516,7 +508,12 @@ mod tests {
             self.sends.lock().unwrap().len()
         }
 
-        fn contains_mcast(&self, group: IpAddr, host: IpAddr, join: bool) -> bool {
+        fn contains_mcast(
+            &self,
+            group: IpAddr,
+            host: IpAddr,
+            join: bool,
+        ) -> bool {
             self.mcasts.lock().unwrap().iter().any(|(gp, hst, jn)| {
                 *gp == group && *hst == host && *jn == join
             })
@@ -681,6 +678,18 @@ mod tests {
         )
     }
 
+    fn new_eth0_if_down() -> NetworkEvent {
+        NetworkEvent::NewLink(
+            InterfaceIndex(4),
+            "jeth0".to_string(),
+            cotton_netif::Flags::MULTICAST,
+        )
+    }
+
+    fn del_eth0() -> NetworkEvent {
+        NetworkEvent::DelLink(InterfaceIndex(4))
+    }
+
     const NEW_ETH0_ADDR: NetworkEvent =
         NetworkEvent::NewAddr(InterfaceIndex(4), LOCAL_SRC, 8);
     const NEW_ETH0_ADDR_2: NetworkEvent =
@@ -726,9 +735,13 @@ mod tests {
 
         f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
-        assert!(f.s.contains_send(multicast_dest(), LOCAL_SRC, |m| matches!(m,
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
                          Message::Search(s)
-                         if s.search_target == "ssdp:all")));
+                         if s.search_target == "ssdp:all")
+        ));
     }
 
     #[test]
@@ -740,9 +753,13 @@ mod tests {
 
         f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
 
-        assert!(f.s.contains_send(multicast_dest(), LOCAL_SRC, |m| matches!(m,
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
                          Message::Search(s)
-                         if s.search_target == "ssdp:all")));
+                         if s.search_target == "ssdp:all")
+        ));
     }
 
     #[test]
@@ -756,9 +773,13 @@ mod tests {
         f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 1);
-        assert!(f.s.contains_send(multicast_dest(), LOCAL_SRC, |m| matches!(m,
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
                          Message::Search(s)
-                         if s.search_target == "ssdp:all")));
+                         if s.search_target == "ssdp:all")
+        ));
     }
 
     #[test]
@@ -772,12 +793,20 @@ mod tests {
         f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 2);
-        assert!(f.s.contains_send(multicast_dest(), LOCAL_SRC, |m| matches!(m,
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
                          Message::Search(s)
-                         if s.search_target == "upnp::Renderer:3")));
-        assert!(f.s.contains_send(multicast_dest(), LOCAL_SRC, |m| matches!(m,
+                         if s.search_target == "upnp::Renderer:3")
+        ));
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
                          Message::Search(s)
-                         if s.search_target == "upnp::Content:2")));
+                         if s.search_target == "upnp::Content:2")
+        ));
     }
 
     #[test]
@@ -1007,5 +1036,55 @@ mod tests {
         f.e.on_interface_event(DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
 
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC_2, false));
+    }
+
+    #[test]
+    fn dont_join_multicast_on_interface_down() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+        });
+
+        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_mcasts());
+    }
+
+    #[test]
+    fn join_multicast_on_interface_up() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, true));
+    }
+
+    #[test]
+    fn leave_multicast_on_interface_down() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            .unwrap();
+
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
+    }
+
+    #[test]
+    fn leave_multicast_on_interface_gone() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
     }
 }
