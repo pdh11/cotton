@@ -791,85 +791,63 @@ mod tests {
 
     #[test]
     fn notify_calls_subscriber() {
-        let mut e = Engine::<FakeCallback>::new();
-        let c = FakeCallback::default();
-        let s = FakeSocket::default();
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
+        });
 
-        e.subscribe("upnp::MediaRenderer:3".to_string(), c.clone(), &s);
+        let n = FakeSocket::build_notify("upnp::Renderer:3");
+        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
-        assert!(c.no_notifies());
-
-        let n = FakeSocket::build_notify("upnp::MediaRenderer:3");
-        e.on_data(&n, &s, LOCAL_SRC, remote_src());
-
-        assert!(c.contains_notify("upnp::MediaRenderer:3"));
+        assert!(f.c.contains_notify("upnp::Renderer:3"));
     }
 
     #[test]
     fn notify_doesnt_call_subscriber() {
-        let mut e = Engine::<FakeCallback>::new();
-        let c = FakeCallback::default();
-        let s = FakeSocket::default();
-
-        e.subscribe("upnp::MediaRenderer:3".to_string(), c.clone(), &s);
-
-        assert!(c.no_notifies());
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
+        });
 
         let n = FakeSocket::build_notify("upnp::ContentDirectory:3");
-        e.on_data(&n, &s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
-        assert!(c.no_notifies()); // not interested in this NT
+        assert!(f.c.no_notifies()); // not interested in this NT
     }
 
     #[test]
     fn response_calls_subscriber() {
-        let mut e = Engine::<FakeCallback>::new();
-        let c = FakeCallback::default();
-        let s = FakeSocket::default();
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
+        });
 
-        e.subscribe("upnp::MediaRenderer:3".to_string(), c.clone(), &s);
+        let n = FakeSocket::build_response("upnp::Renderer:3");
+        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
-        assert!(c.no_notifies());
-
-        let n = FakeSocket::build_response("upnp::MediaRenderer:3");
-        e.on_data(&n, &s, LOCAL_SRC, remote_src());
-
-        assert!(c.contains_notify("upnp::MediaRenderer:3"));
+        assert!(f.c.contains_notify("upnp::Renderer:3"));
     }
 
     #[test]
     fn response_doesnt_call_subscriber() {
-        let mut e = Engine::<FakeCallback>::new();
-        let c = FakeCallback::default();
-        let s = FakeSocket::default();
-
-        e.subscribe("upnp::MediaRenderer:3".to_string(), c.clone(), &s);
-
-        assert!(c.no_notifies());
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("upnp::Media:3".to_string(), f.c.clone(), &f.s);
+        });
 
         let n = FakeSocket::build_response("upnp::ContentDirectory:3");
-        e.on_data(&n, &s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
-        assert!(c.no_notifies()); // not interested in this NT
+        assert!(f.c.no_notifies()); // not interested in this NT
     }
 
     #[test]
     fn notify_sent_on_network_event() {
-        let mut e = Engine::<FakeCallback>::default();
-        let s = FakeSocket::default();
+        let mut f = Fixture::new_with(|f| {
+            f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        });
 
-        e.advertise("uuid:137".to_string(), root_advert(), &s);
-
-        assert!(s.no_sends());
-
-        e.on_interface_event(new_eth0_if(), &s, &s).unwrap();
-
-        assert!(s.no_sends());
-
-        e.on_interface_event(NEW_ETH0_ADDR, &s, &s).unwrap();
+        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         // Note URL has been rewritten to include the real IP address
-        assert!(s.contains_send(
+        assert!(f.s.contains_send(
             multicast_dest(), LOCAL_SRC,
             |m| matches!(m,
                          Message::NotifyAlive(s)
