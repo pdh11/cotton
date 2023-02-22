@@ -6,7 +6,7 @@ use cotton_netif::{InterfaceIndex, NetworkEvent};
 use rand::Rng;
 use slotmap::SlotMap;
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
 #[cfg(test)]
@@ -17,7 +17,7 @@ use std::time::Instant;
 
 const MAX_PACKET_SIZE: usize = 512;
 
-pub struct Interface {
+struct Interface {
     ips: Vec<IpAddr>,
     up: bool,
 }
@@ -83,8 +83,7 @@ impl<CB: Callback> Engine<CB> {
 
     #[must_use]
     pub fn next_wakeup(&self) -> std::time::Duration {
-        self.next_salvo
-            .saturating_duration_since(Instant::now())
+        self.next_salvo.saturating_duration_since(Instant::now())
     }
 
     pub fn wakeup<SCK: udp::TargetedSend + udp::Multicast>(
@@ -133,14 +132,12 @@ impl<CB: Callback> Engine<CB> {
 
     fn search_on_all<SCK: udp::TargetedSend + udp::Multicast>(
         &self,
-        search_type: &String,
+        search_type: &str,
         socket: &SCK,
     ) {
         for interface in self.interfaces.values() {
             for ip in &interface.ips {
-                if ip.is_ipv4() {
-                    Self::search_on(search_type, ip, socket);
-                }
+                Self::search_on(search_type, ip, socket);
             }
         }
     }
@@ -256,22 +253,20 @@ impl<CB: Callback> Engine<CB> {
         search: &SCK,
     ) {
         for ip in ips {
-            if ip.is_ipv4() {
-                if let Some(all) = self
-                    .active_searches
-                    .iter()
-                    .find(|x| x.1.notification_type == "ssdp:all")
-                {
-                    Self::search_on(&all.1.notification_type, ip, search);
-                } else {
-                    for s in self.active_searches.values() {
-                        Self::search_on(&s.notification_type, ip, search);
-                    }
+            if let Some(all) = self
+                .active_searches
+                .iter()
+                .find(|x| x.1.notification_type == "ssdp:all")
+            {
+                Self::search_on(&all.1.notification_type, ip, search);
+            } else {
+                for s in self.active_searches.values() {
+                    Self::search_on(&s.notification_type, ip, search);
                 }
+            }
 
-                for (key, value) in &self.advertisements {
-                    Self::notify_on(key, value, ip, search);
-                }
+            for (key, value) in &self.advertisements {
+                Self::notify_on(key, value, ip, search);
             }
         }
     }
@@ -367,7 +362,10 @@ impl<CB: Callback> Engine<CB> {
         let _ = url.set_ip_host(*source);
         let _ = socket.send_with(
             MAX_PACKET_SIZE,
-            &"239.255.255.250:1900".parse().unwrap(),
+            &SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::new(239, 255, 255, 250),
+                1900,
+            )),
             source,
             |b| {
                 message::build_notify(
@@ -388,14 +386,53 @@ impl<CB: Callback> Engine<CB> {
     ) {
         for interface in self.interfaces.values() {
             for ip in &interface.ips {
-                if ip.is_ipv4() {
-                    Self::notify_on(
-                        unique_service_name,
-                        advertisement,
-                        ip,
-                        socket,
-                    );
-                }
+                Self::notify_on(
+                    unique_service_name,
+                    advertisement,
+                    ip,
+                    socket,
+                );
+            }
+        }
+    }
+
+    fn byebye_on<SCK: udp::TargetedSend + udp::Multicast>(
+        unique_service_name: &str,
+        notification_type: &str,
+        source: &IpAddr,
+        socket: &SCK,
+    ) {
+        let _ = socket.send_with(
+            MAX_PACKET_SIZE,
+            &SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::new(239, 255, 255, 250),
+                1900,
+            )),
+            source,
+            |b| {
+                message::build_byebye(
+                    b,
+                    unique_service_name,
+                    notification_type,
+                )
+            },
+        );
+    }
+
+    fn byebye_on_all<SCK: udp::TargetedSend + udp::Multicast>(
+        &self,
+        notification_type: &str,
+        unique_service_name: &str,
+        socket: &SCK,
+    ) {
+        for interface in self.interfaces.values() {
+            for ip in &interface.ips {
+                Self::byebye_on(
+                    notification_type,
+                    unique_service_name,
+                    ip,
+                    socket,
+                );
             }
         }
     }
@@ -409,6 +446,22 @@ impl<CB: Callback> Engine<CB> {
         self.notify_on_all(&unique_service_name, &advertisement, socket);
         self.advertisements
             .insert(unique_service_name, advertisement);
+    }
+
+    pub fn deadvertise<SCK: udp::TargetedSend + udp::Multicast>(
+        &mut self,
+        unique_service_name: &str,
+        socket: &SCK,
+    ) {
+        if let Some(advertisement) =
+            self.advertisements.remove(unique_service_name)
+        {
+            self.byebye_on_all(
+                &advertisement.notification_type,
+                unique_service_name,
+                socket,
+            );
+        }
     }
 }
 
@@ -469,6 +522,7 @@ mod tests {
     struct FakeSocket {
         sends: Mutex<Vec<(SocketAddr, IpAddr, Message)>>,
         mcasts: Mutex<Vec<(IpAddr, IpAddr, bool)>>,
+        injecting_multicast_error: bool,
     }
 
     impl FakeSocket {
@@ -530,6 +584,14 @@ mod tests {
             buf[0..n].to_vec()
         }
 
+        fn build_byebye(notification_type: &str) -> Vec<u8> {
+            let mut buf = [0u8; 512];
+
+            let n =
+                message::build_byebye(&mut buf, notification_type, "uuid:37");
+            buf[0..n].to_vec()
+        }
+
         fn build_response(notification_type: &str) -> Vec<u8> {
             let mut buf = [0u8; 512];
 
@@ -546,6 +608,10 @@ mod tests {
             let mut buf = [0u8; 512];
             let n = message::build_search(&mut buf, notification_type);
             buf[0..n].to_vec()
+        }
+
+        fn inject_multicast_error(&mut self, errors: bool) {
+            self.injecting_multicast_error = errors;
         }
     }
 
@@ -577,12 +643,16 @@ mod tests {
             multicast_address: &IpAddr,
             my_address: &IpAddr,
         ) -> Result<(), std::io::Error> {
-            self.mcasts.lock().unwrap().push((
-                *multicast_address,
-                *my_address,
-                true,
-            ));
-            Ok(())
+            if self.injecting_multicast_error {
+                Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
+            } else {
+                self.mcasts.lock().unwrap().push((
+                    *multicast_address,
+                    *my_address,
+                    true,
+                ));
+                Ok(())
+            }
         }
 
         fn leave_multicast_group(
@@ -590,12 +660,16 @@ mod tests {
             multicast_address: &IpAddr,
             my_address: &IpAddr,
         ) -> Result<(), std::io::Error> {
-            self.mcasts.lock().unwrap().push((
-                *multicast_address,
-                *my_address,
-                false,
-            ));
-            Ok(())
+            if self.injecting_multicast_error {
+                Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
+            } else {
+                self.mcasts.lock().unwrap().push((
+                    *multicast_address,
+                    *my_address,
+                    false,
+                ));
+                Ok(())
+            }
         }
     }
 
@@ -700,8 +774,10 @@ mod tests {
     fn root_advert_2() -> Advertisement {
         Advertisement {
             notification_type: "upnp:rootdevice".to_string(),
-            location: url::Url::parse("http://127.0.0.1/nested/description.xml")
-                .unwrap(),
+            location: url::Url::parse(
+                "http://127.0.0.1/nested/description.xml",
+            )
+            .unwrap(),
         }
     }
 
@@ -902,6 +978,26 @@ mod tests {
     }
 
     #[test]
+    fn notify_sent_on_deadvertise() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+        });
+
+        f.e.deadvertise("uuid:137", &f.s);
+
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::NotifyByeBye(s)
+                         if s.notification_type == "upnp:rootdevice"
+                         && s.unique_service_name == "uuid:137")
+        ))
+    }
+
+    #[test]
     fn response_sent_to_specific_search() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
@@ -953,6 +1049,18 @@ mod tests {
         f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
         assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn byebye_calls_subscriber() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
+        });
+
+        let n = FakeSocket::build_byebye("upnp::Renderer:3");
+        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+
+        assert!(f.c.contains_byebye("upnp::Renderer:3"));
     }
 
     /* ==== Tests for IPv4 multicast handling ==== */
@@ -1066,6 +1174,32 @@ mod tests {
     }
 
     #[test]
+    fn dont_join_multicast_on_duplicate_interface_up() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_mcasts());
+    }
+
+    #[test]
+    fn dont_join_multicast_on_interface_up_with_no_address() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_mcasts());
+    }
+
+    #[test]
     fn leave_multicast_on_interface_down() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
@@ -1080,6 +1214,18 @@ mod tests {
     }
 
     #[test]
+    fn dont_leave_multicast_on_interface_down_with_no_address() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            .unwrap();
+
+        assert!(f.s.no_mcasts());
+    }
+
+    #[test]
     fn leave_multicast_on_interface_gone() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
@@ -1090,6 +1236,87 @@ mod tests {
 
         assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_SRC, false));
+    }
+
+    #[test]
+    fn dont_leave_multicast_on_interface_gone_with_no_address() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_mcasts());
+    }
+
+    #[test]
+    fn dont_leave_multicast_on_down_interface_gone() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.no_mcasts());
+    }
+
+    /* ==== Tests for multicast error handling ==== */
+
+    #[test]
+    fn error_join_multicast_on_first_ip() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.s.inject_multicast_error(true);
+        });
+
+        assert!(f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).is_err());
+    }
+
+    #[test]
+    fn error_join_multicast_on_interface_up() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.s.inject_multicast_error(true);
+        });
+
+        assert!(f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).is_err());
+    }
+
+    #[test]
+    fn error_leave_multicast_on_losing_only_ip() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.s.inject_multicast_error(true);
+        });
+
+        assert!(f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).is_err());
+    }
+
+    #[test]
+    fn error_leave_multicast_on_interface_down() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.s.inject_multicast_error(true);
+        });
+
+        assert!(f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            .is_err());
+    }
+
+    #[test]
+    fn error_leave_multicast_on_interface_gone() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.s.inject_multicast_error(true);
+        });
+
+        assert!(f.e.on_interface_event(del_eth0(), &f.s, &f.s).is_err());
     }
 
     /* ==== Tests for timer handling ==== */
@@ -1107,8 +1334,7 @@ mod tests {
 
         f.e.wakeup(&f.s);
         let t = f.e.next_wakeup();
-        assert!(t > Duration::from_secs(780)
-                && t < Duration::from_secs(820));
+        assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
         mock_instant::MockClock::advance(t);
 
         f.e.wakeup(&f.s);
@@ -1128,8 +1354,7 @@ mod tests {
 
         f.e.wakeup(&f.s);
         let t = f.e.next_wakeup();
-        assert!(t > Duration::from_secs(780)
-                && t < Duration::from_secs(820));
+        assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
 
         // note no advance
         f.e.wakeup(&f.s);
@@ -1212,5 +1437,14 @@ mod tests {
                          Message::Search(s)
                          if s.search_target == "ssdp:all")
         ));
+    }
+
+    /* ==== Tests for out-of-sequence messages ==== */
+
+    #[test]
+    fn bogus_dellink_ignored() {
+        let mut f = Fixture::default();
+
+        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
     }
 }

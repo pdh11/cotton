@@ -178,6 +178,31 @@ SERVER: UPnP/1.0 {}/{}\r
     cursor.position() as usize
 }
 
+#[allow(clippy::cast_possible_truncation)]
+pub fn build_byebye(
+    buf: &mut [u8],
+    notification_type: &str,
+    unique_service_name: &str,
+) -> usize {
+    let mut cursor = Cursor::new(buf);
+    let _ = write!(
+        cursor,
+        "NOTIFY * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+CACHE-CONTROL: max-age=1800\r
+NT: {}\r
+NTS: ssdp:byebye\r
+USN: {}\r
+SERVER: UPnP/1.0 {}/{}\r
+\r\n",
+        notification_type,
+        unique_service_name,
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+    );
+    cursor.position() as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,5 +574,16 @@ SERVER: UPnP/1.0 {}/{}\r
                      if s.notification_type == "upnp::rootdevice"
                          && s.unique_service_name == "uuid:xyz"
                          && s.location == "https://you"));
+    }
+
+    #[test]
+    fn byebye_round_trip() {
+        let mut buf = [0u8; 512];
+        let n = build_byebye(&mut buf, "upnp::rootdevice", "uuid:xyz");
+        let msg = parse(&buf[0..n]).unwrap();
+        assert!(matches!(msg,
+                     Message::NotifyByeBye(s)
+                     if s.notification_type == "upnp::rootdevice"
+                         && s.unique_service_name == "uuid:xyz"));
     }
 }

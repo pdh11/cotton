@@ -160,6 +160,16 @@ impl AsyncService {
             &self.inner.search_socket,
         );
     }
+
+    pub fn deadvertise<USN>(&mut self, unique_service_name: USN)
+    where
+        USN: Into<String>,
+    {
+        self.inner.engine.lock().unwrap().deadvertise(
+            unique_service_name.into(),
+            &self.inner.search_socket,
+        );
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
