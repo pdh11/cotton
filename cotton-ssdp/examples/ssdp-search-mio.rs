@@ -27,7 +27,10 @@ struct Service {
 }
 
 impl Service {
-    fn new() -> Result<Self, Box<dyn Error>> {
+    fn new(
+        registry: &mio::Registry,
+        tokens: (mio::Token, mio::Token),
+    ) -> Result<Self, Box<dyn Error>> {
         let multicast_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::DGRAM,
@@ -39,11 +42,12 @@ impl Service {
         multicast_socket.bind(&socket2::SockAddr::from(multicast_addr))?;
         setsockopt(multicast_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
         let multicast_socket: std::net::UdpSocket = multicast_socket.into();
-        let multicast_socket = mio::net::UdpSocket::from_std(multicast_socket);
+        let mut multicast_socket =
+            mio::net::UdpSocket::from_std(multicast_socket);
 
         let search_socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16))?;
         setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
-        let search_socket = mio::net::UdpSocket::from_std(search_socket);
+        let mut search_socket = mio::net::UdpSocket::from_std(search_socket);
 
         let mut engine = Engine::<SyncCallback>::new();
 
@@ -54,6 +58,17 @@ impl Service {
                 &search_socket,
             )?;
         }
+
+        registry.register(
+            &mut multicast_socket,
+            tokens.0,
+            mio::Interest::READABLE,
+        )?;
+        registry.register(
+            &mut search_socket,
+            tokens.1,
+            mio::Interest::READABLE,
+        )?;
 
         Ok(Self {
             engine,
@@ -136,23 +151,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut poll = mio::Poll::new()?;
     let mut events = mio::Events::with_capacity(128);
 
-    let mut ssdp = Service::new()?;
-
-    poll.registry().register(
-        &mut ssdp.multicast_socket,
-        SSDP_TOKEN1,
-        mio::Interest::READABLE,
-    )?;
-    poll.registry().register(
-        &mut ssdp.search_socket,
-        SSDP_TOKEN2,
-        mio::Interest::READABLE,
-    )?;
-
-    let map = RefCell::new(HashMap::new());
+    let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2))?;
 
     let uuid = uuid::Uuid::new_v4();
-
     ssdp.advertise(
         uuid.to_string(),
         cotton_ssdp::Advertisement {
@@ -161,6 +162,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     );
 
+    let map = RefCell::new(HashMap::new());
     ssdp.subscribe(
         "ssdp:all",
         Box::new(move |r| {
