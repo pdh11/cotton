@@ -47,7 +47,10 @@ pub struct Advertisement {
 
 pub mod engine;
 mod message;
+mod service;
 pub mod udp;
+
+pub use service::Service;
 
 #[cfg(test)]
 mod tests {
