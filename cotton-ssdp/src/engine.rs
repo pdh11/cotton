@@ -136,8 +136,10 @@ impl<CB: Callback> Engine<CB> {
         socket: &SCK,
     ) {
         for interface in self.interfaces.values() {
-            for ip in &interface.ips {
-                Self::search_on(search_type, ip, socket);
+            if interface.up {
+                for ip in &interface.ips {
+                    Self::search_on(search_type, ip, socket);
+                }
             }
         }
     }
@@ -279,40 +281,34 @@ impl<CB: Callback> Engine<CB> {
     ) -> Result<(), std::io::Error> {
         match e {
             NetworkEvent::NewLink(ix, _name, flags) => {
-                let up = flags.contains(
-                    cotton_netif::Flags::RUNNING
-                        | cotton_netif::Flags::UP
-                        | cotton_netif::Flags::MULTICAST,
-                );
-                let mut new_ix = None;
-                if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
-                    if up && !v.up {
-                        if !v.ips.is_empty() {
-                            Self::join_multicast(ix, multicast)?;
-                        }
-                        new_ix = Some(ix);
-                    } else if !up && v.up && !v.ips.is_empty() {
-                        Self::leave_multicast(ix, multicast)?;
-                    }
-                    v.up = up;
-                } else {
-                    self.interfaces.insert(
-                        ix,
-                        Interface {
-                            ips: Vec::new(),
-                            up,
-                        },
+                if flags.contains(cotton_netif::Flags::MULTICAST) {
+                    let up = flags.contains(
+                        cotton_netif::Flags::RUNNING | cotton_netif::Flags::UP,
                     );
-                }
-                if let Some(ix) = new_ix {
-                    self.send_all(&self.interfaces[&ix].ips, search);
+                    let mut do_send = false;
+                    if let Some(v) = self.interfaces.get_mut(&ix) {
+                        if up && !v.up {
+                            do_send = true;
+                        }
+                        v.up = up;
+                    } else {
+                        self.interfaces.insert(
+                            ix,
+                            Interface {
+                                ips: Vec::new(),
+                                up,
+                            },
+                        );
+                        Self::join_multicast(ix, multicast)?;
+                    }
+                    if do_send {
+                        self.send_all(&self.interfaces[&ix].ips, search);
+                    }
                 }
             }
             NetworkEvent::DelLink(ix) => {
-                if let Some(ref v) = self.interfaces.remove(&ix) {
-                    if v.up && !v.ips.is_empty() {
-                        Self::leave_multicast(ix, multicast)?;
-                    }
+                if self.interfaces.remove(&ix).is_some() {
+                    Self::leave_multicast(ix, multicast)?;
                 }
             }
             NetworkEvent::NewAddr(ix, addr, _prefix) => {
@@ -321,9 +317,6 @@ impl<CB: Callback> Engine<CB> {
                     // any NewAddr
                     if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                         if !v.ips.contains(&addr) {
-                            if v.ips.is_empty() && v.up {
-                                Self::join_multicast(ix, multicast)?;
-                            }
                             v.ips.push(addr);
                             if v.up {
                                 self.send_all(&[addr], search);
@@ -336,9 +329,6 @@ impl<CB: Callback> Engine<CB> {
                 if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
                     if let Some(n) = v.ips.iter().position(|&a| a == addr) {
                         v.ips.swap_remove(n);
-                        if v.up && v.ips.is_empty() {
-                            Self::leave_multicast(ix, multicast)?;
-                        }
                     }
                 }
             }
@@ -379,13 +369,15 @@ impl<CB: Callback> Engine<CB> {
         socket: &SCK,
     ) {
         for interface in self.interfaces.values() {
-            for ip in &interface.ips {
-                Self::notify_on(
-                    unique_service_name,
-                    advertisement,
-                    ip,
-                    socket,
-                );
+            if interface.up {
+                for ip in &interface.ips {
+                    Self::notify_on(
+                        unique_service_name,
+                        advertisement,
+                        ip,
+                        socket,
+                    );
+                }
             }
         }
     }
@@ -420,13 +412,15 @@ impl<CB: Callback> Engine<CB> {
         socket: &SCK,
     ) {
         for interface in self.interfaces.values() {
-            for ip in &interface.ips {
-                Self::byebye_on(
-                    notification_type,
-                    unique_service_name,
-                    ip,
-                    socket,
-                );
+            if interface.up {
+                for ip in &interface.ips {
+                    Self::byebye_on(
+                        notification_type,
+                        unique_service_name,
+                        ip,
+                        socket,
+                    );
+                }
             }
         }
     }
@@ -741,6 +735,14 @@ mod tests {
         )
     }
 
+    fn new_eth0_if_nomulti() -> NetworkEvent {
+        NetworkEvent::NewLink(
+            LOCAL_IX,
+            "jeth0".to_string(),
+            cotton_netif::Flags::UP | cotton_netif::Flags::RUNNING,
+        )
+    }
+
     fn del_eth0() -> NetworkEvent {
         NetworkEvent::DelLink(LOCAL_IX)
     }
@@ -803,6 +805,7 @@ mod tests {
 
         f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
+        assert!(f.s.send_count() == 1);
         assert!(f.s.contains_send(
             multicast_dest(),
             LOCAL_SRC,
@@ -821,6 +824,106 @@ mod tests {
 
         f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
 
+        assert!(f.s.send_count() == 1);
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Search(s)
+                         if s.search_target == "ssdp:all")
+        ));
+    }
+
+    #[test]
+    fn no_search_sent_on_down_interface() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn no_search_sent_on_non_multicast_interface() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_nomulti(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn searches_sent_on_two_ips() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.send_count() == 2);
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Search(s)
+                         if s.search_target == "ssdp:all")
+        ));
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC_2,
+            |m| matches!(m,
+                         Message::Search(s)
+                         if s.search_target == "ssdp:all")
+        ));
+    }
+
+    #[test]
+    fn no_search_sent_on_deleted_ips() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
+            f.e.on_interface_event(DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.send_count() == 1);
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Search(s)
+                         if s.search_target == "ssdp:all")
+        ));
+    }
+
+    #[test]
+    fn search_sent_on_interface_newly_up() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        });
+
+        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+
+        assert!(f.s.send_count() == 1);
         assert!(f.s.contains_send(
             multicast_dest(),
             LOCAL_SRC,
@@ -955,6 +1058,20 @@ mod tests {
     }
 
     #[test]
+    fn no_notify_sent_on_down_interface() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+        });
+
+        f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+
+        assert!(f.s.no_sends());
+    }
+
+    #[test]
     fn notify_sent_on_advertise() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
@@ -990,6 +1107,20 @@ mod tests {
                          if s.notification_type == "upnp:rootdevice"
                          && s.unique_service_name == "uuid:137")
         ))
+    }
+
+    #[test]
+    fn no_notify_sent_on_down_interface_on_deadvertise() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+                .unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+        });
+
+        f.e.deadvertise("uuid:137", &f.s);
+
+        assert!(f.s.no_sends());
     }
 
     #[test]
@@ -1062,102 +1193,8 @@ mod tests {
     /* ==== Tests for IPv4 multicast handling ==== */
 
     #[test]
-    fn join_multicast_on_first_ip() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-
-        assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, true));
-    }
-
-    #[test]
-    fn dont_rejoin_multicast_on_second_ip() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
-    #[test]
-    fn leave_multicast_on_losing_only_ip() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
-
-        assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
-    }
-
-    #[test]
-    fn dont_leave_multicast_on_losing_first_ip() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
-    #[test]
-    fn dont_leave_multicast_on_losing_second_ip() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
-    #[test]
-    fn leave_multicast_on_losing_both_ips() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
-
-        assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
-    }
-
-    #[test]
-    fn dont_join_multicast_on_interface_down() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-                .unwrap();
-        });
-
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
-    #[test]
-    fn join_multicast_on_interface_up() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-                .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-        });
+    fn join_multicast_on_new_interface() {
+        let mut f = Fixture::default();
 
         f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
 
@@ -1166,53 +1203,12 @@ mod tests {
     }
 
     #[test]
-    fn dont_join_multicast_on_duplicate_interface_up() {
+    fn dont_join_multicast_on_repeat_interface() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-                .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
         f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
-    #[test]
-    fn dont_join_multicast_on_interface_up_with_no_address() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-                .unwrap();
-        });
-
-        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
-    #[test]
-    fn leave_multicast_on_interface_down() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-            .unwrap();
-
-        assert!(f.s.mcast_count() == 1);
-        assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
-    }
-
-    #[test]
-    fn dont_leave_multicast_on_interface_down_with_no_address() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-            .unwrap();
 
         assert!(f.s.no_mcasts());
     }
@@ -1230,48 +1226,11 @@ mod tests {
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
     }
 
-    #[test]
-    fn dont_leave_multicast_on_interface_gone_with_no_address() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
-    #[test]
-    fn dont_leave_multicast_on_down_interface_gone() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-                .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-        });
-
-        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
-
-        assert!(f.s.no_mcasts());
-    }
-
     /* ==== Tests for multicast error handling ==== */
 
     #[test]
-    fn error_join_multicast_on_first_ip() {
+    fn error_join_multicast_on_new_interface() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.s.inject_multicast_error(true);
-        });
-
-        assert!(f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).is_err());
-    }
-
-    #[test]
-    fn error_join_multicast_on_interface_up() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-                .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.s.inject_multicast_error(true);
         });
 
@@ -1279,35 +1238,9 @@ mod tests {
     }
 
     #[test]
-    fn error_leave_multicast_on_losing_only_ip() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.s.inject_multicast_error(true);
-        });
-
-        assert!(f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).is_err());
-    }
-
-    #[test]
-    fn error_leave_multicast_on_interface_down() {
-        let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.s.inject_multicast_error(true);
-        });
-
-        assert!(f
-            .e
-            .on_interface_event(new_eth0_if_down(), &f.s, &f.s)
-            .is_err());
-    }
-
-    #[test]
     fn error_leave_multicast_on_interface_gone() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.s.inject_multicast_error(true);
         });
 

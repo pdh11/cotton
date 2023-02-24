@@ -46,7 +46,7 @@ pub struct Advertisement {
 }
 
 pub mod engine;
-pub mod message;
+mod message;
 pub mod udp;
 
 #[cfg(test)]
