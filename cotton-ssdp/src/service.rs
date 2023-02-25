@@ -156,38 +156,46 @@ impl Service {
 mod tests {
     use super::*;
     use mockall::predicate;
-    use std::sync::Arc;
     use serial_test::serial;
+    use std::sync::Arc;
 
     #[test]
     #[serial]
     fn new_socket_sets_up_socket() {
         let ctx = MockSocket::new_context();
-        ctx.expect().returning(|_x, _y, _z| {
-            let mut mock = MockSocket::default();
+        ctx.expect()
+            .withf(|x, y, z| {
+                x == &socket2::Domain::IPV4
+                    && y == &socket2::Type::DGRAM
+                    && z.is_none()
+            })
+            .returning(|_x, _y, _z| {
+                let mut mock = MockSocket::default();
 
-            let real_socket =
-                Arc::new(std::net::UdpSocket::bind("127.0.0.1:0").unwrap());
-            let fd = real_socket.as_raw_fd();
+                let real_socket = Arc::new(
+                    std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
+                );
+                let fd = real_socket.as_raw_fd();
 
-            mock.expect_set_nonblocking()
-                .with(predicate::eq(true))
-                .return_once(|_| Ok(()));
-            mock.expect_set_reuse_address()
-                .with(predicate::eq(true))
-                .return_once(|_| Ok(()));
-            mock.expect_bind()
-                .withf (|addr| {
-                    let v4 = addr.as_socket_ipv4().unwrap();
-                    v4.ip() == &std::net::Ipv4Addr::UNSPECIFIED
-                        && v4.port() == 9100
-                })
-                .return_once(|_| Ok(()));
-            mock.expect_as_raw_fd().return_once(move || fd);
-            mock.expect_into()
-                .return_once(move || Arc::try_unwrap(real_socket).unwrap());
-            Ok(mock)
-        });
+                mock.expect_set_nonblocking()
+                    .with(predicate::eq(true))
+                    .return_once(|_| Ok(()));
+                mock.expect_set_reuse_address()
+                    .with(predicate::eq(true))
+                    .return_once(|_| Ok(()));
+                mock.expect_bind()
+                    .withf(|addr| {
+                        let v4 = addr.as_socket_ipv4().unwrap();
+                        v4.ip() == &std::net::Ipv4Addr::UNSPECIFIED
+                            && v4.port() == 9100
+                    })
+                    .return_once(|_| Ok(()));
+                mock.expect_as_raw_fd().return_once(move || fd);
+                mock.expect_into().return_once(move || {
+                    Arc::try_unwrap(real_socket).unwrap()
+                });
+                Ok(mock)
+            });
 
         let s = new_socket(9100);
         assert!(s.is_ok());
@@ -283,7 +291,7 @@ mod tests {
                 .with(predicate::eq(true))
                 .return_once(|_| Ok(()));
             mock.expect_bind()
-                .withf (|addr| {
+                .withf(|addr| {
                     let v4 = addr.as_socket_ipv4().unwrap();
                     v4.ip() == &std::net::Ipv4Addr::UNSPECIFIED
                         && v4.port() == 9100
