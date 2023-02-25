@@ -709,63 +709,63 @@ mod tests {
         let rx_port = rx.local_addr().unwrap().port();
         println!("RX on port {}", rx_port);
 
-                let tx = mio::net::UdpSocket::from_std(tx);
-                let rx = mio::net::UdpSocket::from_std(rx);
+        let tx = mio::net::UdpSocket::from_std(tx);
+        let rx = mio::net::UdpSocket::from_std(rx);
 
-                let r = tx.send_with(
-                    512,
-                    &SocketAddr::new(localhost, rx_port),
-                    &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    |b| {
-                        b[0..3].copy_from_slice(b"foo");
-                        3
-                    },
-                );
-                assert!(r.is_ok());
+        let r = tx.send_with(
+            512,
+            &SocketAddr::new(localhost, rx_port),
+            &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            |b| {
+                b[0..3].copy_from_slice(b"foo");
+                3
+            },
+        );
+        assert!(r.is_ok());
 
-                let mut buf = [0u8; 1500];
-                let r = rx.receive_to(&mut buf);
-                let (n, wasto, wasfrom) = r.unwrap();
-                assert!(n == 3);
-                assert!(wasto == localhost);
-                assert!(wasfrom == SocketAddr::new(localhost, tx_port));
+        let mut buf = [0u8; 1500];
+        let r = rx.receive_to(&mut buf);
+        let (n, wasto, wasfrom) = r.unwrap();
+        assert!(n == 3);
+        assert!(wasto == localhost);
+        assert!(wasfrom == SocketAddr::new(localhost, tx_port));
 
-                let r = rx.join_multicast_group(
-                    &IpAddr::V4("127.0.0.1".parse().unwrap()),
-                    InterfaceIndex(1),
-                ); // Not a mcast addr
-                assert!(r.is_err());
+        let r = rx.join_multicast_group(
+            &IpAddr::V4("127.0.0.1".parse().unwrap()),
+            InterfaceIndex(1),
+        ); // Not a mcast addr
+        assert!(r.is_err());
 
-                let r = rx.join_multicast_group(
-                    &IpAddr::V6("::1".parse().unwrap()),
-                    InterfaceIndex(1),
-                ); // IPv6 NYI
-                assert!(r.is_err());
+        let r = rx.join_multicast_group(
+            &IpAddr::V6("::1".parse().unwrap()),
+            InterfaceIndex(1),
+        ); // IPv6 NYI
+        assert!(r.is_err());
 
-                let r = rx.join_multicast_group(
-                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    InterfaceIndex(1),
-                );
-                println!("r={:?}", r);
-                assert!(r.is_ok());
+        let r = rx.join_multicast_group(
+            &IpAddr::V4("239.255.255.250".parse().unwrap()),
+            InterfaceIndex(1),
+        );
+        println!("r={:?}", r);
+        assert!(r.is_ok());
 
-                let r = rx.leave_multicast_group(
-                    &IpAddr::V6("::1".parse().unwrap()),
-                    InterfaceIndex(1),
-                ); // IPv6 NYI
-                assert!(r.is_err());
+        let r = rx.leave_multicast_group(
+            &IpAddr::V6("::1".parse().unwrap()),
+            InterfaceIndex(1),
+        ); // IPv6 NYI
+        assert!(r.is_err());
 
-                let r = rx.leave_multicast_group(
-                    &IpAddr::V4("127.0.0.1".parse().unwrap()),
-                    InterfaceIndex(1),
-                ); // Not a mcast addr
-                assert!(r.is_err());
+        let r = rx.leave_multicast_group(
+            &IpAddr::V4("127.0.0.1".parse().unwrap()),
+            InterfaceIndex(1),
+        ); // Not a mcast addr
+        assert!(r.is_err());
 
-                let r = rx.leave_multicast_group(
-                    &IpAddr::V4("239.255.255.250".parse().unwrap()),
-                    InterfaceIndex(1),
-                );
-                println!("r={:?}", r);
-                assert!(r.is_ok());
+        let r = rx.leave_multicast_group(
+            &IpAddr::V4("239.255.255.250".parse().unwrap()),
+            InterfaceIndex(1),
+        );
+        println!("r={:?}", r);
+        assert!(r.is_ok());
     }
 }
