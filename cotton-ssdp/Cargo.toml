@@ -24,7 +24,9 @@ url = { version = "2.3", default_features = false }
 rand = { version = "0.8", default_features = false, features = ["std", "std_rng"] }
 mock_instant = "0.2"
 mio = { version = "0.8", default_features = false }
-mockall = "0.11"
+mockall = "0.11.3"
+predicates-core = "=1.0.2" # Newer ones require Rust 1.60
+predicates-tree = "=1.0.4" # Newer ones require Rust 1.60
 
 [dev-dependencies]
 serial_test = { version = "0.6" }

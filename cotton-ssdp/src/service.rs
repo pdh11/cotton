@@ -270,13 +270,11 @@ mod tests {
 
     #[test]
     #[serial]
+    #[cfg_attr(miri, ignore)]
     fn new_socket_passes_on_setsockopt_error() {
         let ctx = MockSocket::new_context();
         ctx.expect().returning(|_x, _y, _z| {
             let mut mock = MockSocket::default();
-
-            let real_socket =
-                Arc::new(std::net::UdpSocket::bind("127.0.0.1:0").unwrap());
 
             mock.expect_set_nonblocking()
                 .with(predicate::eq(true))
