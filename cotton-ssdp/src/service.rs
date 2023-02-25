@@ -161,6 +161,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[cfg_attr(miri, ignore)]
     fn new_socket_sets_up_socket() {
         let ctx = MockSocket::new_context();
         ctx.expect()
