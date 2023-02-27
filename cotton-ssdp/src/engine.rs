@@ -280,7 +280,7 @@ impl<CB: Callback> Engine<CB> {
         search: &SCK,
     ) -> Result<(), std::io::Error> {
         match e {
-            NetworkEvent::NewLink(ix, _name, flags) => {
+            NetworkEvent::NewLink(ix, name, flags) => {
                 if flags.contains(cotton_netif::Flags::MULTICAST) {
                     let up = flags.contains(
                         cotton_netif::Flags::RUNNING | cotton_netif::Flags::UP,
@@ -292,14 +292,21 @@ impl<CB: Callback> Engine<CB> {
                         }
                         v.up = up;
                     } else {
-                        self.interfaces.insert(
-                            ix,
-                            Interface {
-                                ips: Vec::new(),
-                                up,
+                        match Self::join_multicast(ix, multicast) {
+                            Ok(_) => {
+                                self.interfaces.insert(
+                                    ix,
+                                    Interface {
+                                        ips: Vec::new(),
+                                        up,
+                                    },
+                                );
                             },
-                        );
-                        Self::join_multicast(ix, multicast)?;
+                            Err(e) => {
+                                println!("Couldn't join multicast on {}: {}",
+                                         name, e);
+                            }
+                        }
                     }
                     if do_send {
                         self.send_all(&self.interfaces[&ix].ips, search);
