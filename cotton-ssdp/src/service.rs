@@ -1,70 +1,51 @@
 use crate::engine::{Callback, Engine};
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
-use mockall::automock;
 use nix::sys::socket::setsockopt;
 use nix::sys::socket::sockopt::Ipv4PacketInfo;
-use std::error::Error;
 use std::os::unix::io::AsRawFd;
 
-#[automock]
-trait Socket {
-    fn new(
-        dom: socket2::Domain,
-        ty: socket2::Type,
-        flags: Option<socket2::Protocol>,
-    ) -> Result<Self, std::io::Error>
-    where
-        Self: Sized;
-    fn set_nonblocking(&self, nb: bool) -> std::io::Result<()>;
-    fn set_reuse_address(&self, nb: bool) -> std::io::Result<()>;
-    fn set_ipv4_packetinfo(&self, nb: bool) -> std::io::Result<()>;
-    fn bind(&self, addr: &socket2::SockAddr) -> std::io::Result<()>;
-    fn to_mio(self) -> mio::net::UdpSocket;
-}
+type NewSocketFn = fn() -> std::io::Result<socket2::Socket>;
+type SockoptFn = fn(&socket2::Socket, bool) -> std::io::Result<()>;
+type RawSockoptFn =
+    fn(&socket2::Socket, bool) -> Result<(), nix::errno::Errno>;
+type BindFn =
+    fn(&socket2::Socket, std::net::SocketAddrV4) -> std::io::Result<()>;
 
-impl Socket for socket2::Socket {
-    fn new(
-        dom: socket2::Domain,
-        ty: socket2::Type,
-        flags: Option<socket2::Protocol>,
-    ) -> Result<Self, std::io::Error> {
-        Self::new(dom, ty, flags)
-    }
-
-    fn set_nonblocking(&self, nb: bool) -> std::io::Result<()> {
-        self.set_nonblocking(nb)
-    }
-
-    fn set_reuse_address(&self, nb: bool) -> std::io::Result<()> {
-        self.set_reuse_address(nb)
-    }
-
-    fn set_ipv4_packetinfo(&self, nb: bool) -> std::io::Result<()> {
-        Ok(setsockopt(self.as_raw_fd(), Ipv4PacketInfo, &nb)?)
-    }
-
-    fn bind(&self, addr: &socket2::SockAddr) -> std::io::Result<()> {
-        self.bind(addr)
-    }
-
-    fn to_mio(self) -> mio::net::UdpSocket {
-        mio::net::UdpSocket::from_std(self.into())
-    }
-}
-
-fn new_socket<SCK: Socket>(
+fn new_socket_inner(
     port: u16,
-) -> Result<mio::net::UdpSocket, Box<dyn Error>> {
-    let socket = SCK::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?;
+    new_socket: NewSocketFn,
+    nonblocking: SockoptFn,
+    reuse_address: SockoptFn,
+    bind: BindFn,
+    ipv4_packetinfo: RawSockoptFn,
+) -> std::io::Result<mio::net::UdpSocket> {
+    let socket = new_socket()?;
+    nonblocking(&socket, true)?;
+    reuse_address(&socket, true)?;
+    bind(
+        &socket,
+        std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port),
+    )?;
+    ipv4_packetinfo(&socket, true)?;
+    Ok(mio::net::UdpSocket::from_std(socket.into()))
+}
 
-    socket.set_nonblocking(true)?;
-    socket.set_reuse_address(true)?;
-    let addr =
-        std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port);
-    socket.bind(&socket2::SockAddr::from(addr))?;
-    socket.set_ipv4_packetinfo(true)?;
-    Ok(socket.to_mio())
+fn new_socket(port: u16) -> Result<mio::net::UdpSocket, std::io::Error> {
+    new_socket_inner(
+        port,
+        || {
+            socket2::Socket::new(
+                socket2::Domain::IPV4,
+                socket2::Type::DGRAM,
+                None,
+            )
+        },
+        socket2::Socket::set_nonblocking,
+        socket2::Socket::set_reuse_address,
+        |s, a| s.bind(&socket2::SockAddr::from(a)),
+        |s, b| setsockopt(s.as_raw_fd(), Ipv4PacketInfo, &b),
+    )
 }
 
 struct SyncCallback {
@@ -84,7 +65,7 @@ pub struct Service {
 }
 
 // The type of new_socket
-type SocketFn = fn(u16) -> Result<mio::net::UdpSocket, Box<dyn Error>>;
+type SocketFn = fn(u16) -> Result<mio::net::UdpSocket, std::io::Error>;
 
 // The type of registry::register
 type RegisterFn = fn(
@@ -100,7 +81,7 @@ impl Service {
         socket: SocketFn,
         register: RegisterFn,
         get_interfaces: FN,
-    ) -> Result<Self, Box<dyn Error>>
+    ) -> Result<Self, std::io::Error>
     where
         ITER: Iterator<Item = cotton_netif::NetworkEvent>,
         FN: Fn() -> std::io::Result<ITER>,
@@ -130,11 +111,11 @@ impl Service {
     pub fn new(
         registry: &mio::Registry,
         tokens: (mio::Token, mio::Token),
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> Result<Self, std::io::Error> {
         Self::new_inner(
             registry,
             tokens,
-            new_socket::<socket2::Socket>,
+            new_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
             cotton_netif::get_interfaces,
         )
@@ -204,160 +185,136 @@ impl Service {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::predicate;
-    use serial_test::serial;
-    use std::sync::Arc;
 
-    #[test]
-    #[serial]
-    #[cfg_attr(miri, ignore)]
-    fn new_socket_sets_up_socket() {
-        let ctx = MockSocket::new_context();
-        ctx.expect()
-            .withf(|x, y, z| {
-                x == &socket2::Domain::IPV4
-                    && y == &socket2::Type::DGRAM
-                    && z.is_none()
-            })
-            .returning(|_x, _y, _z| {
-                let mut mock = MockSocket::default();
+    fn my_err() -> std::io::Error {
+        std::io::Error::from(std::io::ErrorKind::Other)
+    }
 
-                let real_socket = Arc::new(
-                    std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
-                );
-                mock.expect_set_nonblocking()
-                    .with(predicate::eq(true))
-                    .return_once(|_| Ok(()));
-                mock.expect_set_reuse_address()
-                    .with(predicate::eq(true))
-                    .return_once(|_| Ok(()));
-                mock.expect_bind()
-                    .withf(|addr| {
-                        let v4 = addr.as_socket_ipv4().unwrap();
-                        v4.ip() == &std::net::Ipv4Addr::UNSPECIFIED
-                            && v4.port() == 9100
-                    })
-                    .return_once(|_| Ok(()));
-                mock.expect_set_ipv4_packetinfo()
-                    .with(predicate::eq(true))
-                    .return_once(|_| Ok(()));
-                mock.expect_to_mio().return_once(move || {
-                    mio::net::UdpSocket::from_std(
-                        Arc::try_unwrap(real_socket).unwrap(),
-                    )
-                });
-                Ok(mock)
-            });
-
-        let s = new_socket::<MockSocket>(9100);
-        assert!(s.is_ok());
+    fn bogus_new_socket() -> std::io::Result<socket2::Socket> {
+        Err(my_err())
+    }
+    fn bogus_setsockopt(_: &socket2::Socket, b: bool) -> std::io::Result<()> {
+        assert!(b);
+        Err(my_err())
+    }
+    fn bogus_raw_setsockopt(
+        _: &socket2::Socket,
+        _: bool,
+    ) -> Result<(), nix::errno::Errno> {
+        Err(nix::errno::Errno::ENOTTY)
+    }
+    fn bogus_bind(
+        _: &socket2::Socket,
+        _: std::net::SocketAddrV4,
+    ) -> std::io::Result<()> {
+        Err(my_err())
     }
 
     #[test]
-    #[serial]
+    #[cfg_attr(miri, ignore)]
     fn new_socket_passes_on_creation_error() {
-        let ctx = MockSocket::new_context();
-        ctx.expect().returning(|_x, _y, _z| {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
-        });
+        let e = new_socket_inner(
+            0u16,
+            bogus_new_socket,
+            bogus_setsockopt,
+            bogus_setsockopt,
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
 
-        let s = new_socket::<MockSocket>(9100);
-        assert!(s.is_err());
+        assert!(e.is_err());
     }
 
     #[test]
-    #[serial]
-    fn new_socket_passes_on_nonblocking_error() {
-        let ctx = MockSocket::new_context();
-        ctx.expect().returning(|_x, _y, _z| {
-            let mut mock = MockSocket::default();
-
-            mock.expect_set_nonblocking().return_once(|_| {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
-            });
-
-            Ok(mock)
-        });
-
-        let s = new_socket::<MockSocket>(9100);
-        assert!(s.is_err());
-    }
-
-    #[test]
-    #[serial]
-    fn new_socket_passes_on_reuseaddr_error() {
-        let ctx = MockSocket::new_context();
-        ctx.expect().returning(|_x, _y, _z| {
-            let mut mock = MockSocket::default();
-
-            mock.expect_set_nonblocking()
-                .with(predicate::eq(true))
-                .return_once(|_| Ok(()));
-            mock.expect_set_reuse_address().return_once(|_| {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
-            });
-
-            Ok(mock)
-        });
-
-        let s = new_socket::<MockSocket>(9100);
-        assert!(s.is_err());
-    }
-
-    #[test]
-    #[serial]
-    fn new_socket_passes_on_bind_error() {
-        let ctx = MockSocket::new_context();
-        ctx.expect().returning(|_x, _y, _z| {
-            let mut mock = MockSocket::default();
-
-            mock.expect_set_nonblocking()
-                .with(predicate::eq(true))
-                .return_once(|_| Ok(()));
-            mock.expect_set_reuse_address()
-                .with(predicate::eq(true))
-                .return_once(|_| Ok(()));
-            mock.expect_bind().return_once(|_| {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
-            });
-
-            Ok(mock)
-        });
-
-        let s = new_socket::<MockSocket>(9100);
-        assert!(s.is_err());
-    }
-
-    #[test]
-    #[serial]
     #[cfg_attr(miri, ignore)]
-    fn new_socket_passes_on_setsockopt_error() {
-        let ctx = MockSocket::new_context();
-        ctx.expect().returning(|_x, _y, _z| {
-            let mut mock = MockSocket::default();
+    fn new_socket_passes_on_nonblocking_error() {
+        let e = new_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            bogus_setsockopt,
+            bogus_setsockopt,
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
 
-            mock.expect_set_nonblocking()
-                .with(predicate::eq(true))
-                .return_once(|_| Ok(()));
-            mock.expect_set_reuse_address()
-                .with(predicate::eq(true))
-                .return_once(|_| Ok(()));
-            mock.expect_bind()
-                .withf(|addr| {
-                    let v4 = addr.as_socket_ipv4().unwrap();
-                    v4.ip() == &std::net::Ipv4Addr::UNSPECIFIED
-                        && v4.port() == 9100
-                })
-                .return_once(|_| Ok(()));
-            mock.expect_set_ipv4_packetinfo().return_once(|_| {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
-            });
+        assert!(e.is_err());
+    }
 
-            Ok(mock)
-        });
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn new_socket_passes_on_reuseaddr_error() {
+        let e = new_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            |s, b| s.set_nonblocking(b),
+            bogus_setsockopt,
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
 
-        let s = new_socket::<MockSocket>(9100);
-        assert!(s.is_err());
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn new_socket_passes_on_bind_error() {
+        let e = new_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            |s, b| s.set_nonblocking(b),
+            |s, b| s.set_reuse_address(b),
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn new_socket_passes_on_pktinfo_error() {
+        let e = new_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            |s, b| s.set_nonblocking(b),
+            |s, b| s.set_reuse_address(b),
+            |s, a| s.bind(&socket2::SockAddr::from(a)),
+            bogus_raw_setsockopt,
+        );
+
+        assert!(e.is_err());
+    }
+
+    fn bogus_register(
+        _: &mio::Registry,
+        _: &mut mio::net::UdpSocket,
+        _: mio::Token,
+    ) -> std::io::Result<()> {
+        Err(my_err())
     }
 
     #[test]
@@ -372,7 +329,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_socket_failure() {
         const SSDP_TOKEN1: mio::Token = mio::Token(37);
@@ -380,9 +336,10 @@ mod tests {
         let poll = mio::Poll::new().unwrap();
 
         let e = Service::new_inner(
-            poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2),
-            |_| Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))),
-            |r, s, t| r.register(s, t, mio::Interest::READABLE),
+            poll.registry(),
+            (SSDP_TOKEN1, SSDP_TOKEN2),
+            |_| Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST")),
+            bogus_register,
             cotton_netif::get_interfaces,
         );
 
@@ -390,7 +347,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_second_socket_failure() {
         const SSDP_TOKEN1: mio::Token = mio::Token(37);
@@ -398,14 +354,44 @@ mod tests {
         let poll = mio::Poll::new().unwrap();
 
         let e = Service::new_inner(
-            poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2),
-            |p| if p != 0 {
-                Ok(mio::net::UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap())
+            poll.registry(),
+            (SSDP_TOKEN1, SSDP_TOKEN2),
+            |p| {
+                if p != 0 {
+                    Ok(mio::net::UdpSocket::bind(
+                        "127.0.0.1:0".parse().unwrap(),
+                    )
+                    .unwrap())
                 } else {
-                    Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "TEST")))
-                },
-            |r, s, t| r.register(s, t, mio::Interest::READABLE),
+                    Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
+                }
+            },
+            bogus_register,
             cotton_netif::get_interfaces,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn service_passes_on_get_interfaces_failure() {
+        const SSDP_TOKEN1: mio::Token = mio::Token(37);
+        const SSDP_TOKEN2: mio::Token = mio::Token(94);
+        let poll = mio::Poll::new().unwrap();
+
+        let e = Service::new_inner(
+            poll.registry(),
+            (SSDP_TOKEN1, SSDP_TOKEN2),
+            new_socket,
+            bogus_register,
+            || {
+                if false {
+                    cotton_netif::get_interfaces()
+                } else {
+                    Err(my_err())
+                }
+            },
         );
 
         assert!(e.is_err());
