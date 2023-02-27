@@ -1,43 +1,70 @@
 use crate::engine::{Callback, Engine};
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
-use mockall::mock;
+use mockall::automock;
 use nix::sys::socket::setsockopt;
 use nix::sys::socket::sockopt::Ipv4PacketInfo;
 use std::error::Error;
 use std::os::unix::io::AsRawFd;
 
-mock! {
-    pub Socket {
-        fn new(dom: socket2::Domain, ty: socket2::Type, flags: Option<u32>) ->
-            Result<Self, std::io::Error>;
-        fn set_nonblocking(&self, nb: bool) -> Result<(),std::io::Error>;
-        fn set_reuse_address(&self, nb: bool) -> Result<(),std::io::Error>;
-        fn bind(&self, addr: &socket2::SockAddr) -> Result<(),std::io::Error>;
-        fn as_raw_fd(&self) -> std::os::unix::io::RawFd;
+#[automock]
+trait Socket {
+    fn new(
+        dom: socket2::Domain,
+        ty: socket2::Type,
+        flags: Option<socket2::Protocol>,
+    ) -> Result<Self, std::io::Error>
+    where
+        Self: Sized;
+    fn set_nonblocking(&self, nb: bool) -> std::io::Result<()>;
+    fn set_reuse_address(&self, nb: bool) -> std::io::Result<()>;
+    fn set_ipv4_packetinfo(&self, nb: bool) -> std::io::Result<()>;
+    fn bind(&self, addr: &socket2::SockAddr) -> std::io::Result<()>;
+    fn to_mio(self) -> mio::net::UdpSocket;
+}
+
+impl Socket for socket2::Socket {
+    fn new(
+        dom: socket2::Domain,
+        ty: socket2::Type,
+        flags: Option<socket2::Protocol>,
+    ) -> Result<Self, std::io::Error> {
+        Self::new(dom, ty, flags)
     }
-    impl Into<std::net::UdpSocket> for Socket {
-        fn into(self) -> std::net::UdpSocket;
+
+    fn set_nonblocking(&self, nb: bool) -> std::io::Result<()> {
+        self.set_nonblocking(nb)
+    }
+
+    fn set_reuse_address(&self, nb: bool) -> std::io::Result<()> {
+        self.set_reuse_address(nb)
+    }
+
+    fn set_ipv4_packetinfo(&self, nb: bool) -> std::io::Result<()> {
+        Ok(setsockopt(self.as_raw_fd(), Ipv4PacketInfo, &nb)?)
+    }
+
+    fn bind(&self, addr: &socket2::SockAddr) -> std::io::Result<()> {
+        self.bind(addr)
+    }
+
+    fn to_mio(self) -> mio::net::UdpSocket {
+        mio::net::UdpSocket::from_std(self.into())
     }
 }
 
-#[cfg(not(test))]
-use socket2::Socket;
+fn new_socket<SCK: Socket>(
+    port: u16,
+) -> Result<mio::net::UdpSocket, Box<dyn Error>> {
+    let socket = SCK::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?;
 
-#[cfg(test)]
-type Socket = MockSocket;
-
-fn new_socket(port: u16) -> Result<mio::net::UdpSocket, Box<dyn Error>> {
-    let socket =
-        Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?;
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
     let addr =
         std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port);
     socket.bind(&socket2::SockAddr::from(addr))?;
-    setsockopt(socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
-    let socket: std::net::UdpSocket = socket.into();
-    Ok(mio::net::UdpSocket::from_std(socket))
+    socket.set_ipv4_packetinfo(true)?;
+    Ok(socket.to_mio())
 }
 
 struct SyncCallback {
@@ -56,16 +83,33 @@ pub struct Service {
     search_socket: mio::net::UdpSocket,
 }
 
+// The type of new_socket
+type SocketFn = fn(u16) -> Result<mio::net::UdpSocket, Box<dyn Error>>;
+
+// The type of registry::register
+type RegisterFn = fn(
+    &mio::Registry,
+    &mut mio::net::UdpSocket,
+    mio::Token,
+) -> std::io::Result<()>;
+
 impl Service {
-    pub fn new(
+    fn new_inner<FN, ITER>(
         registry: &mio::Registry,
         tokens: (mio::Token, mio::Token),
-    ) -> Result<Self, Box<dyn Error>> {
-        let mut multicast_socket = new_socket(1900u16)?;
-        let mut search_socket = new_socket(0u16)?; // ephemeral port
+        socket: SocketFn,
+        register: RegisterFn,
+        get_interfaces: FN,
+    ) -> Result<Self, Box<dyn Error>>
+    where
+        ITER: Iterator<Item = cotton_netif::NetworkEvent>,
+        FN: Fn() -> std::io::Result<ITER>,
+    {
+        let mut multicast_socket = socket(1900u16)?;
+        let mut search_socket = socket(0u16)?; // ephemeral port
         let mut engine = Engine::<SyncCallback>::new();
 
-        for netif in cotton_netif::get_interfaces()? {
+        for netif in get_interfaces()? {
             engine.on_interface_event(
                 netif,
                 &multicast_socket,
@@ -73,22 +117,27 @@ impl Service {
             )?;
         }
 
-        registry.register(
-            &mut multicast_socket,
-            tokens.0,
-            mio::Interest::READABLE,
-        )?;
-        registry.register(
-            &mut search_socket,
-            tokens.1,
-            mio::Interest::READABLE,
-        )?;
+        register(registry, &mut multicast_socket, tokens.0)?;
+        register(registry, &mut search_socket, tokens.1)?;
 
         Ok(Self {
             engine,
             multicast_socket,
             search_socket,
         })
+    }
+
+    pub fn new(
+        registry: &mio::Registry,
+        tokens: (mio::Token, mio::Token),
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::new_inner(
+            registry,
+            tokens,
+            new_socket::<socket2::Socket>,
+            |r, s, t| r.register(s, t, mio::Interest::READABLE),
+            cotton_netif::get_interfaces,
+        )
     }
 
     pub fn subscribe<A>(
@@ -176,8 +225,6 @@ mod tests {
                 let real_socket = Arc::new(
                     std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
                 );
-                let fd = real_socket.as_raw_fd();
-
                 mock.expect_set_nonblocking()
                     .with(predicate::eq(true))
                     .return_once(|_| Ok(()));
@@ -191,14 +238,18 @@ mod tests {
                             && v4.port() == 9100
                     })
                     .return_once(|_| Ok(()));
-                mock.expect_as_raw_fd().return_once(move || fd);
-                mock.expect_into().return_once(move || {
-                    Arc::try_unwrap(real_socket).unwrap()
+                mock.expect_set_ipv4_packetinfo()
+                    .with(predicate::eq(true))
+                    .return_once(|_| Ok(()));
+                mock.expect_to_mio().return_once(move || {
+                    mio::net::UdpSocket::from_std(
+                        Arc::try_unwrap(real_socket).unwrap(),
+                    )
                 });
                 Ok(mock)
             });
 
-        let s = new_socket(9100);
+        let s = new_socket::<MockSocket>(9100);
         assert!(s.is_ok());
     }
 
@@ -210,7 +261,7 @@ mod tests {
             Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
         });
 
-        let s = new_socket(9100);
+        let s = new_socket::<MockSocket>(9100);
         assert!(s.is_err());
     }
 
@@ -228,7 +279,7 @@ mod tests {
             Ok(mock)
         });
 
-        let s = new_socket(9100);
+        let s = new_socket::<MockSocket>(9100);
         assert!(s.is_err());
     }
 
@@ -249,7 +300,7 @@ mod tests {
             Ok(mock)
         });
 
-        let s = new_socket(9100);
+        let s = new_socket::<MockSocket>(9100);
         assert!(s.is_err());
     }
 
@@ -273,7 +324,7 @@ mod tests {
             Ok(mock)
         });
 
-        let s = new_socket(9100);
+        let s = new_socket::<MockSocket>(9100);
         assert!(s.is_err());
     }
 
@@ -298,14 +349,65 @@ mod tests {
                         && v4.port() == 9100
                 })
                 .return_once(|_| Ok(()));
+            mock.expect_set_ipv4_packetinfo().return_once(|_| {
+                Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
+            });
 
-            // This assumes that Cargo's fd 0 is not an IP socket -- but that
-            // seems like a reasonable assumption.
-            mock.expect_as_raw_fd().return_once(|| 0);
             Ok(mock)
         });
 
-        let s = new_socket(9100);
+        let s = new_socket::<MockSocket>(9100);
         assert!(s.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn instantiate() {
+        const SSDP_TOKEN1: mio::Token = mio::Token(37);
+        const SSDP_TOKEN2: mio::Token = mio::Token(94);
+        let poll = mio::Poll::new().unwrap();
+
+        let _ =
+            Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
+    }
+
+    #[test]
+    #[serial]
+    #[cfg_attr(miri, ignore)]
+    fn service_passes_on_socket_failure() {
+        const SSDP_TOKEN1: mio::Token = mio::Token(37);
+        const SSDP_TOKEN2: mio::Token = mio::Token(94);
+        let poll = mio::Poll::new().unwrap();
+
+        let e = Service::new_inner(
+            poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2),
+            |_| Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))),
+            |r, s, t| r.register(s, t, mio::Interest::READABLE),
+            cotton_netif::get_interfaces,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[serial]
+    #[cfg_attr(miri, ignore)]
+    fn service_passes_on_second_socket_failure() {
+        const SSDP_TOKEN1: mio::Token = mio::Token(37);
+        const SSDP_TOKEN2: mio::Token = mio::Token(94);
+        let poll = mio::Poll::new().unwrap();
+
+        let e = Service::new_inner(
+            poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2),
+            |p| if p != 0 {
+                Ok(mio::net::UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap())
+                } else {
+                    Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "TEST")))
+                },
+            |r, s, t| r.register(s, t, mio::Interest::READABLE),
+            cotton_netif::get_interfaces,
+        );
+
+        assert!(e.is_err());
     }
 }
