@@ -396,7 +396,7 @@ mod tests {
                     None,
                 )
             },
-            |s, b| s.set_nonblocking(b),
+            socket2::Socket::set_nonblocking,
             bogus_setsockopt,
             bogus_bind,
             bogus_raw_setsockopt,
@@ -417,8 +417,8 @@ mod tests {
                     None,
                 )
             },
-            |s, b| s.set_nonblocking(b),
-            |s, b| s.set_reuse_address(b),
+            socket2::Socket::set_nonblocking,
+            socket2::Socket::set_reuse_address,
             bogus_bind,
             bogus_raw_setsockopt,
         );
@@ -438,8 +438,8 @@ mod tests {
                     None,
                 )
             },
-            |s, b| s.set_nonblocking(b),
-            |s, b| s.set_reuse_address(b),
+            socket2::Socket::set_nonblocking,
+            socket2::Socket::set_reuse_address,
             |s, a| s.bind(&socket2::SockAddr::from(a)),
             bogus_raw_setsockopt,
         );
@@ -495,13 +495,13 @@ mod tests {
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
             |p| {
-                if p != 0 {
+                if p == 0 {
+                    Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
+                } else {
                     Ok(mio::net::UdpSocket::bind(
                         "127.0.0.1:0".parse().unwrap(),
                     )
                     .unwrap())
-                } else {
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
                 }
             },
             bogus_register,

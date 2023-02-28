@@ -525,7 +525,7 @@ mod tests {
             F: FnMut(&Message) -> bool,
         {
             self.sends.lock().unwrap().iter().any(|(to, from, msg)| {
-                *to == wasto && *from == wasfrom && f(&msg)
+                *to == wasto && *from == wasfrom && f(msg)
             })
         }
 
@@ -1055,7 +1055,7 @@ mod tests {
                          Message::NotifyAlive(s)
                          if s.notification_type == "upnp:rootdevice"
                          && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")))
+                         && s.location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1087,7 +1087,7 @@ mod tests {
                          Message::NotifyAlive(s)
                          if s.notification_type == "upnp:rootdevice"
                          && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")))
+                         && s.location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1107,7 +1107,7 @@ mod tests {
                          Message::NotifyByeBye(s)
                          if s.notification_type == "upnp:rootdevice"
                          && s.unique_service_name == "uuid:137")
-        ))
+        ));
     }
 
     #[test]
@@ -1141,7 +1141,7 @@ mod tests {
                          Message::Response(s)
                          if s.search_target == "upnp:rootdevice"
                          && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")))
+                         && s.location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1161,7 +1161,7 @@ mod tests {
                          Message::Response(s)
                          if s.search_target == "upnp:rootdevice"
                          && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")))
+                         && s.location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]

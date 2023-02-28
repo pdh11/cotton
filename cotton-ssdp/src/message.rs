@@ -117,9 +117,8 @@ pub fn build_search(buf: &mut [u8], search_type: &str) -> usize {
 HOST: 239.255.255.250:1900\r
 MAN: \"ssdp:discover\"\r
 MX: 5\r
-ST: {}\r
-\r\n",
-        search_type
+ST: {search_type}\r
+\r\n"
     );
     cursor.position() as usize
 }
@@ -136,14 +135,11 @@ pub fn build_response(
         cursor,
         "HTTP/1.1 200 OK\r
 CACHE-CONTROL: max-age=1800\r
-ST: {}\r
-USN: {}\r
-LOCATION: {}\r
+ST: {search_target}\r
+USN: {unique_service_name}\r
+LOCATION: {location}\r
 SERVER: UPnP/1.0 {}/{}\r
 \r\n",
-        search_target,
-        unique_service_name,
-        location,
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
     );

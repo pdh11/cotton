@@ -113,10 +113,10 @@ fn send_from(
             Some(&dest),
         );
         if let Err(e) = r {
-            println!("sendmsg {:?}", e);
+            println!("sendmsg {e:?}");
             return Err(e.into());
         }
-        println!("sendmsg to {:?} OK", to);
+        // println!("sendmsg to {:?} OK", to);
         Ok(())
     } else {
         Err(std::io::Error::new(std::io::ErrorKind::Other, "IPv6 NYI"))
@@ -135,15 +135,10 @@ fn receive_using_recvmsg(
         Some(&mut cmsgspace),
         MsgFlags::empty(),
     )?;
-
-    let pi = if let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) =
-        r.cmsgs().next()
-    {
-        pi
-    } else {
+    let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) = r.cmsgs().next() else {
         println!("receive: no pktinfo");
         return Err(std::io::ErrorKind::InvalidData.into());
-    };
+     };
     let rxon = Ipv4Addr::from(u32::from_be(pi.ipi_spec_dst.s_addr));
     Ok((r.bytes, IpAddr::V4(rxon), r.address))
 }
@@ -170,11 +165,11 @@ fn receive_to_inner(
             if let Some(sin) = ss.as_sockaddr_in() {
                 SocketAddrV4::new(Ipv4Addr::from(sin.ip()), sin.port())
             } else {
-                println!("receive: wasfrom not ipv4 {:?}", ss);
+                //println!("receive: wasfrom not ipv4 {:?}", ss);
                 return Err(std::io::ErrorKind::InvalidData.into());
             }
         } else {
-            println!("receive: wasfrom no address");
+            //println!("receive: wasfrom no address");
             return Err(std::io::ErrorKind::InvalidData.into());
         }
     };
@@ -378,12 +373,10 @@ mod tests {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
@@ -406,12 +399,10 @@ mod tests {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
@@ -434,12 +425,10 @@ mod tests {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
@@ -462,12 +451,10 @@ mod tests {
         //let localhost = IpAddr::V4(Ipv4Addr::new(127,0,0,1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
@@ -524,14 +511,12 @@ mod tests {
         // cf. localhost_source_localhost_dest()
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
+        //let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         // But! we forget to do the setsockopt:
         //setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
         assert!(send_from(
             tx.as_raw_fd(),
             b"foo",
@@ -549,13 +534,11 @@ mod tests {
     fn recvmsg_ipv6_is_error() {
         let localhost = IpAddr::V6(Ipv6Addr::LOCALHOST);
         let tx = std::net::UdpSocket::bind("::1:0").unwrap();
-        let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
+        //let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("::0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         //setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
         tx.send_to(b"foo", SocketAddr::new(localhost, rx_port))
             .unwrap();
         let mut buf = [0u8; 1500];
@@ -619,12 +602,10 @@ mod tests {
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         tx.set_nonblocking(true).unwrap();
         let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
 
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -671,7 +652,6 @@ mod tests {
                     &IpAddr::V4("239.255.255.250".parse().unwrap()),
                     InterfaceIndex(1),
                 );
-                println!("r={:?}", r);
                 assert!(r.is_ok());
 
                 let r = rx.leave_multicast_group(
@@ -690,7 +670,6 @@ mod tests {
                     &IpAddr::V4("239.255.255.250".parse().unwrap()),
                     InterfaceIndex(1),
                 );
-                println!("r={:?}", r);
                 assert!(r.is_ok());
             });
     }
@@ -702,12 +681,10 @@ mod tests {
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         tx.set_nonblocking(true).unwrap();
         let tx_port = tx.local_addr().unwrap().port();
-        println!("TX on port {}", tx_port);
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
-        println!("RX on port {}", rx_port);
 
         let tx = mio::net::UdpSocket::from_std(tx);
         let rx = mio::net::UdpSocket::from_std(rx);
@@ -746,7 +723,6 @@ mod tests {
             &IpAddr::V4("239.255.255.250".parse().unwrap()),
             InterfaceIndex(1),
         );
-        println!("r={:?}", r);
         assert!(r.is_ok());
 
         let r = rx.leave_multicast_group(
@@ -765,7 +741,6 @@ mod tests {
             &IpAddr::V4("239.255.255.250".parse().unwrap()),
             InterfaceIndex(1),
         );
-        println!("r={:?}", r);
         assert!(r.is_ok());
     }
 }

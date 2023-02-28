@@ -1,7 +1,7 @@
 use crate::engine::{Callback, Engine};
 use crate::udp::TargetedReceive;
-use crate::*;
-use cotton_netif::*;
+use crate::{Advertisement, Notification};
+use cotton_netif::get_interfaces_async;
 use futures::Stream;
 use futures_util::StreamExt;
 use nix::sys::socket::setsockopt;
@@ -69,6 +69,18 @@ pub struct AsyncService {
 }
 
 impl AsyncService {
+    /// Create a new AsyncService, including its two UDP sockets
+    ///
+    /// # Errors
+    ///
+    /// Can return a `std::io::Error` if any of the underlying socket
+    /// calls fail.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if the internal mutex cannot be locked; that would indicate
+    /// a bug in cotton-ssdp.
+    ///
     pub async fn new() -> Result<Self, Box<dyn Error>> {
         let (mut s, inner) = tokio::try_join!(
             get_interfaces_async(),
@@ -90,7 +102,7 @@ impl AsyncService {
                             &inner.search_socket,
                         )
                             .unwrap_or_else(
-                                |err| println!("SSDP error {}", err))
+                                |err| println!("SSDP error {err}"));
                     },
                     _ = inner.multicast_socket.readable() => {
                         let mut buf = [0u8; 1500];
@@ -121,7 +133,7 @@ impl AsyncService {
                         inner.engine.lock().unwrap().next_wakeup()
                     ) => {
                         inner.engine.lock().unwrap().wakeup(
-                            &inner.search_socket)
+                            &inner.search_socket);
                     },
                 };
             }
@@ -130,6 +142,13 @@ impl AsyncService {
         Ok(AsyncService { inner: inner2 })
     }
 
+    /// Subscribe to SSDP notifications for a resource type.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if the internal mutex cannot be locked; that would indicate
+    /// a bug in cotton-ssdp.
+    ///
     pub fn subscribe<A>(
         &mut self,
         notification_type: A,
@@ -146,6 +165,16 @@ impl AsyncService {
         ReceiverStream::new(rcv)
     }
 
+
+    /// Announce a new resource
+    ///
+    /// And start responding to any searches matching it.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if the internal mutex cannot be locked; that would indicate
+    /// a bug in cotton-ssdp.
+    ///
     pub fn advertise<USN>(
         &mut self,
         unique_service_name: USN,
@@ -160,6 +189,15 @@ impl AsyncService {
         );
     }
 
+    /// Announce the disappearance of a resource
+    ///
+    /// And stop responding to searches.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if the internal mutex cannot be locked; that would indicate
+    /// a bug in cotton-ssdp.
+    ///
     pub fn deadvertise(&mut self, unique_service_name: &str) {
         self.inner
             .engine
