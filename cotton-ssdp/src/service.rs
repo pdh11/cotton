@@ -60,8 +60,8 @@ impl Callback for SyncCallback {
 
 /** High-level reactor-style SSDP service using mio.
 
-Use a `Service` to discover network services using SSDP, or to advertise
-network services which your program provides. Or both.
+Use a `Service` to discover network resources using SSDP, or to advertise
+network resources which your program provides. Or both.
 
 The implementation integrates with the [`mio`] crate, which provides a
 "reactor-style" I/O API suited for running several I/O operations in a
@@ -90,7 +90,7 @@ from which the example code below is adapted.
 # Example subscriber
 
 This code,
-starts a search for _all_ SSDP services on the local network, from all
+starts a search for _all_ SSDP resources on the local network, from all
 network interfaces, and stores unique ones in a `HashMap`. The map
 will be populated as the MIO polling loop runs.
 
@@ -101,9 +101,11 @@ will be populated as the MIO polling loop runs.
 # const SSDP_TOKEN1: mio::Token = mio::Token(0);
 # const SSDP_TOKEN2: mio::Token = mio::Token(1);
 # let mut poll = mio::Poll::new().unwrap();
+# #[cfg(not(miri))]
 # let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
 # #[cfg(not(miri))]
     let map = RefCell::new(HashMap::new());
+# #[cfg(not(miri))]
     ssdp.subscribe(
         "ssdp:all",
         Box::new(move |r| {
@@ -121,7 +123,7 @@ will be populated as the MIO polling loop runs.
 
 # Example advertiser
 
-This code sets up an advertisement for a (fictitious) service,
+This code sets up an advertisement for a (fictitious) resource,
 ostensibly available over HTTP on port 3333. The actual advertisements
 will be sent (and any incoming searches replied to) as the MIO polling
 loop runs.
@@ -136,9 +138,10 @@ this simpler example is not in itself compliant with that document.)
 # const SSDP_TOKEN1: mio::Token = mio::Token(0);
 # const SSDP_TOKEN2: mio::Token = mio::Token(1);
 # let mut poll = mio::Poll::new().unwrap();
-# let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
 # #[cfg(not(miri))]
+# let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
     let uuid = uuid::Uuid::new_v4();
+# #[cfg(not(miri))]
     ssdp.advertise(
         uuid.to_string(),
         cotton_ssdp::Advertisement {
@@ -172,6 +175,7 @@ this:
 # const SSDP_TOKEN2: mio::Token = mio::Token(1);
 # let mut poll = mio::Poll::new().unwrap();
 # let mut events = mio::Events::with_capacity(128);
+# #[cfg(not(miri))]
 # let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
 # #[cfg(not(miri))]
     loop {
