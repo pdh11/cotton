@@ -69,7 +69,7 @@ pub struct AsyncService {
 }
 
 impl AsyncService {
-    /// Create a new AsyncService, including its two UDP sockets
+    /// Create a new `AsyncService`, including its two UDP sockets
     ///
     /// # Errors
     ///
@@ -164,7 +164,6 @@ impl AsyncService {
         );
         ReceiverStream::new(rcv)
     }
-
 
     /// Announce a new resource
     ///

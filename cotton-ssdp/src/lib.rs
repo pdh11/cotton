@@ -97,8 +97,8 @@ mod service;
 /// Traits used to abstract over various UDP socket implementations
 pub mod udp;
 
-pub use service::Service;
 pub use async_service::AsyncService;
+pub use service::Service;
 
 #[cfg(test)]
 mod tests {

@@ -138,7 +138,7 @@ CACHE-CONTROL: max-age=1800\r
 ST: {search_target}\r
 USN: {unique_service_name}\r
 LOCATION: {location}\r
-SERVER: UPnP/1.0 {}/{}\r
+SERVER: none/0 UPnP/1.0 {}/{}\r
 \r\n",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
@@ -163,7 +163,7 @@ LOCATION: {}\r
 NT: {}\r
 NTS: ssdp:alive\r
 USN: {}\r
-SERVER: UPnP/1.0 {}/{}\r
+SERVER: none/0 UPnP/1.0 {}/{}\r
 \r\n",
         location,
         notification_type,
@@ -189,7 +189,7 @@ CACHE-CONTROL: max-age=1800\r
 NT: {}\r
 NTS: ssdp:byebye\r
 USN: {}\r
-SERVER: UPnP/1.0 {}/{}\r
+SERVER: none/0 UPnP/1.0 {}/{}\r
 \r\n",
         notification_type,
         unique_service_name,
@@ -495,7 +495,7 @@ CACHE-CONTROL: max-age=1800\r
 ST: upnp::rootdevice\r
 USN: uuid:37\r
 LOCATION: http://me\r
-SERVER: UPnP/1.0 {}/{}\r
+SERVER: none/0 UPnP/1.0 {}/{}\r
 \r\n",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
@@ -518,7 +518,7 @@ LOCATION: http://me\r
 NT: upnp::rootdevice\r
 NTS: ssdp:alive\r
 USN: uuid:37\r
-SERVER: UPnP/1.0 {}/{}\r
+SERVER: none/0 UPnP/1.0 {}/{}\r
 \r\n",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),

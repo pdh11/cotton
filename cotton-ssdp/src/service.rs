@@ -89,10 +89,9 @@ from which the example code below is adapted.
 
 # Example subscriber
 
-This code,
-starts a search for _all_ SSDP resources on the local network, from all
-network interfaces, and stores unique ones in a `HashMap`. The map
-will be populated as the MIO polling loop runs.
+This code starts a search for _all_ SSDP resources on the local
+network, from all network interfaces, and stores unique ones in a
+`HashMap`. The map will be populated as the MIO polling loop runs.
 
 ```rust
 # use cotton_ssdp::*;
@@ -246,6 +245,15 @@ impl Service {
         })
     }
 
+    /// Create a new `Service`, including its two UDP sockets
+    ///
+    /// And registers the sockets with the [`mio::Registry`]
+    ///
+    /// # Errors
+    ///
+    /// Can return a `std::io::Error` if any of the underlying socket
+    /// calls fail.
+    ///
     pub fn new(
         registry: &mio::Registry,
         tokens: (mio::Token, mio::Token),

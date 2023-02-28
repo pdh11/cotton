@@ -35,7 +35,7 @@ fn target_match(search: &str, candidate: &str) -> bool {
             if sbase == cbase {
                 if let Ok(sversion) = sversion.parse::<usize>() {
                     if let Ok(cversion) = cversion.parse::<usize>() {
-                        return cversion <= sversion;
+                        return cversion >= sversion;
                     }
                 }
             }
@@ -203,6 +203,12 @@ impl<CB: Callback> Engine<CB> {
                             let mut url = value.location.clone();
                             let _ = url.set_ip_host(wasto);
 
+                            let response_type =
+                                if s.search_target == "ssdp:all" {
+                                    &value.notification_type
+                                } else {
+                                    &s.search_target
+                                };
                             let _ = socket.send_with(
                                 MAX_PACKET_SIZE,
                                 &wasfrom,
@@ -210,7 +216,7 @@ impl<CB: Callback> Engine<CB> {
                                 |b| {
                                     message::build_response(
                                         b,
-                                        &value.notification_type,
+                                        response_type,
                                         key,
                                         url.as_str(),
                                     )
@@ -476,14 +482,14 @@ mod tests {
 
     #[test]
     fn target_match_downlevel() {
-        // If we search for CD:2 we should pick up CD:1's, but not vice versa
+        // If we search for CD:1 we should pick up CD:2's, but not vice versa
         assert!(target_match(
-            "upnp::ContentDirectory:2",
-            "upnp::ContentDirectory:1"
-        ));
-        assert!(!target_match(
             "upnp::ContentDirectory:1",
             "upnp::ContentDirectory:2"
+        ));
+        assert!(!target_match(
+            "upnp::ContentDirectory:2",
+            "upnp::ContentDirectory:1"
         ));
 
         // Various noncanonical forms
@@ -1140,6 +1146,36 @@ mod tests {
             |m| matches!(m,
                          Message::Response(s)
                          if s.search_target == "upnp:rootdevice"
+                         && s.unique_service_name == "uuid:137"
+                         && s.location == "http://192.168.100.1/description.xml")));
+    }
+
+    #[test]
+    fn response_sent_to_downlevel_search() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.advertise(
+                "uuid:137".to_string(),
+                Advertisement {
+                    notification_type: "upnp::Directory:3".to_string(),
+                    location: url::Url::parse(
+                        "http://127.0.0.1/description.xml",
+                    )
+                    .unwrap(),
+                },
+                &f.s,
+            );
+        });
+
+        let n = FakeSocket::build_search("upnp::Directory:2");
+        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+
+        assert!(f.s.contains_send(
+            remote_src(), LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Response(s)
+                         if s.search_target == "upnp::Directory:2"
                          && s.unique_service_name == "uuid:137"
                          && s.location == "http://192.168.100.1/description.xml")));
     }
