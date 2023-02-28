@@ -91,11 +91,13 @@ impl Service {
         let mut engine = Engine::<SyncCallback>::new();
 
         for netif in get_interfaces()? {
-            engine.on_interface_event(
+            // Ignore errors -- some interfaces are returned on which
+            // join_multicast failes (lxcbr0)
+            _ = engine.on_interface_event(
                 netif,
                 &multicast_socket,
                 &search_socket,
-            )?;
+            );
         }
 
         register(registry, &mut multicast_socket, tokens.0)?;
