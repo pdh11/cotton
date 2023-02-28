@@ -169,6 +169,7 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
+    /// Notify the `Engine` that data is ready on one of its sockets
     pub fn on_data<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         buf: &[u8],
