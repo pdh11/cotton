@@ -225,13 +225,14 @@ impl<CB: Callback> Engine<CB> {
                         }
                     }
                 }
-                Message::Response(r) => self.call_subscribers(&Notification {
-                    notification_type: r.search_target,
-                    unique_service_name: r.unique_service_name,
-                    notification_subtype: NotificationSubtype::AliveLocation(
-                        r.location,
-                    ),
-                }),
+                Message::Response(r) => {
+                    self.call_subscribers(&Notification {
+                        notification_type: r.search_target,
+                        unique_service_name: r.unique_service_name,
+                        notification_subtype:
+                            NotificationSubtype::AliveLocation(r.location),
+                    });
+                }
             };
         }
     }
