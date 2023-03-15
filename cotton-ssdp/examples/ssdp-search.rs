@@ -28,13 +28,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut stream = s.subscribe("ssdp:all");
     while let Some(r) = stream.next().await {
         println!("GOT {:?}", r);
-        if let NotificationSubtype::AliveLocation(loc) =
-            &r.notification_subtype
+        if let Notification::Alive {
+            ref notification_type,
+            ref unique_service_name,
+            ref location,
+        } = r
         {
-            if !map.contains_key(&r.unique_service_name) {
-                println!("+ {}", r.notification_type);
-                println!("  {} at {}", r.unique_service_name, loc);
-                map.insert(r.unique_service_name.clone(), r);
+            if !map.contains_key(unique_service_name) {
+                println!("+ {}", notification_type);
+                println!("  {} at {}", unique_service_name, location);
+                map.insert(unique_service_name.clone(), r);
             }
         }
     }

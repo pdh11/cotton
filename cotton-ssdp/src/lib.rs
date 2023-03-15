@@ -46,28 +46,18 @@
 //#![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
-/// SSDP Notification Subtype
+/// Incoming SSDP notification, obtained from [`Service::subscribe`]
 ///
-/// SSDP [`Notification`] messages are sent on both arrival and
+/// Sent in response to searches, and when new resources are made
+/// available, and periodically otherwise just in case.
+///
+/// SSDP notification messages are sent both on arrival and on
 /// departure of network resources. Arrivals are distinguished from
 /// departures by the notification subtype: either "Alive" or
 /// "Bye-bye".
 ///
 /// Only notifications of alive (arriving) resources have a Location
 /// field, so this is expressed in the enum.
-#[derive(Debug, Clone)]
-pub enum NotificationSubtype {
-    /// The resource in question is now active (at this location/URL)
-    AliveLocation(String),
-
-    /// The resource in question is (becoming) inactive
-    ByeBye,
-}
-
-/// Incoming SSDP notification, obtained from [`Service::subscribe`]
-///
-/// Sent in response to searches, and when new resources are made
-/// available, and periodically otherwise just in case.
 ///
 /// Neither [`Service`] nor [`AsyncService`] de-duplicates these
 /// notifications -- in other words, a caller of
@@ -75,10 +65,19 @@ pub enum NotificationSubtype {
 /// each. The `unique_service_name` field can be used to distinguish
 /// genuinely new resources (e.g., as the key in a `HashMap`).
 #[derive(Debug, Clone)]
-pub struct Notification {
-    pub notification_type: String,
-    pub unique_service_name: String,
-    pub notification_subtype: NotificationSubtype,
+pub enum Notification {
+    /// The resource in question is now active (at this location/URL)
+    Alive {
+        notification_type: String,
+        unique_service_name: String,
+        location: String,
+    },
+
+    /// The resource in question is (becoming) inactive
+    ByeBye {
+        notification_type: String,
+        unique_service_name: String,
+    },
 }
 
 /// Outgoing SSDP announcement, passed to [`Service::advertise`]
@@ -108,12 +107,10 @@ mod tests {
     fn can_debug() {
         println!(
             "{:?}",
-            Notification {
+            Notification::Alive {
                 notification_type: String::new(),
                 unique_service_name: String::new(),
-                notification_subtype: NotificationSubtype::AliveLocation(
-                    String::new()
-                ),
+                location: String::new(),
             }
         );
     }
@@ -121,12 +118,10 @@ mod tests {
     #[test]
     #[allow(clippy::redundant_clone)]
     fn can_clone() {
-        let _ = Notification {
+        let _ = Notification::Alive {
             notification_type: String::new(),
             unique_service_name: String::new(),
-            notification_subtype: NotificationSubtype::AliveLocation(
-                String::new(),
-            ),
+            location: String::new(),
         }
         .clone();
     }

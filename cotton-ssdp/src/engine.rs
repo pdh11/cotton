@@ -1,7 +1,7 @@
 use crate::message;
 use crate::message::Message;
 use crate::udp;
-use crate::{Advertisement, Notification, NotificationSubtype};
+use crate::{Advertisement, Notification};
 use cotton_netif::{InterfaceIndex, NetworkEvent};
 use rand::Rng;
 use slotmap::SlotMap;
@@ -160,11 +160,17 @@ impl<CB: Callback> Engine<CB> {
 
     fn call_subscribers(&self, notification: &Notification) {
         for s in self.active_searches.values() {
-            if target_match(
-                &s.notification_type,
-                &notification.notification_type,
-            ) {
-                s.callback.on_notification(notification);
+            match notification {
+                Notification::ByeBye {
+                    notification_type, ..
+                }
+                | Notification::Alive {
+                    notification_type, ..
+                } => {
+                    if target_match(&s.notification_type, notification_type) {
+                        s.callback.on_notification(notification);
+                    }
+                }
             }
         }
     }
@@ -179,36 +185,41 @@ impl<CB: Callback> Engine<CB> {
     ) {
         if let Ok(m) = message::parse(buf) {
             match m {
-                Message::NotifyAlive(a) => {
-                    self.call_subscribers(&Notification {
-                        notification_type: a.notification_type,
-                        unique_service_name: a.unique_service_name,
-                        notification_subtype:
-                            NotificationSubtype::AliveLocation(a.location),
+                Message::NotifyAlive {
+                    notification_type,
+                    unique_service_name,
+                    location,
+                } => {
+                    self.call_subscribers(&Notification::Alive {
+                        notification_type,
+                        unique_service_name,
+                        location,
                     });
                 }
-                Message::NotifyByeBye(a) => {
-                    self.call_subscribers(&Notification {
-                        notification_type: a.notification_type,
-                        unique_service_name: a.unique_service_name,
-                        notification_subtype: NotificationSubtype::ByeBye,
+                Message::NotifyByeBye {
+                    notification_type,
+                    unique_service_name,
+                } => {
+                    self.call_subscribers(&Notification::ByeBye {
+                        notification_type,
+                        unique_service_name,
                     });
                 }
-                Message::Search(s) => {
+                Message::Search { search_target, .. } => {
                     for (key, value) in &self.advertisements {
                         if target_match(
-                            &s.search_target,
+                            &search_target,
                             &value.notification_type,
                         ) {
                             let mut url = value.location.clone();
                             let _ = url.set_ip_host(wasto);
 
-                            let response_type =
-                                if s.search_target == "ssdp:all" {
-                                    &value.notification_type
-                                } else {
-                                    &s.search_target
-                                };
+                            let response_type = if search_target == "ssdp:all"
+                            {
+                                &value.notification_type
+                            } else {
+                                &search_target
+                            };
                             let _ = socket.send_with(
                                 MAX_PACKET_SIZE,
                                 &wasfrom,
@@ -225,12 +236,15 @@ impl<CB: Callback> Engine<CB> {
                         }
                     }
                 }
-                Message::Response(r) => {
-                    self.call_subscribers(&Notification {
-                        notification_type: r.search_target,
-                        unique_service_name: r.unique_service_name,
-                        notification_subtype:
-                            NotificationSubtype::AliveLocation(r.location),
+                Message::Response {
+                    search_target,
+                    unique_service_name,
+                    location,
+                } => {
+                    self.call_subscribers(&Notification::Alive {
+                        notification_type: search_target,
+                        unique_service_name,
+                        location,
                     });
                 }
             };
@@ -536,6 +550,14 @@ mod tests {
             })
         }
 
+        fn contains_search(&self, search: &str) -> bool {
+            self.contains_send(multicast_dest(), LOCAL_SRC, |m| {
+                matches!(m,
+                             Message::Search { search_target, .. }
+                             if search_target == search)
+            })
+        }
+
         fn no_sends(&self) -> bool {
             self.sends.lock().unwrap().is_empty()
         }
@@ -675,19 +697,22 @@ mod tests {
     }
 
     impl FakeCallback {
-        fn contains_notify(&self, notification_type: &str) -> bool {
+        fn contains_notify(&self, desired_type: &str) -> bool {
             self.calls.lock().unwrap().iter().any(|n| {
                 matches!(
-                    n.notification_subtype,
-                    NotificationSubtype::AliveLocation(_)
-                ) && n.notification_type == notification_type
+                n,
+                Notification::Alive { notification_type, .. }
+                if notification_type == desired_type
+                    )
             })
         }
 
-        fn contains_byebye(&self, notification_type: &str) -> bool {
+        fn contains_byebye(&self, desired_type: &str) -> bool {
             self.calls.lock().unwrap().iter().any(|n| {
-                matches!(n.notification_subtype, NotificationSubtype::ByeBye)
-                    && n.notification_type == notification_type
+                matches!(n,
+                Notification::ByeBye { notification_type, .. }
+                if notification_type == desired_type
+                )
             })
         }
 
@@ -814,13 +839,7 @@ mod tests {
         f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 1);
-        assert!(f.s.contains_send(
-            multicast_dest(),
-            LOCAL_SRC,
-            |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
-        ));
+        assert!(f.s.contains_search("ssdp:all"));
     }
 
     #[test]
@@ -837,8 +856,8 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
+                         Message::Search { search_target, .. }
+                         if search_target == "ssdp:all")
         ));
     }
 
@@ -885,15 +904,15 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
+                         Message::Search { search_target, .. }
+                         if search_target == "ssdp:all")
         ));
         assert!(f.s.contains_send(
             multicast_dest(),
             LOCAL_SRC_2,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
+                         Message::Search { search_target, .. }
+                         if search_target == "ssdp:all")
         ));
     }
 
@@ -915,8 +934,8 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
+                         Message::Search { search_target, .. }
+                         if search_target == "ssdp:all")
         ));
     }
 
@@ -936,8 +955,8 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
+                         Message::Search { search_target, .. }
+                         if search_target == "ssdp:all")
         ));
     }
 
@@ -956,8 +975,8 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
+                         Message::Search { search_target, .. }
+                         if search_target == "ssdp:all")
         ));
     }
 
@@ -976,15 +995,15 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "upnp::Renderer:3")
+                         Message::Search { search_target, .. }
+                         if search_target == "upnp::Renderer:3")
         ));
         assert!(f.s.contains_send(
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "upnp::Content:2")
+                         Message::Search { search_target, .. }
+                         if search_target == "upnp::Content:2")
         ));
     }
 
@@ -1059,10 +1078,10 @@ mod tests {
         assert!(f.s.contains_send(
             multicast_dest(), LOCAL_SRC,
             |m| matches!(m,
-                         Message::NotifyAlive(s)
-                         if s.notification_type == "upnp:rootdevice"
-                         && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")));
+                         Message::NotifyAlive { notification_type, unique_service_name, location }
+                         if notification_type == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1091,10 +1110,10 @@ mod tests {
         assert!(f.s.contains_send(
             multicast_dest(), LOCAL_SRC,
             |m| matches!(m,
-                         Message::NotifyAlive(s)
-                         if s.notification_type == "upnp:rootdevice"
-                         && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")));
+                         Message::NotifyAlive { notification_type, unique_service_name, location }
+                         if notification_type == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1111,9 +1130,9 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::NotifyByeBye(s)
-                         if s.notification_type == "upnp:rootdevice"
-                         && s.unique_service_name == "uuid:137")
+                         Message::NotifyByeBye { notification_type, unique_service_name }
+                         if notification_type == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137")
         ));
     }
 
@@ -1145,10 +1164,11 @@ mod tests {
         assert!(f.s.contains_send(
             remote_src(), LOCAL_SRC,
             |m| matches!(m,
-                         Message::Response(s)
-                         if s.search_target == "upnp:rootdevice"
-                         && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")));
+                         Message::Response { search_target, unique_service_name,
+                                             location }
+                         if search_target == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1175,10 +1195,11 @@ mod tests {
         assert!(f.s.contains_send(
             remote_src(), LOCAL_SRC,
             |m| matches!(m,
-                         Message::Response(s)
-                         if s.search_target == "upnp::Directory:2"
-                         && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")));
+                         Message::Response { search_target, unique_service_name,
+                                             location }
+                         if search_target == "upnp::Directory:2"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1195,10 +1216,11 @@ mod tests {
         assert!(f.s.contains_send(
             remote_src(), LOCAL_SRC,
             |m| matches!(m,
-                         Message::Response(s)
-                         if s.search_target == "upnp:rootdevice"
-                         && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")));
+                         Message::Response { search_target, unique_service_name,
+                                             location }
+                         if search_target == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
     }
 
     #[test]
@@ -1343,17 +1365,17 @@ mod tests {
         assert!(f.s.contains_send(
             multicast_dest(), LOCAL_SRC,
             |m| matches!(m,
-                         Message::NotifyAlive(s)
-                         if s.notification_type == "upnp:rootdevice"
-                         && s.unique_service_name == "uuid:137"
-                         && s.location == "http://192.168.100.1/description.xml")));
+                         Message::NotifyAlive { notification_type, unique_service_name, location }
+                         if notification_type == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
         assert!(f.s.contains_send(
             multicast_dest(), LOCAL_SRC,
             |m| matches!(m,
-                         Message::NotifyAlive(s)
-                         if s.notification_type == "upnp:rootdevice"
-                         && s.unique_service_name == "uuid:XYZ"
-                         && s.location == "http://192.168.100.1/nested/description.xml")));
+                         Message::NotifyAlive { notification_type, unique_service_name, location }
+                         if notification_type == "upnp:rootdevice"
+                         && unique_service_name == "uuid:XYZ"
+                         && location == "http://192.168.100.1/nested/description.xml")));
     }
 
     #[test]
@@ -1372,15 +1394,15 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "upnp::Renderer:3")
+                         Message::Search { search_target, .. }
+                         if search_target == "upnp::Renderer:3")
         ));
         assert!(f.s.contains_send(
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "upnp::Content:2")
+                         Message::Search { search_target, .. }
+                         if search_target == "upnp::Content:2")
         ));
     }
 
@@ -1400,8 +1422,8 @@ mod tests {
             multicast_dest(),
             LOCAL_SRC,
             |m| matches!(m,
-                         Message::Search(s)
-                         if s.search_target == "ssdp:all")
+                         Message::Search { search_target, .. }
+                         if search_target == "ssdp:all")
         ));
     }
 

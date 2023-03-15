@@ -109,11 +109,13 @@ network, from all network interfaces, and stores unique ones in a
         "ssdp:all",
         Box::new(move |r| {
             let mut m = map.borrow_mut();
-            if let NotificationSubtype::AliveLocation(_) =
-                &r.notification_subtype
-            {
-                if !m.contains_key(&r.unique_service_name) {
-                    m.insert(r.unique_service_name.clone(), r.clone());
+            if let Notification::Alive {
+                ref notification_type,
+                ref unique_service_name,
+                ref location,
+            } = r {
+                if !m.contains_key(unique_service_name) {
+                    m.insert(unique_service_name.clone(), r.clone());
                 }
             }
         }),
@@ -540,7 +542,6 @@ mod tests {
         assert!(e.is_err());
     }
 
-
     #[test]
     #[cfg_attr(miri, ignore)]
     fn service_ok_with_no_netifs() {
@@ -553,7 +554,7 @@ mod tests {
             (SSDP_TOKEN1, SSDP_TOKEN2),
             new_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
-            || Ok(std::iter::empty::<cotton_netif::NetworkEvent>())
+            || Ok(std::iter::empty::<cotton_netif::NetworkEvent>()),
         );
 
         assert!(e.is_ok());
@@ -635,8 +636,11 @@ mod tests {
 
         let mut events = mio::Events::with_capacity(1024);
         while !seen.borrow().iter().any(|r| {
-            r.notification_type == "upnp::Directory:3"
-                && r.unique_service_name == "uuid:999"
+            matches!(r,
+                     Notification::Alive { notification_type, unique_service_name, .. } if
+                     notification_type == "upnp::Directory:3"
+                     && unique_service_name == "uuid:999"
+            )
         }) {
             poll.poll(&mut events, Some(std::time::Duration::from_secs(5)))
                 .unwrap();
@@ -711,8 +715,11 @@ mod tests {
         );
 
         while !seen.borrow().iter().any(|r| {
-            r.notification_type == "upnp::Directory:3"
-                && r.unique_service_name == "uuid:999"
+            matches!(r,
+            Notification::Alive { notification_type, unique_service_name, .. }
+            if notification_type == "upnp::Directory:3"
+            && unique_service_name == "uuid:999"
+            )
         }) {
             poll.poll(&mut events, Some(std::time::Duration::from_secs(5)))
                 .unwrap();

@@ -2,37 +2,25 @@ use std::collections::HashMap;
 use std::io::{Cursor, Write};
 
 #[derive(Debug)]
-pub struct Alive {
-    pub notification_type: String,
-    pub unique_service_name: String,
-    pub location: String,
-}
-
-#[derive(Debug)]
-pub struct ByeBye {
-    pub notification_type: String,
-    pub unique_service_name: String,
-}
-
-#[derive(Debug)]
-pub struct Search {
-    pub search_target: String,
-    pub maximum_wait_sec: u8,
-}
-
-#[derive(Debug)]
-pub struct Response {
-    pub search_target: String,
-    pub unique_service_name: String,
-    pub location: String,
-}
-
-#[derive(Debug)]
 pub enum Message {
-    NotifyAlive(Alive),
-    NotifyByeBye(ByeBye),
-    Search(Search),
-    Response(Response),
+    NotifyAlive {
+        notification_type: String,
+        unique_service_name: String,
+        location: String,
+    },
+    NotifyByeBye {
+        notification_type: String,
+        unique_service_name: String,
+    },
+    Search {
+        search_target: String,
+        maximum_wait_sec: u8,
+    },
+    Response {
+        search_target: String,
+        unique_service_name: String,
+        location: String,
+    },
 }
 
 pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
@@ -61,21 +49,21 @@ pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
                             map.get("USN"),
                             map.get("LOCATION"),
                         ) {
-                            return Ok(Message::NotifyAlive(Alive {
+                            return Ok(Message::NotifyAlive {
                                 notification_type: String::from(*nt),
                                 unique_service_name: String::from(*usn),
                                 location: String::from(*loc),
-                            }));
+                            });
                         }
                     }
                     "ssdp:byebye" => {
                         if let (Some(nt), Some(usn)) =
                             (map.get("NT"), map.get("USN"))
                         {
-                            return Ok(Message::NotifyByeBye(ByeBye {
+                            return Ok(Message::NotifyByeBye {
                                 notification_type: String::from(*nt),
                                 unique_service_name: String::from(*usn),
-                            }));
+                            });
                         }
                     }
                     _ => {}
@@ -86,20 +74,20 @@ pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
             if let (Some(st), Some(usn), Some(loc)) =
                 (map.get("ST"), map.get("USN"), map.get("LOCATION"))
             {
-                return Ok(Message::Response(Response {
+                return Ok(Message::Response {
                     search_target: String::from(*st),
                     unique_service_name: String::from(*usn),
                     location: String::from(*loc),
-                }));
+                });
             }
         }
         "M-SEARCH * HTTP/1.1" => {
             if let (Some(st), Some(mx)) = (map.get("ST"), map.get("MX")) {
                 if let Ok(mxn) = mx.parse::<u8>() {
-                    return Ok(Message::Search(Search {
+                    return Ok(Message::Search {
                         search_target: String::from(*st),
                         maximum_wait_sec: mxn,
-                    }));
+                    });
                 }
             }
         }
@@ -207,33 +195,33 @@ mod tests {
     fn can_debug() {
         println!(
             "{:?}",
-            Message::NotifyAlive(Alive {
+            Message::NotifyAlive {
                 notification_type: String::new(),
                 unique_service_name: String::new(),
                 location: String::new(),
-            })
+            }
         );
         println!(
             "{:?}",
-            Message::NotifyByeBye(ByeBye {
+            Message::NotifyByeBye {
                 notification_type: String::new(),
                 unique_service_name: String::new(),
-            })
+            }
         );
         println!(
             "{:?}",
-            Message::Search(Search {
+            Message::Search {
                 search_target: String::new(),
                 maximum_wait_sec: 3,
-            })
+            }
         );
         println!(
             "{:?}",
-            Message::Response(Response {
+            Message::Response {
                 search_target: String::new(),
                 unique_service_name: String::new(),
                 location: String::new(),
-            })
+            }
         );
     }
 
@@ -274,10 +262,10 @@ Location: http://foo\r\n\
         );
         assert!(r.is_ok());
         assert!(matches!(r.unwrap(),
-                         Message::NotifyAlive(a)
-                         if a.notification_type == "fnord"
-                         && a.unique_service_name == "prod37"
-                         && a.location == "http://foo"));
+                         Message::NotifyAlive {notification_type, unique_service_name, location}
+                         if notification_type == "fnord"
+                         && unique_service_name == "prod37"
+                         && location == "http://foo"));
     }
 
     #[test]
@@ -355,9 +343,9 @@ USN: prod37\r\n\
         );
         assert!(r.is_ok());
         assert!(matches!(r.unwrap(),
-                         Message::NotifyByeBye(a)
-                         if a.notification_type == "fnord"
-                         && a.unique_service_name == "prod37"));
+                         Message::NotifyByeBye { notification_type, unique_service_name }
+                         if notification_type == "fnord"
+                         && unique_service_name == "prod37"));
     }
 
     #[test]
@@ -394,10 +382,10 @@ Location: http://foo\r\n\
         );
         assert!(r.is_ok());
         assert!(matches!(r.unwrap(),
-                         Message::Response(a)
-                         if a.search_target == "fnord"
-                         && a.unique_service_name == "prod37"
-                         && a.location == "http://foo"));
+                         Message::Response { search_target, unique_service_name, location }
+                         if search_target == "fnord"
+                         && unique_service_name == "prod37"
+                         && location == "http://foo"));
     }
 
     #[test]
@@ -440,9 +428,9 @@ Location\r\n\
         let r = parse(b"M-SEARCH * HTTP/1.1\r\nST: foo\r\nMX: 5\r\n\r\n");
         assert!(r.is_ok());
         assert!(matches!(r.unwrap(),
-                         Message::Search(s)
-                         if s.search_target == "foo"
-                         && s.maximum_wait_sec == 5));
+                         Message::Search { search_target, maximum_wait_sec }
+                         if search_target == "foo"
+                         && maximum_wait_sec == 5));
     }
 
     #[test]
@@ -533,9 +521,9 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
         let n = build_search(&mut buf, "upnp::rootdevice");
         let msg = parse(&buf[0..n]).unwrap();
         assert!(matches!(msg,
-                     Message::Search(s)
-                     if s.search_target == "upnp::rootdevice"
-                         && s.maximum_wait_sec == 5));
+                         Message::Search { search_target, maximum_wait_sec }
+                         if search_target == "upnp::rootdevice"
+                         && maximum_wait_sec == 5));
     }
 
     #[test]
@@ -549,10 +537,10 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
         );
         let msg = parse(&buf[0..n]).unwrap();
         assert!(matches!(msg,
-                     Message::Response(s)
-                     if s.search_target == "upnp::rootdevice"
-                         && s.unique_service_name == "uuid:xyz"
-                         && s.location == "https://you"));
+                         Message::Response { search_target, unique_service_name, location }
+                         if search_target == "upnp::rootdevice"
+                         && unique_service_name == "uuid:xyz"
+                         && location == "https://you"));
     }
 
     #[test]
@@ -566,10 +554,10 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
         );
         let msg = parse(&buf[0..n]).unwrap();
         assert!(matches!(msg,
-                     Message::NotifyAlive(s)
-                     if s.notification_type == "upnp::rootdevice"
-                         && s.unique_service_name == "uuid:xyz"
-                         && s.location == "https://you"));
+                         Message::NotifyAlive { notification_type, unique_service_name, location }
+                         if notification_type == "upnp::rootdevice"
+                         && unique_service_name == "uuid:xyz"
+                         && location == "https://you"));
     }
 
     #[test]
@@ -578,8 +566,8 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
         let n = build_byebye(&mut buf, "upnp::rootdevice", "uuid:xyz");
         let msg = parse(&buf[0..n]).unwrap();
         assert!(matches!(msg,
-                     Message::NotifyByeBye(s)
-                     if s.notification_type == "upnp::rootdevice"
-                         && s.unique_service_name == "uuid:xyz"));
+                         Message::NotifyByeBye { notification_type, unique_service_name }
+                         if notification_type == "upnp::rootdevice"
+                         && unique_service_name == "uuid:xyz"));
     }
 }
