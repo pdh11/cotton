@@ -1,9 +1,14 @@
 use super::{Flags, InterfaceIndex, NetworkEvent};
 use nix::ifaddrs;
 use nix::net::if_::InterfaceFlags;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
+
+/// The type of nix::ifaddrs::getifaddrs
+type GetIfAddrsFn = fn() -> nix::Result<ifaddrs::InterfaceAddressIterator>;
+
+/// The type of nix::net::if_::if_nametoindex
+type NameToIndexFn = fn(&str) -> nix::Result<libc::c_uint>;
 
 /** Obtain the current list of network interfaces
 
@@ -73,13 +78,17 @@ getifaddrs(3).
  */
 pub fn get_interfaces(
 ) -> Result<impl Iterator<Item = NetworkEvent>, std::io::Error> {
-    get_interfaces_inner(ifaddrs::getifaddrs)
+    get_interfaces_inner(
+        nix::ifaddrs::getifaddrs,
+        nix::net::if_::if_nametoindex::<str>,
+    )
 }
 
 fn get_interfaces_inner(
-    getifaddrs: fn() -> nix::Result<ifaddrs::InterfaceAddressIterator>,
+    getifaddrs: GetIfAddrsFn,
+    nametoindex: NameToIndexFn,
 ) -> Result<impl Iterator<Item = NetworkEvent>, std::io::Error> {
-    Ok(InterfaceMap::new(getifaddrs()?))
+    Ok(InterfaceMap::new(getifaddrs()?, nametoindex))
 }
 
 /** Manage the mapping between interface names and indexes
@@ -90,8 +99,8 @@ where
 {
     iter: ITER,
     pending: Option<NetworkEvent>,
-    index_map: HashMap<String, u32>,
-    next_index: u32,
+    indexes: HashSet<u32>,
+    nametoindex: NameToIndexFn,
 }
 
 impl<ITER> Iterator for InterfaceMap<ITER>
@@ -124,12 +133,12 @@ impl<ITER> InterfaceMap<ITER>
 where
     ITER: Iterator<Item = ifaddrs::InterfaceAddress>,
 {
-    fn new(iter: ITER) -> InterfaceMap<ITER> {
+    fn new(iter: ITER, nametoindex: NameToIndexFn) -> InterfaceMap<ITER> {
         InterfaceMap {
             iter,
             pending: None,
-            index_map: HashMap::default(),
-            next_index: 1,
+            indexes: HashSet::default(),
+            nametoindex,
         }
     }
 
@@ -148,13 +157,9 @@ where
             Some((prefix, _alias)) => prefix.to_string(),
         };
 
-        let (index, link_message) = match self.index_map.entry(name) {
-            Entry::Occupied(e) => (*e.get(), None),
-            Entry::Vacant(e) => {
-                let index = self.next_index;
-                self.next_index += 1;
-                let name = e.key().clone();
-                e.insert(index);
+        if let Ok(index) = (self.nametoindex)(&name[..]) {
+            let (index, link_message) = if self.indexes.insert(index) {
+                // New entry
                 (
                     index,
                     Some(NetworkEvent::NewLink(
@@ -163,36 +168,42 @@ where
                         map_interface_flags(ifaddr.flags),
                     )),
                 )
-            }
-        };
+            } else {
+                // Existing entry
+                (index, None)
+            };
 
-        let mut addr_message = None;
+            let mut addr_message = None;
 
-        if let (Some(addr), Some(mask)) = (ifaddr.address, ifaddr.netmask) {
-            if let Some(ipv4) = addr.as_sockaddr_in() {
-                let ip = IpAddr::from(Ipv4Addr::from(ipv4.ip()));
-                if let Some(netmask) = mask.as_sockaddr_in() {
-                    addr_message = Some(NetworkEvent::NewAddr(
-                        InterfaceIndex(index),
-                        ip,
-                        (netmask.ip().leading_ones() & 0xFF) as u8,
-                    ));
-                }
-            } else if let Some(ipv6) = addr.as_sockaddr_in6() {
-                if let Some(netmask) = mask.as_sockaddr_in6() {
-                    addr_message = Some(NetworkEvent::NewAddr(
-                        InterfaceIndex(index),
-                        IpAddr::from(ipv6.ip()),
-                        (u128::from_be_bytes(
-                            netmask.as_ref().sin6_addr.s6_addr,
-                        )
-                        .leading_ones()
-                            & 0xFF) as u8,
-                    ));
+            if let (Some(addr), Some(mask)) = (ifaddr.address, ifaddr.netmask)
+            {
+                if let Some(ipv4) = addr.as_sockaddr_in() {
+                    let ip = IpAddr::from(Ipv4Addr::from(ipv4.ip()));
+                    if let Some(netmask) = mask.as_sockaddr_in() {
+                        addr_message = Some(NetworkEvent::NewAddr(
+                            InterfaceIndex(index),
+                            ip,
+                            (netmask.ip().leading_ones() & 0xFF) as u8,
+                        ));
+                    }
+                } else if let Some(ipv6) = addr.as_sockaddr_in6() {
+                    if let Some(netmask) = mask.as_sockaddr_in6() {
+                        addr_message = Some(NetworkEvent::NewAddr(
+                            InterfaceIndex(index),
+                            IpAddr::from(ipv6.ip()),
+                            (u128::from_be_bytes(
+                                netmask.as_ref().sin6_addr.s6_addr,
+                            )
+                            .leading_ones()
+                                & 0xFF) as u8,
+                        ));
+                    }
                 }
             }
+            (link_message, addr_message)
+        } else {
+            (None, None)
         }
-        (link_message, addr_message)
     }
 }
 
@@ -222,6 +233,14 @@ mod tests {
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV4;
     use std::net::SocketAddrV6;
+
+    fn index_1(name: &str) -> nix::Result<libc::c_uint> {
+        if name == "eth1" {
+            Ok(2)
+        } else {
+            Ok(1)
+        }
+    }
 
     #[test]
     fn flag_up() {
@@ -282,7 +301,7 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr].into_iter());
+        let mut map = InterfaceMap::new([ifaddr].into_iter(), index_1);
 
         let link = map.next();
 
@@ -314,6 +333,29 @@ mod tests {
     }
 
     #[test]
+    fn bad_index_ignored() {
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        let mut map = InterfaceMap::new([ifaddr].into_iter(), |_| {
+            Err(nix::errno::Errno::ENOTTY)
+        });
+
+        let link = map.next();
+
+        assert!(link.is_none());
+    }
+
+    #[test]
     fn new_no_address() {
         let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
         let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
@@ -338,7 +380,8 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map =
+            InterfaceMap::new([ifaddr, ifaddr2].into_iter(), index_1);
 
         let link = map.next();
         assert!(link.is_some());
@@ -400,7 +443,8 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map =
+            InterfaceMap::new([ifaddr, ifaddr2].into_iter(), index_1);
 
         let _a = map.next(); // link
         let _b = map.next(); // addr
@@ -435,7 +479,8 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map =
+            InterfaceMap::new([ifaddr, ifaddr2].into_iter(), index_1);
 
         let link = map.next();
         assert!(link.is_some());
@@ -484,7 +529,8 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map =
+            InterfaceMap::new([ifaddr, ifaddr2].into_iter(), index_1);
 
         let link = map.next();
         assert!(link.is_some());
@@ -554,7 +600,8 @@ mod tests {
             destination: None,
         };
 
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map =
+            InterfaceMap::new([ifaddr, ifaddr2].into_iter(), index_1);
 
         let link = map.next(); // Returns IPv4
 
@@ -631,8 +678,8 @@ mod tests {
             broadcast: None,
             destination: None,
         };
-
-        let mut map = InterfaceMap::new([ifaddr, ifaddr2].into_iter());
+        let mut map =
+            InterfaceMap::new([ifaddr, ifaddr2].into_iter(), index_1);
 
         let link = map.next();
         assert!(link.is_some());
@@ -644,7 +691,8 @@ mod tests {
 
     #[test]
     fn get_interfaces_passes_through_errors() {
-        let s = get_interfaces_inner(|| Err(nix::errno::Errno::ENOTTY));
+        let s =
+            get_interfaces_inner(|| Err(nix::errno::Errno::ENOTTY), index_1);
         assert!(s.is_err());
     }
 
