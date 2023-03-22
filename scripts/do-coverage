@@ -31,4 +31,4 @@ rustup run nightly cargo-cov -- show \
     ) \
   --instr-profile=cotton.profdata --format=html --output-dir=target/cov \
   --show-line-counts-or-regions --ignore-filename-regex='/.cargo/' \
-  --ignore-filename-regex='rustc/' --show-instantiations=true
+  --ignore-filename-regex='rustc/' --show-instantiations=false
