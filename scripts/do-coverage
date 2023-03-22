@@ -15,13 +15,13 @@ export RUSTFLAGS="-Cinstrument-coverage"
 export LLVM_PROFILE_FILE="`pwd`/target/profraw/tmp-%p-%m.profraw"
 export CARGO_TARGET_DIR="`pwd`/target/profile/"
 rm -rf target/profraw/*
-cargo +nightly test --offline --lib
+cargo +nightly test --offline --lib --tests
 rustup run nightly cargo-profdata -- merge -sparse `find target/profraw -name '*.profraw'` -o cotton.profdata
 rustup run nightly cargo-cov -- show \
     $( \
       for file in \
         $( \
-            cargo +nightly test --offline --lib --no-run --message-format=json \
+            cargo +nightly test --offline --lib --tests --no-run --message-format=json \
               | jq -r "select(.profile.test == true) | .filenames[]" \
               | grep -v dSYM - \
         ); \
@@ -31,4 +31,4 @@ rustup run nightly cargo-cov -- show \
     ) \
   --instr-profile=cotton.profdata --format=html --output-dir=target/cov \
   --show-line-counts-or-regions --ignore-filename-regex='/.cargo/' \
-  --ignore-filename-regex='rustc/' --show-instantiations=false
+  --ignore-filename-regex='rustc/' --show-instantiations=true

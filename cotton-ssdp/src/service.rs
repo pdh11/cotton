@@ -212,22 +212,18 @@ type RegisterFn = fn(
 ) -> std::io::Result<()>;
 
 impl Service {
-    fn new_inner<FN, ITER>(
+    fn new_inner(
         registry: &mio::Registry,
         tokens: (mio::Token, mio::Token),
         socket: SocketFn,
         register: RegisterFn,
-        get_interfaces: FN,
-    ) -> Result<Self, std::io::Error>
-    where
-        ITER: Iterator<Item = cotton_netif::NetworkEvent>,
-        FN: Fn() -> std::io::Result<ITER>,
-    {
+        interfaces: Vec<cotton_netif::NetworkEvent>,
+    ) -> Result<Self, std::io::Error> {
         let mut multicast_socket = socket(1900u16)?;
         let mut search_socket = socket(0u16)?; // ephemeral port
         let mut engine = Engine::<SyncCallback>::new();
 
-        for netif in get_interfaces()? {
+        for netif in interfaces {
             // Ignore errors -- some interfaces are returned on which
             // join_multicast failes (lxcbr0)
             _ = engine.on_interface_event(
@@ -265,7 +261,7 @@ impl Service {
             tokens,
             new_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
-            cotton_netif::get_interfaces,
+            cotton_netif::get_interfaces()?.collect()
         )
     }
 
@@ -329,8 +325,6 @@ impl Service {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     fn my_err() -> std::io::Error {
         std::io::Error::from(std::io::ErrorKind::Other)
@@ -486,7 +480,7 @@ mod tests {
             (SSDP_TOKEN1, SSDP_TOKEN2),
             |_| Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST")),
             bogus_register,
-            cotton_netif::get_interfaces,
+            cotton_netif::get_interfaces().unwrap().collect(),
         );
 
         assert!(e.is_err());
@@ -513,30 +507,7 @@ mod tests {
                 }
             },
             bogus_register,
-            cotton_netif::get_interfaces,
-        );
-
-        assert!(e.is_err());
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn service_passes_on_get_interfaces_failure() {
-        const SSDP_TOKEN1: mio::Token = mio::Token(37);
-        const SSDP_TOKEN2: mio::Token = mio::Token(94);
-        let poll = mio::Poll::new().unwrap();
-
-        let e = Service::new_inner(
-            poll.registry(),
-            (SSDP_TOKEN1, SSDP_TOKEN2),
-            new_socket,
-            bogus_register,
-            || {
-                Err::<
-                    std::iter::Empty<cotton_netif::NetworkEvent>,
-                    std::io::Error,
-                >(my_err())
-            },
+            cotton_netif::get_interfaces().unwrap().collect(),
         );
 
         assert!(e.is_err());
@@ -554,7 +525,7 @@ mod tests {
             (SSDP_TOKEN1, SSDP_TOKEN2),
             new_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
-            || Ok(std::iter::empty::<cotton_netif::NetworkEvent>()),
+            Vec::default(),
         );
 
         assert!(e.is_ok());
@@ -572,7 +543,7 @@ mod tests {
             (SSDP_TOKEN1, SSDP_TOKEN2),
             new_socket,
             bogus_register,
-            cotton_netif::get_interfaces,
+            cotton_netif::get_interfaces().unwrap().collect(),
         );
 
         assert!(e.is_err());
@@ -596,141 +567,9 @@ mod tests {
                     Err(my_err())
                 }
             },
-            cotton_netif::get_interfaces,
+            cotton_netif::get_interfaces().unwrap().collect(),
         );
 
         assert!(e.is_err());
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn services_can_communicate() {
-        const SSDP_TOKEN1: mio::Token = mio::Token(1);
-        const SSDP_TOKEN2: mio::Token = mio::Token(2);
-        const SSDP_TOKEN3: mio::Token = mio::Token(3);
-        const SSDP_TOKEN4: mio::Token = mio::Token(4);
-        let mut poll = mio::Poll::new().unwrap();
-        let mut ssdp1 =
-            Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
-        let mut ssdp2 =
-            Service::new(poll.registry(), (SSDP_TOKEN3, SSDP_TOKEN4)).unwrap();
-
-        ssdp1.advertise(
-            "uuid:999",
-            Advertisement {
-                notification_type: "upnp::Directory:3".to_string(),
-                location: url::Url::parse("http://127.0.0.1/description.xml")
-                    .unwrap(),
-            },
-        );
-
-        let seen = Rc::new(RefCell::new(Vec::new()));
-        let seen2 = seen.clone();
-
-        ssdp2.subscribe(
-            "upnp::Directory:3",
-            Box::new(move |r| {
-                seen2.borrow_mut().push(r.clone());
-            }),
-        );
-
-        let mut events = mio::Events::with_capacity(1024);
-        while !seen.borrow().iter().any(|r| {
-            matches!(r,
-                     Notification::Alive { notification_type, unique_service_name, .. } if
-                     notification_type == "upnp::Directory:3"
-                     && unique_service_name == "uuid:999"
-            )
-        }) {
-            poll.poll(&mut events, Some(std::time::Duration::from_secs(5)))
-                .unwrap();
-            assert!(!events.is_empty()); // timeout
-
-            for event in &events {
-                // We could tell, from event.token, which socket is
-                // readable. But as this is a test, for coverage
-                // purposes we always check everything.
-                ssdp1.multicast_ready(event);
-                ssdp1.search_ready(event);
-                ssdp2.multicast_ready(event);
-                ssdp2.search_ready(event);
-            }
-        }
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn services_can_communicate_unicast() {
-        const SSDP_TOKEN1: mio::Token = mio::Token(1);
-        const SSDP_TOKEN2: mio::Token = mio::Token(2);
-        const SSDP_TOKEN3: mio::Token = mio::Token(3);
-        const SSDP_TOKEN4: mio::Token = mio::Token(4);
-
-        let mut poll = mio::Poll::new().unwrap();
-        let mut ssdp1 =
-            Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
-
-        ssdp1.advertise(
-            "uuid:999",
-            Advertisement {
-                notification_type: "upnp::Directory:3".to_string(),
-                location: url::Url::parse("http://127.0.0.1/description.xml")
-                    .unwrap(),
-            },
-        );
-
-        // Get initial NOTIFY out of the way
-        let mut events = mio::Events::with_capacity(1024);
-        loop {
-            poll.poll(
-                &mut events,
-                Some(std::time::Duration::from_millis(100)),
-            )
-            .unwrap();
-            if events.is_empty() {
-                break;
-            }
-
-            // We could tell, from event.token, which socket is readable. But
-            // as this is a test, for coverage purposes we always check
-            // everything.
-            for event in &events {
-                ssdp1.multicast_ready(event);
-                ssdp1.search_ready(event);
-            }
-        }
-
-        let mut ssdp2 =
-            Service::new(poll.registry(), (SSDP_TOKEN3, SSDP_TOKEN4)).unwrap();
-        let seen = Rc::new(RefCell::new(Vec::new()));
-        let seen2 = seen.clone();
-
-        // ssdp1's initial NOTIFY has already happened, so the only way we'll
-        // find it here is if searching (with unicast reply) also works.
-        ssdp2.subscribe(
-            "upnp::Directory:3",
-            Box::new(move |r| {
-                seen2.borrow_mut().push(r.clone());
-            }),
-        );
-
-        while !seen.borrow().iter().any(|r| {
-            matches!(r,
-            Notification::Alive { notification_type, unique_service_name, .. }
-            if notification_type == "upnp::Directory:3"
-            && unique_service_name == "uuid:999"
-            )
-        }) {
-            poll.poll(&mut events, Some(std::time::Duration::from_secs(5)))
-                .unwrap();
-            assert!(!events.is_empty()); // timeout
-
-            for event in &events {
-                ssdp1.multicast_ready(event);
-                ssdp1.search_ready(event);
-                ssdp2.multicast_ready(event);
-                ssdp2.search_ready(event);
-            }
-        }
     }
 }
