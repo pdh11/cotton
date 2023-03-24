@@ -7,10 +7,10 @@
 //! network printer, or anything else that someone might want to
 //! search for or enumerate on a network.
 //!
-//! What is advertised, or discovered, is, for each
-//! resource, a unique identifier (Unique Service Name, USN), an
-//! identifier for the _type_ of resource (Notification Type, NT), and
-//! the _location_ of the resource in the form of a URL.
+//! What is advertised, or discovered, is, for each resource, a unique
+//! identifier for that particular resource (Unique Service Name,
+//! USN), an identifier for the _type_ of resource (Notification Type,
+//! NT), and the _location_ of the resource in the form of a URL.
 //!
 //! SSDP is mainly used by UPnP (Universal Plug-'n'-Play) systems,
 //! such as for media libraries and local streaming of music and video
@@ -43,7 +43,7 @@
 //! [ssdp-search-mio](https://github.com/pdh11/cotton/blob/main/cotton-ssdp/examples/ssdp-search-mio.rs)
 //! (on Github).
 
-//#![warn(missing_docs)]
+#![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
 /// Incoming SSDP notification, obtained from [`Service::subscribe`]
@@ -64,25 +64,37 @@
 /// [`Service::subscribe`] is likely to receive multiple copies of
 /// each. The `unique_service_name` field can be used to distinguish
 /// genuinely new resources (e.g., as the key in a `HashMap`).
+///
 #[derive(Debug, Clone)]
 pub enum Notification {
     /// The resource in question is now active (at this location/URL)
     Alive {
+        /// Resource type, e.g. "urn:schemas-upnp-org:service:ContentDirectory:1"
         notification_type: String,
+
+        /// Unique identifier for this particular resource instance
         unique_service_name: String,
+
+        /// URL of the resource (for UPnP, the device description document)
         location: String,
     },
 
     /// The resource in question is (becoming) inactive
     ByeBye {
+        /// Resource type
         notification_type: String,
+
+        /// Unique identifier for this particular resource instance
         unique_service_name: String,
     },
 }
 
 /// Outgoing SSDP announcement, passed to [`Service::advertise`]
 pub struct Advertisement {
+    /// Resource type
     pub notification_type: String,
+
+    /// Resource location
     pub location: url::Url,
 }
 

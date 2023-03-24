@@ -22,6 +22,8 @@ The implementation integrates with the [`mio`] crate, which provides a
 "reactor-style" I/O API suited for running several I/O operations in a
 single thread. (SSDP, being relatively low-bandwidth and non-urgent,
 is unlikely to require any more high-performance I/O solution.)
+An alternative mechanism, [`crate::AsyncService`], integrates directly
+with [`tokio`] instead of [`mio`].
 
 The implementation requires _two_ UDP sockets: one bound to the
 well-known SSDP port number (1900) which subscribes to the multicast
@@ -221,6 +223,12 @@ impl Service {
         )
     }
 
+    /// Subscribe to notifications about a particular service type
+    ///
+    /// Or subscribe to "ssdp:all" for notifications about *all* service
+    /// types.
+    ///
+    /// This call also sends fresh search messages.
     pub fn subscribe<A>(
         &mut self,
         notification_type: A,
@@ -235,6 +243,7 @@ impl Service {
         );
     }
 
+    /// Advertise a local resource on the network
     pub fn advertise<USN>(
         &mut self,
         unique_service_name: USN,
@@ -249,6 +258,7 @@ impl Service {
         );
     }
 
+    /// Handler to be called when multicast socket is readable
     pub fn multicast_ready(&mut self, _event: &mio::event::Event) {
         let mut buf = [0u8; 1500];
         if let Ok((n, wasto, wasfrom)) =
@@ -263,6 +273,7 @@ impl Service {
         }
     }
 
+    /// Handler to be called when search socket is readable
     pub fn search_ready(&mut self, _event: &mio::event::Event) {
         let mut buf = [0u8; 1500];
         if let Ok((n, wasto, wasfrom)) =

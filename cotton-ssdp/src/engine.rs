@@ -44,7 +44,12 @@ fn target_match(search: &str, candidate: &str) -> bool {
     false
 }
 
+/// A callback made by [`Engine`] when notification messages arrive
+///
+/// See implementations in [`crate::Service`] and [`crate::AsyncService`].
+///
 pub trait Callback {
+    /// An SSDP notification has been received
     fn on_notification(&self, notification: &Notification);
 }
 
@@ -55,6 +60,24 @@ struct ActiveSearch<CB: Callback> {
 
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
+/// The core of an SSDP implementation
+///
+/// This low-level facility is usually wrapped-up in
+/// [`crate::Service`] or [`crate::AsyncService`] for use in larger
+/// programs, but can also be used directly when needed (e.g. on
+/// embedded systems).
+///
+/// This struct handles parsing and emitting SSDP messages; it does
+/// not own or define the UDP sockets themselves, which are left to
+/// its owner.  The owner should pass incoming UDP packets to
+/// [`Engine::on_data`], and changes to available network interfaces
+/// (if required) to [`Engine::on_interface_event`].
+///
+/// The owner should also implement a timer facility: the [`Engine`] can
+/// be asked at any time when it next needs a timer callback ([`Engine::next_wakeup`]),
+/// and, when that time comes, the [`Engine::wakeup`] method must be called. See,
+/// for instance, the `tokio::select!` loop in `AsyncService::new_inner`.
+///
 pub struct Engine<CB: Callback> {
     interfaces: HashMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
@@ -70,6 +93,8 @@ impl<CB: Callback> Default for Engine<CB> {
 }
 
 impl<CB: Callback> Engine<CB> {
+    /// Create a new Engine, parameterised by callback type
+    ///
     #[must_use]
     pub fn new() -> Self {
         Engine {
@@ -81,11 +106,16 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
+    /// Obtain the desired delay before the next [`Engine::wakeup`] is needed
     #[must_use]
     pub fn next_wakeup(&self) -> std::time::Duration {
         self.next_salvo.saturating_duration_since(Instant::now())
     }
 
+    /// Notify the `Engine` that its timeout has expired
+    ///
+    /// The desired timeout duration can be obtained from [`Engine::next_wakeup`].
+    ///
     pub fn wakeup<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         socket: &SCK,
@@ -144,7 +174,7 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    /// Subscribe to notifications of a perticular service type
+    /// Subscribe to notifications of a particular service type
     ///
     /// And send searches.
     pub fn subscribe<SCK: udp::TargetedSend + udp::Multicast>(
@@ -456,6 +486,7 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
+    /// Advertise a local resource to SSDP peers
     pub fn advertise<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         unique_service_name: String,
@@ -467,6 +498,11 @@ impl<CB: Callback> Engine<CB> {
             .insert(unique_service_name, advertisement);
     }
 
+    /// Withdraw an advertisement for a local resource
+    ///
+    /// For instance, it is "polite" to call this if shutting down
+    /// cleanly.
+    ///
     pub fn deadvertise<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         unique_service_name: &str,

@@ -117,13 +117,26 @@ pub trait TargetedReceive {
     ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error>;
 }
 
+/// Joining and leaving multicast groups (by interface number)
 pub trait Multicast {
+    /// Join a particular multicast group on a particular network interface
+    ///
+    /// # Errors
+    ///
+    /// Can only fail if the underlying system call fails.
+    ///
     fn join_multicast_group(
         &self,
         multicast_address: &IpAddr,
         interface: InterfaceIndex,
     ) -> Result<(), std::io::Error>;
 
+    /// Leave a particular multicast group on a particular network interface
+    ///
+    /// # Errors
+    ///
+    /// Can only fail if the underlying system call fails.
+    ///
     fn leave_multicast_group(
         &self,
         multicast_address: &IpAddr,
