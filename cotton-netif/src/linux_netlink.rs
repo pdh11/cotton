@@ -219,7 +219,7 @@ For a simple listing of the returned information, just use println:
 # use futures_util::StreamExt;
 # #[cfg(not(miri))]
 # tokio_test::block_on(async {
-let mut s = get_interfaces_async().await?;
+let mut s = get_interfaces_async()?;
 
 while let Some(e) = s.next().await {
     println!("{:?}", e);
@@ -239,7 +239,7 @@ appear:
 # use futures_util::StreamExt;
 # #[cfg(not(miri))]
 # tokio_test::block_on(async {
-let mut s = get_interfaces_async().await?;
+let mut s = get_interfaces_async()?;
 
 while let Some(e) = s.next().await {
     match e {
@@ -262,8 +262,7 @@ while let Some(e) = s.next().await {
 Returns Err if the underlying netlink socket failed to open, see netlink(7).
 
  */
-#[allow(clippy::unused_async)]
-pub async fn get_interfaces_async(
+pub fn get_interfaces_async(
 ) -> Result<impl Stream<Item = Result<NetworkEvent, Error>>, Error> {
     /* Pass through to an inner function for testability. Hopefully
      * the compiler notices that in cfg(not test) builds, this is the
@@ -421,7 +420,6 @@ mod tests {
     use neli::rtnl::Rtattr;
     use neli::ToBytes;
     use std::os::unix::io::FromRawFd;
-    use tokio_test::block_on;
 
     #[test]
     fn parse_4byte_addr() {
@@ -1276,9 +1274,9 @@ mod tests {
         assert!(s.is_err());
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    fn zzz_instantiate() {
-        assert!(block_on(get_interfaces_async()).is_ok());
+    async fn zzz_instantiate() {
+        assert!(get_interfaces_async().is_ok());
     }
 }

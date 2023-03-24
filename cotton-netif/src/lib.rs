@@ -15,7 +15,7 @@
 //!  - [x] IPv6 in `linux_netlink`
 //!  - [x] Better test coverage
 //!  - [x] Does `DelAddr` need to include the address? *yes*
-//!  - [ ] Can `get_interfaces_async` itself not be async?
+//!  - [x] Can `get_interfaces_async` itself not be async?
 //!  - [ ] Can we use just one netlink socket, perhaps with lower-level neli?
 //!  - [ ] Turn async into a (cargo) Feature
 //!
