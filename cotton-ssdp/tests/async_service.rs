@@ -2,6 +2,7 @@ use cotton_ssdp::*;
 use futures_util::StreamExt;
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn services_communicate() {
     let mut ssdp1 = AsyncService::new().unwrap();
     let mut ssdp2 = AsyncService::new().unwrap();
