@@ -1,10 +1,8 @@
 use crate::engine::{Callback, Engine};
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
-use cotton_netif::get_interfaces_async;
 use futures::Stream;
 use futures_util::StreamExt;
-use std::error::Error;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -58,6 +56,9 @@ impl Inner {
     }
 }
 
+/// The type of [`Inner::new`]
+type InnerNewFn = fn(Engine<AsyncCallback>) -> Result<Inner, std::io::Error>;
+
 /** High-level asynchronous SSDP service using tokio.
  *
  * Handles incoming and outgoing searches using `async`, `await`, and the
@@ -80,9 +81,13 @@ impl AsyncService {
     /// Will panic if the internal mutex cannot be locked; that would indicate
     /// a bug in cotton-ssdp.
     ///
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let mut s = get_interfaces_async()?;
-        let inner = Arc::new(Inner::new(Engine::new())?);
+    pub fn new() -> Result<Self, std::io::Error> {
+        Self::new_inner(Inner::new)
+    }
+
+    fn new_inner(create: InnerNewFn) -> Result<Self, std::io::Error> {
+        let mut s = cotton_netif::get_interfaces_async()?;
+        let inner = Arc::new(create(Engine::new())?);
         let inner2 = inner.clone();
 
         tokio::spawn(async move {
@@ -217,11 +222,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_socket_failure() {
         let engine = Engine::<AsyncCallback>::new();
-        let e = Inner::new_inner(
-            engine,
-            |_| Err(my_err()),
-            bogus_fromstd,
-        );
+        let e = Inner::new_inner(engine, |_| Err(my_err()), bogus_fromstd);
 
         assert!(e.is_err());
     }
@@ -249,31 +250,44 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_fromstd_failure() {
         let engine = Engine::<AsyncCallback>::new();
-        let e = Inner::new_inner(
-            engine,
-            crate::udp::setup_socket,
-            bogus_fromstd,
-        );
+        let e =
+            Inner::new_inner(engine, crate::udp::setup_socket, bogus_fromstd);
 
         assert!(e.is_err());
     }
 
-    #[tokio::test]
+    #[test]
     #[cfg_attr(miri, ignore)]
-    async fn service_passes_on_second_fromstd_failure() {
-        let engine = Engine::<AsyncCallback>::new();
-        let e = Inner::new_inner(
-            engine,
-            crate::udp::setup_socket,
-            |s| {
-                if s.local_addr().unwrap().port() == 1900u16 {
-                    tokio::net::UdpSocket::from_std(s)
-                } else {
-                    Err(my_err())
-                }
-            },
-        );
+    fn service_passes_on_second_fromstd_failure() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let engine = Engine::<AsyncCallback>::new();
+                let e =
+                    Inner::new_inner(engine, crate::udp::setup_socket, |s| {
+                        if s.local_addr().unwrap().port() == 1900u16 {
+                            tokio::net::UdpSocket::from_std(s)
+                        } else {
+                            Err(my_err())
+                        }
+                    });
 
-        assert!(e.is_err());
+                assert!(e.is_err());
+            });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn service_passes_on_inner_failure() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let e = AsyncService::new_inner(|_| Err(my_err()));
+                assert!(e.is_err());
+            });
     }
 }

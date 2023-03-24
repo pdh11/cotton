@@ -8,7 +8,7 @@ fn getinterface_failure_passed_on() {
     let poll = mio::Poll::new().unwrap();
 
     // Setting a low limit of open sockets is one of the few ways to cause
-    // cotton_ssdp::get_interfaces to fail (and to cover that code path)
+    // cotton_netif::get_interfaces to fail (and to cover that code path)
     let mut lim = libc::rlimit {
         rlim_cur: 0u64,
         rlim_max: 10_000u64,
