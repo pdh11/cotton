@@ -11,7 +11,7 @@ license = "CC0-1.0"
 rust-version = "1.65"
 
 [dependencies]
-cotton-netif = { path = "../cotton-netif", version = "0.0.2" }
+cotton-netif = { path = "../cotton-netif", version = "0.0.3" }
 tokio = { version = "1.18", default_features = false, features = ["macros", "net", "rt"] }
 tokio-stream = "0.1"
 futures = "0.3"

@@ -10,7 +10,6 @@ use std::error::Error;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
-use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -31,7 +30,7 @@ struct Inner {
 }
 
 impl Inner {
-    async fn new(
+    fn new(
         engine: Engine<AsyncCallback>,
     ) -> Result<Inner, std::io::Error> {
         let multicast_socket = socket2::Socket::new(
@@ -44,11 +43,19 @@ impl Inner {
         let multicast_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1900u16);
         multicast_socket.bind(&socket2::SockAddr::from(multicast_addr))?;
         setsockopt(multicast_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
-        let multicast_socket = UdpSocket::from_std(multicast_socket.into())?;
+        let multicast_socket = tokio::net::UdpSocket::from_std(multicast_socket.into())?;
 
-        let search_socket =
-            UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0u16)).await?;
+        let search_socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
+            None,
+        )?;
+        search_socket.set_nonblocking(true)?;
+        search_socket.set_reuse_address(true)?;
+        let search_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0u16);
+        search_socket.bind(&socket2::SockAddr::from(search_addr))?;
         setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
+        let search_socket = tokio::net::UdpSocket::from_std(search_socket.into())?;
 
         // @todo IPv6 https://stackoverflow.com/questions/3062205/setting-the-source-ip-for-a-udp-socket
         Ok(Inner {
@@ -82,12 +89,8 @@ impl AsyncService {
     /// a bug in cotton-ssdp.
     ///
     pub async fn new() -> Result<Self, Box<dyn Error>> {
-        let (mut s, inner) = tokio::try_join!(
-            get_interfaces_async(),
-            Inner::new(Engine::new()),
-        )?;
-
-        let inner = Arc::new(inner);
+        let mut s = get_interfaces_async()?;
+        let inner = Arc::new(Inner::new(Engine::new())?);
         let inner2 = inner.clone();
 
         tokio::spawn(async move {
