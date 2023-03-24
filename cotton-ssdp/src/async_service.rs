@@ -290,4 +290,17 @@ mod tests {
                 assert!(e.is_err());
             });
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn service_succeeds() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let e = AsyncService::new();
+                assert!(e.is_ok());
+            });
+    }
 }
