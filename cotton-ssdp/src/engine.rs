@@ -144,6 +144,9 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
+    /// Subscribe to notifications of a perticular service type
+    ///
+    /// And send searches.
     pub fn subscribe<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         notification_type: String,
@@ -295,6 +298,12 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
+    /// Notify the `Engine` of a network interface change
+    ///
+    /// # Errors
+    ///
+    /// Passes on errors from the underlying system-calls for joining
+    /// (and leaving) multicast groups.
     pub fn on_interface_event<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         e: NetworkEvent,

@@ -1,11 +1,11 @@
 use cotton_netif::InterfaceIndex;
 use nix::cmsg_space;
+use nix::sys::socket::setsockopt;
+use nix::sys::socket::sockopt::Ipv4PacketInfo;
 use nix::sys::socket::ControlMessage;
 use nix::sys::socket::ControlMessageOwned;
 use nix::sys::socket::MsgFlags;
 use nix::sys::socket::SockaddrStorage;
-use nix::sys::socket::setsockopt;
-use nix::sys::socket::sockopt::Ipv4PacketInfo;
 use std::io::IoSlice;
 use std::io::IoSliceMut;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -38,7 +38,9 @@ fn setup_socket_inner(
     Ok(socket.into())
 }
 
-pub fn setup_socket(port: u16) -> Result<std::net::UdpSocket, std::io::Error> {
+pub(crate) fn setup_socket(
+    port: u16,
+) -> Result<std::net::UdpSocket, std::io::Error> {
     setup_socket_inner(
         port,
         || {

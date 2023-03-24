@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         env!("CARGO_PKG_VERSION")
     );
 
-    let mut s = AsyncService::new().await?;
+    let mut s = AsyncService::new()?;
 
     let mut map = HashMap::new();
 

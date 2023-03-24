@@ -9,8 +9,6 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::udp::setup_socket;
-
 struct AsyncCallback {
     channel: mpsc::Sender<Notification>,
 }
@@ -21,6 +19,13 @@ impl Callback for AsyncCallback {
     }
 }
 
+/// The type of [`udp::setup_socket`]
+type SetupSocketFn = fn(u16) -> Result<std::net::UdpSocket, std::io::Error>;
+
+/// The type of [`tokio::net::UdpSocket::from_std`]
+type FromStdFn =
+    fn(std::net::UdpSocket) -> Result<tokio::net::UdpSocket, std::io::Error>;
+
 struct Inner {
     engine: Mutex<Engine<AsyncCallback>>,
     multicast_socket: tokio::net::UdpSocket,
@@ -28,8 +33,18 @@ struct Inner {
 }
 
 impl Inner {
-    fn new(
+    fn new(engine: Engine<AsyncCallback>) -> Result<Inner, std::io::Error> {
+        Self::new_inner(
+            engine,
+            crate::udp::setup_socket,
+            tokio::net::UdpSocket::from_std,
+        )
+    }
+
+    fn new_inner(
         engine: Engine<AsyncCallback>,
+        setup_socket: SetupSocketFn,
+        from_std: FromStdFn,
     ) -> Result<Inner, std::io::Error> {
         let multicast_socket = setup_socket(1900u16)?;
         let search_socket = setup_socket(0u16)?;
@@ -37,8 +52,8 @@ impl Inner {
         // @todo IPv6 https://stackoverflow.com/questions/3062205/setting-the-source-ip-for-a-udp-socket
         Ok(Inner {
             engine: Mutex::new(engine),
-            multicast_socket: tokio::net::UdpSocket::from_std(multicast_socket)?,
-            search_socket: tokio::net::UdpSocket::from_std(search_socket)?,
+            multicast_socket: from_std(multicast_socket)?,
+            search_socket: from_std(search_socket)?,
         })
     }
 }
@@ -65,7 +80,7 @@ impl AsyncService {
     /// Will panic if the internal mutex cannot be locked; that would indicate
     /// a bug in cotton-ssdp.
     ///
-    pub async fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
         let mut s = get_interfaces_async()?;
         let inner = Arc::new(Inner::new(Engine::new())?);
         let inner2 = inner.clone();
@@ -76,13 +91,11 @@ impl AsyncService {
 
                 tokio::select! {
                     e = s.next() => if let Some(Ok(event)) = e {
-                        inner.engine.lock().unwrap().on_interface_event(
+                        _ = inner.engine.lock().unwrap().on_interface_event(
                             event,
                             &inner.multicast_socket,
                             &inner.search_socket,
-                        )
-                            .unwrap_or_else(
-                                |err| println!("SSDP error {err}"));
+                        );
                     },
                     _ = inner.multicast_socket.readable() => {
                         let mut buf = [0u8; 1500];
@@ -183,5 +196,84 @@ impl AsyncService {
             .lock()
             .unwrap()
             .deadvertise(unique_service_name, &self.inner.search_socket);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn my_err() -> std::io::Error {
+        std::io::Error::from(std::io::ErrorKind::Other)
+    }
+
+    fn bogus_fromstd(
+        _: std::net::UdpSocket,
+    ) -> Result<tokio::net::UdpSocket, std::io::Error> {
+        Err(my_err())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn service_passes_on_socket_failure() {
+        let engine = Engine::<AsyncCallback>::new();
+        let e = Inner::new_inner(
+            engine,
+            |_| Err(my_err()),
+            bogus_fromstd,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn service_passes_on_second_socket_failure() {
+        let engine = Engine::<AsyncCallback>::new();
+        let e = Inner::new_inner(
+            engine,
+            |p| {
+                if p == 0 {
+                    Err(my_err())
+                } else {
+                    Ok(std::net::UdpSocket::bind("127.0.0.1:0").unwrap())
+                }
+            },
+            bogus_fromstd,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn service_passes_on_fromstd_failure() {
+        let engine = Engine::<AsyncCallback>::new();
+        let e = Inner::new_inner(
+            engine,
+            crate::udp::setup_socket,
+            bogus_fromstd,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn service_passes_on_second_fromstd_failure() {
+        let engine = Engine::<AsyncCallback>::new();
+        let e = Inner::new_inner(
+            engine,
+            crate::udp::setup_socket,
+            |s| {
+                if s.local_addr().unwrap().port() == 1900u16 {
+                    tokio::net::UdpSocket::from_std(s)
+                } else {
+                    Err(my_err())
+                }
+            },
+        );
+
+        assert!(e.is_err());
     }
 }

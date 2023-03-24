@@ -1,6 +1,6 @@
 use crate::engine::{Callback, Engine};
-use crate::udp::TargetedReceive;
 use crate::udp;
+use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
 
 struct SyncCallback {
@@ -174,7 +174,8 @@ impl Service {
         register: RegisterFn,
         interfaces: Vec<cotton_netif::NetworkEvent>,
     ) -> Result<Self, std::io::Error> {
-        let mut multicast_socket = mio::net::UdpSocket::from_std(socket(1900u16)?);
+        let mut multicast_socket =
+            mio::net::UdpSocket::from_std(socket(1900u16)?);
         let mut search_socket = mio::net::UdpSocket::from_std(socket(0u16)?); // ephemeral port
         let mut engine = Engine::<SyncCallback>::new();
 
@@ -216,7 +217,7 @@ impl Service {
             tokens,
             udp::setup_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
-            cotton_netif::get_interfaces()?.collect()
+            cotton_netif::get_interfaces()?.collect(),
         )
     }
 
