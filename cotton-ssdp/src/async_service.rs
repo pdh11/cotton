@@ -4,14 +4,12 @@ use crate::{Advertisement, Notification};
 use cotton_netif::get_interfaces_async;
 use futures::Stream;
 use futures_util::StreamExt;
-use nix::sys::socket::setsockopt;
-use nix::sys::socket::sockopt::Ipv4PacketInfo;
 use std::error::Error;
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+
+use crate::udp::setup_socket;
 
 struct AsyncCallback {
     channel: mpsc::Sender<Notification>,
@@ -33,35 +31,14 @@ impl Inner {
     fn new(
         engine: Engine<AsyncCallback>,
     ) -> Result<Inner, std::io::Error> {
-        let multicast_socket = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::DGRAM,
-            None,
-        )?;
-        multicast_socket.set_nonblocking(true)?;
-        multicast_socket.set_reuse_address(true)?;
-        let multicast_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1900u16);
-        multicast_socket.bind(&socket2::SockAddr::from(multicast_addr))?;
-        setsockopt(multicast_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
-        let multicast_socket = tokio::net::UdpSocket::from_std(multicast_socket.into())?;
-
-        let search_socket = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::DGRAM,
-            None,
-        )?;
-        search_socket.set_nonblocking(true)?;
-        search_socket.set_reuse_address(true)?;
-        let search_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0u16);
-        search_socket.bind(&socket2::SockAddr::from(search_addr))?;
-        setsockopt(search_socket.as_raw_fd(), Ipv4PacketInfo, &true)?;
-        let search_socket = tokio::net::UdpSocket::from_std(search_socket.into())?;
+        let multicast_socket = setup_socket(1900u16)?;
+        let search_socket = setup_socket(0u16)?;
 
         // @todo IPv6 https://stackoverflow.com/questions/3062205/setting-the-source-ip-for-a-udp-socket
         Ok(Inner {
             engine: Mutex::new(engine),
-            multicast_socket,
-            search_socket,
+            multicast_socket: tokio::net::UdpSocket::from_std(multicast_socket)?,
+            search_socket: tokio::net::UdpSocket::from_std(search_socket)?,
         })
     }
 }

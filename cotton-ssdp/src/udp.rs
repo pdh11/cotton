@@ -4,11 +4,56 @@ use nix::sys::socket::ControlMessage;
 use nix::sys::socket::ControlMessageOwned;
 use nix::sys::socket::MsgFlags;
 use nix::sys::socket::SockaddrStorage;
+use nix::sys::socket::setsockopt;
+use nix::sys::socket::sockopt::Ipv4PacketInfo;
 use std::io::IoSlice;
 use std::io::IoSliceMut;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::prelude::RawFd;
+
+type NewSocketFn = fn() -> std::io::Result<socket2::Socket>;
+type SockoptFn = fn(&socket2::Socket, bool) -> std::io::Result<()>;
+type RawSockoptFn =
+    fn(&socket2::Socket, bool) -> Result<(), nix::errno::Errno>;
+type BindFn =
+    fn(&socket2::Socket, std::net::SocketAddrV4) -> std::io::Result<()>;
+
+fn setup_socket_inner(
+    port: u16,
+    new_socket: NewSocketFn,
+    nonblocking: SockoptFn,
+    reuse_address: SockoptFn,
+    bind: BindFn,
+    ipv4_packetinfo: RawSockoptFn,
+) -> std::io::Result<std::net::UdpSocket> {
+    let socket = new_socket()?;
+    nonblocking(&socket, true)?;
+    reuse_address(&socket, true)?;
+    bind(
+        &socket,
+        std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port),
+    )?;
+    ipv4_packetinfo(&socket, true)?;
+    Ok(socket.into())
+}
+
+pub fn setup_socket(port: u16) -> Result<std::net::UdpSocket, std::io::Error> {
+    setup_socket_inner(
+        port,
+        || {
+            socket2::Socket::new(
+                socket2::Domain::IPV4,
+                socket2::Type::DGRAM,
+                None,
+            )
+        },
+        socket2::Socket::set_nonblocking,
+        socket2::Socket::set_reuse_address,
+        |s, a| s.bind(&socket2::SockAddr::from(a)),
+        |s, b| setsockopt(s.as_raw_fd(), Ipv4PacketInfo, &b),
+    )
+}
 
 /// Sending UDP datagrams from a specific source IP
 pub trait TargetedSend {
@@ -351,6 +396,129 @@ mod tests {
     use nix::sys::socket::sockopt::Ipv4PacketInfo;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV6;
+
+    fn my_err() -> std::io::Error {
+        std::io::Error::from(std::io::ErrorKind::Other)
+    }
+
+    fn bogus_new_socket() -> std::io::Result<socket2::Socket> {
+        Err(my_err())
+    }
+    fn bogus_setsockopt(_: &socket2::Socket, b: bool) -> std::io::Result<()> {
+        assert!(b);
+        Err(my_err())
+    }
+    fn bogus_raw_setsockopt(
+        _: &socket2::Socket,
+        _: bool,
+    ) -> Result<(), nix::errno::Errno> {
+        Err(nix::errno::Errno::ENOTTY)
+    }
+    fn bogus_bind(
+        _: &socket2::Socket,
+        _: std::net::SocketAddrV4,
+    ) -> std::io::Result<()> {
+        Err(my_err())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn setup_socket_passes_on_creation_error() {
+        let e = setup_socket_inner(
+            0u16,
+            bogus_new_socket,
+            bogus_setsockopt,
+            bogus_setsockopt,
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn setup_socket_passes_on_nonblocking_error() {
+        let e = setup_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            bogus_setsockopt,
+            bogus_setsockopt,
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn setup_socket_passes_on_reuseaddr_error() {
+        let e = setup_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            socket2::Socket::set_nonblocking,
+            bogus_setsockopt,
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn setup_socket_passes_on_bind_error() {
+        let e = setup_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            socket2::Socket::set_nonblocking,
+            socket2::Socket::set_reuse_address,
+            bogus_bind,
+            bogus_raw_setsockopt,
+        );
+
+        assert!(e.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn setup_socket_passes_on_pktinfo_error() {
+        let e = setup_socket_inner(
+            0u16,
+            || {
+                socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::DGRAM,
+                    None,
+                )
+            },
+            socket2::Socket::set_nonblocking,
+            socket2::Socket::set_reuse_address,
+            |s, a| s.bind(&socket2::SockAddr::from(a)),
+            bogus_raw_setsockopt,
+        );
+
+        assert!(e.is_err());
+    }
 
     fn local_ipv4() -> Option<Ipv4Addr> {
         cotton_netif::get_interfaces().unwrap().find_map(|e| {
