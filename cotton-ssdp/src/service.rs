@@ -268,8 +268,8 @@ impl Service {
     /// cleanly.
     ///
     pub fn deadvertise(&mut self, unique_service_name: &str) {
-        self.engine.deadvertise(unique_service_name,
-                                &self.search_socket)
+        self.engine
+            .deadvertise(unique_service_name, &self.search_socket);
     }
 
     /// Handler to be called when multicast socket is readable
@@ -309,7 +309,7 @@ impl Service {
 
     /// Handler to be called when wakeup timer elapses
     pub fn wakeup(&mut self) {
-        self.engine.wakeup(&self.search_socket)
+        self.engine.wakeup(&self.search_socket);
     }
 }
 

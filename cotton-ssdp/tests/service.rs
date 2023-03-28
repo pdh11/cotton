@@ -105,15 +105,15 @@ fn services_can_communicate_unicast() {
 
     let seen = Rc::new(RefCell::new(Vec::new()));
 
-            // ssdp1's initial NOTIFY has already happened, so the only way we'll
-            // find it here is if searching (with unicast reply) also works.
-            let seen2 = seen.clone();
-            ssdp2.subscribe(
-                "upnp::Directory:3",
-                Box::new(move |r| {
-                    seen2.borrow_mut().push(r.clone());
-                }),
-            );
+    // ssdp1's initial NOTIFY has already happened, so the only way we'll
+    // find it here is if searching (with unicast reply) also works.
+    let seen2 = seen.clone();
+    ssdp2.subscribe(
+        "upnp::Directory:3",
+        Box::new(move |r| {
+            seen2.borrow_mut().push(r.clone());
+        }),
+    );
 
     while !seen.borrow().iter().any(|r| {
         matches!(r,
