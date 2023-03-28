@@ -1,0 +1,27 @@
+[package]
+name = "cotton-ssdp"
+version = "0.0.1"
+description = "Implementing SSDP, the Simple Service Discovery Protocol"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = ["network-programming"]
+edition = "2021"
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+license = "CC0-1.0"
+rust-version = "1.65"
+
+[dependencies]
+cotton-netif = { path = "../cotton-netif", version = "0.0.3" }
+tokio = { version = "1.18", default_features = false, features = ["macros", "net", "rt"] }
+tokio-stream = "0.1"
+futures = "0.3"
+futures-util = { version = "0.3", default_features = false, features = ["async-await", "async-await-macro"] }
+slotmap = "1"
+nix = { version = "0.24", default_features = false, features = ["uio"] }
+libc = "0.2"
+uuid = { version = "1.3", default_features = false, features = ["v4"] }
+socket2 = "0.4.7"
+url = { version = "2.3", default_features = false }
+rand = { version = "0.8", default_features = false, features = ["std", "std_rng"] }
+mock_instant = "0.2"
+mio = { version = "0.8", default_features = false }
