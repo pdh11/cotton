@@ -49,12 +49,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     loop {
-        poll.poll(&mut events, None).unwrap();
+        poll.poll(&mut events, Some(ssdp.next_wakeup())).unwrap();
+
+        if ssdp.next_wakeup() == std::time::Duration::ZERO {
+            // Timeout
+            ssdp.wakeup();
+        }
 
         for event in &events {
             match event.token() {
-                SSDP_TOKEN1 => ssdp.multicast_ready(event),
-                SSDP_TOKEN2 => ssdp.search_ready(event),
+                SSDP_TOKEN1 => ssdp.multicast_ready(),
+                SSDP_TOKEN2 => ssdp.search_ready(),
                 _ => (),
             }
         }

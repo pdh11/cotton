@@ -137,12 +137,16 @@ this:
 # let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
 # #[cfg(not(miri))]
     loop {
-        poll.poll(&mut events, None).unwrap();
+        poll.poll(&mut events, Some(ssdp.next_wakeup())).unwrap();
+
+        if ssdp.next_wakeup() == std::time::Duration::ZERO {
+            ssdp.wakeup();
+        }
 
         for event in &events {
             match event.token() {
-                SSDP_TOKEN1 => ssdp.multicast_ready(event),
-                SSDP_TOKEN2 => ssdp.search_ready(event),
+                SSDP_TOKEN1 => ssdp.multicast_ready(),
+                SSDP_TOKEN2 => ssdp.search_ready(),
                 // ... other tokens as required by the application ...
                 _ => (),
             }
@@ -258,8 +262,18 @@ impl Service {
         );
     }
 
+    /// Withdraw an advertisement for a local resource
+    ///
+    /// For instance, it is "polite" to call this if shutting down
+    /// cleanly.
+    ///
+    pub fn deadvertise(&mut self, unique_service_name: &str) {
+        self.engine.deadvertise(unique_service_name,
+                                &self.search_socket)
+    }
+
     /// Handler to be called when multicast socket is readable
-    pub fn multicast_ready(&mut self, _event: &mio::event::Event) {
+    pub fn multicast_ready(&mut self) {
         let mut buf = [0u8; 1500];
         if let Ok((n, wasto, wasfrom)) =
             self.multicast_socket.receive_to(&mut buf)
@@ -274,7 +288,7 @@ impl Service {
     }
 
     /// Handler to be called when search socket is readable
-    pub fn search_ready(&mut self, _event: &mio::event::Event) {
+    pub fn search_ready(&mut self) {
         let mut buf = [0u8; 1500];
         if let Ok((n, wasto, wasfrom)) =
             self.search_socket.receive_to(&mut buf)
@@ -286,6 +300,16 @@ impl Service {
                 wasfrom,
             );
         }
+    }
+
+    /// Time before next wakeup
+    pub fn next_wakeup(&self) -> std::time::Duration {
+        self.engine.next_wakeup()
+    }
+
+    /// Handler to be called when wakeup timer elapses
+    pub fn wakeup(&mut self) {
+        self.engine.wakeup(&self.search_socket)
     }
 }
 

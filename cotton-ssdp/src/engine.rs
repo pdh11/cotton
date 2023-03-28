@@ -73,10 +73,11 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 /// [`Engine::on_data`], and changes to available network interfaces
 /// (if required) to [`Engine::on_interface_event`].
 ///
-/// The owner should also implement a timer facility: the [`Engine`] can
-/// be asked at any time when it next needs a timer callback ([`Engine::next_wakeup`]),
-/// and, when that time comes, the [`Engine::wakeup`] method must be called. See,
-/// for instance, the `tokio::select!` loop in `AsyncService::new_inner`.
+/// The owner should also implement a timer facility: the [`Engine`]
+/// can be asked at any time when it next needs a timer callback
+/// ([`Engine::next_wakeup`]), and, when that time comes, the
+/// [`Engine::wakeup`] method must be called. See, for instance, the
+/// `tokio::select!` loop in `AsyncService::new_inner`.
 ///
 pub struct Engine<CB: Callback> {
     interfaces: HashMap<InterfaceIndex, Interface>,
