@@ -11,6 +11,11 @@ So far:
    ongoing (asynchronous) comings and goings of network interfaces
    (e.g. on USB hotplug/unplug); so far, for Linux only
 
+ - [cotton-ssdp](https://crates.io/crates/cotton-ssdp): implementing
+   SSDP, the Simple Service Discovery Protocol, a mechanism for
+   discovering available resources (service) on a local network. Uses
+   cotton-netif, in order to do the Right Thing on multi-homed hosts.
+
 My long-term goals for this project as a whole:
 
  - provide useful, solid, well-tested components to folks needing Rust
@@ -19,5 +24,4 @@ My long-term goals for this project as a whole:
  - develop skills in Rust coding, including the packaging,
    distributing, and publicising of it, after a career spent with C++
 
-Everything is licensed under Creative Commons CCO, qv.
-
+Everything is licensed under Creative Commons CC0, qv.
