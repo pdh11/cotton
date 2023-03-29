@@ -319,8 +319,7 @@ mod tests {
             destination: None,
         };
 
-        let mut iter =
-            get_interfaces_inner2(vec![ifaddr, ifaddr2], index_1);
+        let mut iter = get_interfaces_inner2(vec![ifaddr, ifaddr2], index_1);
 
         let link = iter.next();
         assert!(link.is_some());
