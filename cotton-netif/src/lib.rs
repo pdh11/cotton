@@ -20,7 +20,7 @@
 //!  - [ ] Turn async into a (cargo) Feature
 //!
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
@@ -59,9 +59,9 @@ bitflags! {
     }
 }
 
-#[cfg(target_os="none")]
+#[cfg(not(feature = "std"))]
 use smoltcp::wire::IpAddress;
-#[cfg(not(target_os="none"))]
+#[cfg(feature = "std")]
 use std::net::IpAddr as IpAddress;
 
 /** Event when a new interface or address is detected, or when one disappears

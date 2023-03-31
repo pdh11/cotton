@@ -8,6 +8,7 @@ categories = ["network-programming"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
+rust-version = "1.65"
 
 [dependencies]
 bitflags = { version = "1.3", default_features = false }
@@ -19,11 +20,15 @@ tokio-test = { version = "0.4", default_features = false }
 smoltcp = { version = "0.8", default_features = false, features = ["proto-ipv4"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio = { version = "1.18", default_features = false, features = ["macros", "sync", "rt"] }
-futures-util = { version = "0.3", default_features = false, features = ["async-await", "async-await-macro"] }
-async-stream = { version = "0.3", default_features = false }
 neli = { version = "0.6", default_features = false, features = ["async"] }
 
 [target.'cfg(unix)'.dependencies]
+tokio = { version = "1.18", default_features = false, features = ["macros", "sync", "rt"] }
+futures-util = { version = "0.3", default_features = false, features = ["async-await", "async-await-macro"] }
+async-stream = { version = "0.3", default_features = false }
 nix = { version = "0.24", default_features = false, features = ["net"] }
 libc = { version = "0.2.139", default_features = false }
+
+[features]
+default = ["std"]
+std = []
