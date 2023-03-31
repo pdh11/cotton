@@ -1,6 +1,6 @@
 [package]
 name = "cotton-ssdp"
-version = "0.0.1"
+version = "0.0.2"
 description = "Implementing SSDP, the Simple Service Discovery Protocol"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"

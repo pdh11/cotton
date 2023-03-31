@@ -71,7 +71,7 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 /// not own or define the UDP sockets themselves, which are left to
 /// its owner.  The owner should pass incoming UDP packets to
 /// [`Engine::on_data`], and changes to available network interfaces
-/// (if required) to [`Engine::on_interface_event`].
+/// (if required) to [`Engine::on_network_event`].
 ///
 /// The owner should also implement a timer facility: the [`Engine`]
 /// can be asked at any time when it next needs a timer callback
@@ -335,9 +335,9 @@ impl<CB: Callback> Engine<CB> {
     ///
     /// Passes on errors from the underlying system-calls for joining
     /// (and leaving) multicast groups.
-    pub fn on_interface_event<SCK: udp::TargetedSend + udp::Multicast>(
+    pub fn on_network_event<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
-        e: NetworkEvent,
+        e: &NetworkEvent,
         multicast: &SCK,
         search: &SCK,
     ) -> Result<(), std::io::Error> {
@@ -348,15 +348,15 @@ impl<CB: Callback> Engine<CB> {
                         cotton_netif::Flags::RUNNING | cotton_netif::Flags::UP,
                     );
                     let mut do_send = false;
-                    if let Some(v) = self.interfaces.get_mut(&ix) {
+                    if let Some(v) = self.interfaces.get_mut(ix) {
                         if up && !v.up {
                             do_send = true;
                         }
                         v.up = up;
                     } else {
-                        Self::join_multicast(ix, multicast)?;
+                        Self::join_multicast(*ix, multicast)?;
                         self.interfaces.insert(
-                            ix,
+                            *ix,
                             Interface {
                                 ips: Vec::new(),
                                 up,
@@ -364,32 +364,32 @@ impl<CB: Callback> Engine<CB> {
                         );
                     }
                     if do_send {
-                        self.send_all(&self.interfaces[&ix].ips, search);
+                        self.send_all(&self.interfaces[ix].ips, search);
                     }
                 }
             }
             NetworkEvent::DelLink(ix) => {
-                if self.interfaces.remove(&ix).is_some() {
-                    Self::leave_multicast(ix, multicast)?;
+                if self.interfaces.remove(ix).is_some() {
+                    Self::leave_multicast(*ix, multicast)?;
                 }
             }
             NetworkEvent::NewAddr(ix, addr, _prefix) => {
                 if addr.is_ipv4() {
                     // cotton-netif guarantees we get a NewLink before
                     // any NewAddr
-                    if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
-                        if !v.ips.contains(&addr) {
-                            v.ips.push(addr);
+                    if let Some(ref mut v) = self.interfaces.get_mut(ix) {
+                        if !v.ips.contains(addr) {
+                            v.ips.push(*addr);
                             if v.up {
-                                self.send_all(&[addr], search);
+                                self.send_all(&[*addr], search);
                             }
                         }
                     }
                 }
             }
             NetworkEvent::DelAddr(ix, addr, _prefix) => {
-                if let Some(ref mut v) = self.interfaces.get_mut(&ix) {
-                    if let Some(n) = v.ips.iter().position(|&a| a == addr) {
+                if let Some(ref mut v) = self.interfaces.get_mut(ix) {
+                    if let Some(n) = v.ips.iter().position(|a| a == addr) {
                         v.ips.swap_remove(n);
                     }
                 }
@@ -879,10 +879,10 @@ mod tests {
     fn search_sent_on_network_event_if_already_subscribed() {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 1);
         assert!(f.s.contains_search("ssdp:all"));
@@ -891,8 +891,8 @@ mod tests {
     #[test]
     fn search_sent_on_subscribe_if_network_already_exists() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
         f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
@@ -910,9 +910,9 @@ mod tests {
     #[test]
     fn no_search_sent_on_down_interface() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            f.e.on_network_event(&new_eth0_if_down(), &f.s, &f.s)
                 .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
         f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
@@ -923,9 +923,9 @@ mod tests {
     #[test]
     fn no_search_sent_on_non_multicast_interface() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_nomulti(), &f.s, &f.s)
+            f.e.on_network_event(&new_eth0_if_nomulti(), &f.s, &f.s)
                 .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
         f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
@@ -937,13 +937,13 @@ mod tests {
     fn searches_sent_on_two_ips() {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            f.e.on_network_event(&new_eth0_if_down(), &f.s, &f.s)
                 .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 2);
         assert!(f.s.contains_send(
@@ -966,14 +966,14 @@ mod tests {
     fn no_search_sent_on_deleted_ips() {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            f.e.on_network_event(&new_eth0_if_down(), &f.s, &f.s)
                 .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR_2, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&DEL_ETH0_ADDR_2, &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 1);
         assert!(f.s.contains_send(
@@ -989,12 +989,12 @@ mod tests {
     fn search_sent_on_interface_newly_up() {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            f.e.on_network_event(&new_eth0_if_down(), &f.s, &f.s)
                 .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 1);
         assert!(f.s.contains_send(
@@ -1011,10 +1011,10 @@ mod tests {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
             f.e.subscribe("upnp::Content:2".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 1);
         assert!(f.s.contains_send(
@@ -1031,10 +1031,10 @@ mod tests {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
             f.e.subscribe("upnp::Content:2".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.send_count() == 2);
         assert!(f.s.contains_send(
@@ -1115,10 +1115,10 @@ mod tests {
     fn notify_sent_on_network_event() {
         let mut f = Fixture::new_with(|f| {
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         // Note URL has been rewritten to include the real IP address
         assert!(f.s.contains_send(
@@ -1133,9 +1133,9 @@ mod tests {
     #[test]
     fn no_notify_sent_on_down_interface() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if_down(), &f.s, &f.s)
                 .unwrap();
         });
 
@@ -1147,8 +1147,8 @@ mod tests {
     #[test]
     fn notify_sent_on_advertise() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
         f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
@@ -1165,8 +1165,8 @@ mod tests {
     #[test]
     fn notify_sent_on_deadvertise() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
@@ -1185,9 +1185,9 @@ mod tests {
     #[test]
     fn no_notify_sent_on_down_interface_on_deadvertise() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if_down(), &f.s, &f.s)
+            f.e.on_network_event(&new_eth0_if_down(), &f.s, &f.s)
                 .unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
@@ -1199,8 +1199,8 @@ mod tests {
     #[test]
     fn response_sent_to_specific_search() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
@@ -1220,8 +1220,8 @@ mod tests {
     #[test]
     fn response_sent_to_downlevel_search() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.advertise(
                 "uuid:137".to_string(),
                 Advertisement {
@@ -1251,8 +1251,8 @@ mod tests {
     #[test]
     fn response_sent_to_generic_search() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
@@ -1272,8 +1272,8 @@ mod tests {
     #[test]
     fn response_not_sent_to_other_search() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
@@ -1302,7 +1302,7 @@ mod tests {
     fn join_multicast_on_new_interface() {
         let mut f = Fixture::default();
 
-        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
 
         assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, true));
@@ -1311,10 +1311,10 @@ mod tests {
     #[test]
     fn dont_join_multicast_on_repeat_interface() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+        f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
 
         assert!(f.s.no_mcasts());
     }
@@ -1322,11 +1322,11 @@ mod tests {
     #[test]
     fn leave_multicast_on_interface_gone() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
+        f.e.on_network_event(&del_eth0(), &f.s, &f.s).unwrap();
 
         assert!(f.s.mcast_count() == 1);
         assert!(f.s.contains_mcast(MULTICAST_IP, LOCAL_IX, false));
@@ -1340,17 +1340,17 @@ mod tests {
             f.s.inject_multicast_error(true);
         });
 
-        assert!(f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).is_err());
+        assert!(f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).is_err());
     }
 
     #[test]
     fn error_leave_multicast_on_interface_gone() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
             f.s.inject_multicast_error(true);
         });
 
-        assert!(f.e.on_interface_event(del_eth0(), &f.s, &f.s).is_err());
+        assert!(f.e.on_network_event(&del_eth0(), &f.s, &f.s).is_err());
     }
 
     /* ==== Tests for timer handling ==== */
@@ -1399,8 +1399,8 @@ mod tests {
     #[test]
     fn timeout_retransmits_adverts() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
             f.e.advertise("uuid:XYZ".to_string(), root_advert_2(), &f.s);
         });
@@ -1427,8 +1427,8 @@ mod tests {
     #[test]
     fn timeout_retransmits_searches() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
             f.e.subscribe("upnp::Content:2".to_string(), f.c.clone(), &f.s);
         });
@@ -1455,8 +1455,8 @@ mod tests {
     #[test]
     fn timeout_retransmits_generic_search() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
             f.e.subscribe("upnp::Renderer:3".to_string(), f.c.clone(), &f.s);
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
         });
@@ -1479,18 +1479,18 @@ mod tests {
     fn bogus_dellink_ignored() {
         let mut f = Fixture::default();
 
-        f.e.on_interface_event(del_eth0(), &f.s, &f.s).unwrap();
+        f.e.on_network_event(&del_eth0(), &f.s, &f.s).unwrap();
     }
 
     #[test]
     fn repeat_address_ignored() {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
-            f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.no_sends());
     }
@@ -1501,7 +1501,7 @@ mod tests {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
         });
 
-        f.e.on_interface_event(NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.no_sends());
     }
@@ -1510,10 +1510,10 @@ mod tests {
     fn ipv6_address_ignored() {
         let mut f = Fixture::new_with(|f| {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(NEW_IPV6_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&NEW_IPV6_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.no_sends());
     }
@@ -1521,10 +1521,10 @@ mod tests {
     #[test]
     fn bogus_deladdr_ignored() {
         let mut f = Fixture::new_with(|f| {
-            f.e.on_interface_event(new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
         });
 
-        f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.no_sends());
     }
@@ -1533,7 +1533,7 @@ mod tests {
     fn bogus_deladdr_ignored_2() {
         let mut f = Fixture::default();
 
-        f.e.on_interface_event(DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
+        f.e.on_network_event(&DEL_ETH0_ADDR, &f.s, &f.s).unwrap();
 
         assert!(f.s.no_sends());
     }

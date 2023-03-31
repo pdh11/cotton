@@ -2,7 +2,6 @@ use crate::engine::{Callback, Engine};
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
 use futures::Stream;
-use futures_util::StreamExt;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -86,7 +85,6 @@ impl AsyncService {
     }
 
     fn new_inner(create: InnerNewFn) -> Result<Self, std::io::Error> {
-        let mut s = cotton_netif::get_interfaces_async()?;
         let inner = Arc::new(create(Engine::new())?);
         let inner2 = inner.clone();
 
@@ -95,13 +93,6 @@ impl AsyncService {
                 println!("select");
 
                 tokio::select! {
-                    e = s.next() => if let Some(Ok(event)) = e {
-                        _ = inner.engine.lock().unwrap().on_interface_event(
-                            event,
-                            &inner.multicast_socket,
-                            &inner.search_socket,
-                        );
-                    },
                     _ = inner.multicast_socket.readable() => {
                         let mut buf = [0u8; 1500];
                         if let Ok((n, wasto, wasfrom)) =
@@ -138,6 +129,29 @@ impl AsyncService {
         });
 
         Ok(AsyncService { inner: inner2 })
+    }
+
+    /// Notify the `AsyncService` of a network interface change
+    ///
+    /// Network interface changes can be obtained from
+    /// `cotton_netif::get_interfaces` or
+    /// `cotton_netif::get_interfaces_async`, filtering if desired --
+    /// or, created manually.
+    ///
+    /// Note that `AsyncService` will do nothing if it has no network
+    /// interfaces to work with.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if the internal mutex cannot be locked; that would indicate
+    /// a bug in cotton-ssdp.
+    ///
+    pub fn on_network_event(&self, event: &cotton_netif::NetworkEvent) {
+        _ = self.inner.engine.lock().unwrap().on_network_event(
+            event,
+            &self.inner.multicast_socket,
+            &self.inner.search_socket,
+        );
     }
 
     /// Subscribe to SSDP notifications for a resource type.

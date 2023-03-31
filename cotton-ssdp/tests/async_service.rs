@@ -7,6 +7,11 @@ async fn services_communicate() {
     let mut ssdp1 = AsyncService::new().unwrap();
     let mut ssdp2 = AsyncService::new().unwrap();
 
+    for event in cotton_netif::get_interfaces().unwrap() {
+        ssdp1.on_network_event(&event);
+        ssdp2.on_network_event(&event);
+    }
+
     ssdp1.advertise(
         "uuid:999",
         Advertisement {

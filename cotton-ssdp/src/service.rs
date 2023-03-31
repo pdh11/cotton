@@ -188,8 +188,8 @@ impl Service {
         for netif in interfaces {
             // Ignore errors -- some interfaces are returned on which
             // join_multicast failes (lxcbr0)
-            _ = engine.on_interface_event(
-                netif,
+            _ = engine.on_network_event(
+                &netif,
                 &multicast_socket,
                 &search_socket,
             );
