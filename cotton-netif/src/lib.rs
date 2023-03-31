@@ -20,8 +20,11 @@
 //!  - [ ] Turn async into a (cargo) Feature
 //!
 
+#![no_std]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
+
+extern crate alloc;
 
 use bitflags::bitflags;
 
@@ -56,22 +59,27 @@ bitflags! {
     }
 }
 
+#[cfg(target_os="none")]
+use smoltcp::wire::IpAddress;
+#[cfg(not(target_os="none"))]
+use std::net::IpAddr as IpAddress;
+
 /** Event when a new interface or address is detected, or when one disappears
  */
 #[derive(Debug, Clone, PartialEq)]
 pub enum NetworkEvent {
     /** A new network interface is detected. */
-    NewLink(InterfaceIndex, String, Flags),
+    NewLink(InterfaceIndex, alloc::string::String, Flags),
 
     /** A previously-seen interface has gone away (e.g. USB unplug). */
     DelLink(InterfaceIndex),
 
     /** An interface has a new address; note that each interface can have several addresses.
      */
-    NewAddr(InterfaceIndex, std::net::IpAddr, u8),
+    NewAddr(InterfaceIndex, IpAddress, u8),
 
     /** A previously-active address has been deactivated. */
-    DelAddr(InterfaceIndex, std::net::IpAddr, u8),
+    DelAddr(InterfaceIndex, IpAddress, u8),
 }
 
 /** Dynamic listing using Linux's netlink socket
