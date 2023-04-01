@@ -20,7 +20,7 @@
 //!  - [ ] Turn async into a (cargo) Feature
 //!
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(target_os = "none", no_std)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
@@ -59,9 +59,9 @@ bitflags! {
     }
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(target_os="none")]
 use smoltcp::wire::IpAddress;
-#[cfg(feature = "std")]
+#[cfg(not(target_os="none"))]
 use std::net::IpAddr as IpAddress;
 
 /** Event when a new interface or address is detected, or when one disappears
@@ -93,10 +93,10 @@ pub use linux_netlink::get_interfaces_async;
 
 /** Static listing using Linux/glibc's getifaddrs(3)
  */
-#[cfg(unix)]
+#[cfg(not(target_os = "none"))]
 pub mod getifaddrs;
 
-#[cfg(unix)]
+#[cfg(not(target_os = "none"))]
 #[doc(inline)]
 pub use getifaddrs::get_interfaces;
 
