@@ -23,6 +23,11 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
+#![cfg_attr(nightly, feature(doc_auto_cfg))]
+#![cfg_attr(nightly, feature(doc_cfg_hide))]
+#![cfg_attr(nightly, doc(cfg_hide(doc)))]
+
+// NB we use CI to set the "nightly" cfg, it isn't built-in
 
 extern crate alloc;
 
