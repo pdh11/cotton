@@ -17,10 +17,10 @@
 //!  - [x] Does `DelAddr` need to include the address? *yes*
 //!  - [x] Can `get_interfaces_async` itself not be async?
 //!  - [ ] Can we use just one netlink socket, perhaps with lower-level neli?
-//!  - [ ] Turn async into a (cargo) Feature
+//!  - [x] Turn async into a (cargo) Feature
 //!
 
-#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 #![cfg_attr(nightly, feature(doc_auto_cfg))]
@@ -64,10 +64,7 @@ bitflags! {
     }
 }
 
-#[cfg(target_os="none")]
-use smoltcp::wire::IpAddress;
-#[cfg(not(target_os="none"))]
-use std::net::IpAddr as IpAddress;
+use no_std_net::IpAddr as IpAddress;
 
 /** Event when a new interface or address is detected, or when one disappears
  */
@@ -89,27 +86,29 @@ pub enum NetworkEvent {
 
 /** Dynamic listing using Linux's netlink socket
  */
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "async"))]
 pub mod linux_netlink;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "async"))]
 #[doc(inline)]
 pub use linux_netlink::get_interfaces_async;
 
 /** Static listing using Linux/glibc's getifaddrs(3)
  */
-#[cfg(not(target_os = "none"))]
+#[cfg(all(feature = "std", not(target_os = "none")))]
 pub mod getifaddrs;
 
-#[cfg(not(target_os = "none"))]
+#[cfg(all(feature = "std", not(target_os = "none")))]
 #[doc(inline)]
 pub use getifaddrs::get_interfaces;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "std")]
     use std::collections::HashMap;
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_index_debug() {
         let ix = InterfaceIndex(3);
@@ -127,6 +126,7 @@ mod tests {
         assert_eq!(ix, ix3);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_index_hash() {
         let mut h = HashMap::new();
@@ -142,6 +142,7 @@ mod tests {
         assert!(InterfaceIndex(2).ne(&InterfaceIndex(3)));
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_event_debug() {
         let e = NetworkEvent::DelLink(InterfaceIndex(7));
