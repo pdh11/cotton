@@ -16,7 +16,7 @@ rustdoc-args = ["--cfg", "nightly"]
 
 [[example]]
 name = "netif-monitor"
-required-features = ["std", "async"]
+required-features = ["std", "async", "sync"]
 doc-scrape-examples = true
 
 [dependencies]
@@ -31,10 +31,11 @@ tokio = { version = "1.18", default_features = false, features = ["macros", "syn
 tokio-test = { version = "0.4", default_features = false, optional = true }
 futures-util = { version = "0.3", default_features = false, features = ["async-await", "async-await-macro"], optional = true }
 async-stream = { version = "0.3", default_features = false, optional = true }
-nix = { version = "0.24", default_features = false, features = ["net"] }
-libc = { version = "0.2.139", default_features = false }
+nix = { version = "0.24", default_features = false, features = ["net"], optional = true }
+libc = { version = "0.2.139", default_features = false, optional = true }
 
 [features]
-default = ["std", "async"]
+default = ["std", "async", "sync"]
 std = ["no-std-net/std"]
-async = ["std", "dep:tokio", "dep:futures-util", "dep:async-stream", "dep:tokio-test", "dep:neli"]
+async = ["std", "dep:tokio", "dep:futures-util", "dep:async-stream", "dep:tokio-test", "dep:neli", "dep:nix"]
+sync = ["std", "dep:nix", "dep:libc"]

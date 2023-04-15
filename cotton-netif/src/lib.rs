@@ -95,10 +95,10 @@ pub use linux_netlink::get_interfaces_async;
 
 /** Static listing using Linux/glibc's getifaddrs(3)
  */
-#[cfg(all(feature = "std", not(target_os = "none")))]
+#[cfg(all(feature = "sync", not(target_os = "none")))]
 pub mod getifaddrs;
 
-#[cfg(all(feature = "std", not(target_os = "none")))]
+#[cfg(all(feature = "sync", not(target_os = "none")))]
 #[doc(inline)]
 pub use getifaddrs::get_interfaces;
 
