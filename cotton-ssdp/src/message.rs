@@ -33,14 +33,11 @@ pub enum Error {
 }
 
 pub fn parse(buf: &[u8]) -> Result<Message, Error> {
-    let packet = core::str::from_utf8(buf)
-        .map_err(|_| Error::InvalidData)?;
+    let packet = core::str::from_utf8(buf).map_err(|_| Error::InvalidData)?;
 
     let mut iter = packet.lines();
 
-    let prefix = iter
-        .next()
-        .ok_or(Error::UnexpectedEof)?;
+    let prefix = iter.next().ok_or(Error::UnexpectedEof)?;
 
     let mut map = BTreeMap::new();
     for line in iter {
@@ -113,10 +110,7 @@ struct MessageCursor<'a> {
 
 impl<'a> MessageCursor<'a> {
     pub fn new(buf: &'a mut [u8]) -> MessageCursor {
-        MessageCursor {
-            buf,
-            offset: 0,
-        }
+        MessageCursor { buf, offset: 0 }
     }
 
     pub fn position(&self) -> usize {
@@ -131,7 +125,7 @@ impl<'a> core::fmt::Write for MessageCursor<'a> {
             return core::fmt::Result::Err(core::fmt::Error);
         }
         let b = s.as_bytes();
-        self.buf[self.offset..self.offset+n].clone_from_slice(b);
+        self.buf[self.offset..self.offset + n].clone_from_slice(b);
         self.offset += n;
         core::fmt::Result::Ok(())
     }

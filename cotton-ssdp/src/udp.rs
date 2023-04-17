@@ -1,6 +1,52 @@
 use ::std::net::{IpAddr, SocketAddr};
 use cotton_netif::InterfaceIndex;
 
+/// The list of system calls which can return errors
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum Syscall {
+    /// recvmsg() returned an error
+    Recvmsg,
+    /// sendmsg() returned an error
+    Sendmsg,
+    /// setsockopt(IP_ADD_MEMBERSHIP) returned an error
+    JoinMulticast,
+    /// setsockopt(IP_DROP_MEMBERSHIP) returned an error
+    LeaveMulticast,
+}
+
+/// The errors which can be returned from UDP trait methods
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum Error {
+    /// recvmsg didn't return packet info as expected
+    NoPacketInfo,
+    /// IPv6 attempted (NYI)
+    Ipv6NotImplemented,
+
+    /// A system call returned an error
+    Syscall(Syscall, ::std::io::Error),
+}
+
+impl ::core::fmt::Display for Error {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        match self {
+            Error::NoPacketInfo => f.write_str("recvmsg: no pktinfo returned"),
+            Error::Ipv6NotImplemented => f.write_str("IPv6 not implemented"),
+            Error::Syscall(s, _) => write!(f, "error from syscall {s:?}"),
+        }
+    }
+}
+
+impl ::std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
+        match self {
+            Error::Syscall(_, e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
 /// Sending UDP datagrams from a specific source IP
 pub trait TargetedSend {
     /// Send a UDP datagram from a specific source IP (and interface)
@@ -28,7 +74,7 @@ pub trait TargetedSend {
         to: &SocketAddr,
         from: &IpAddr,
         f: F,
-    ) -> Result<(), ::std::io::Error>
+    ) -> Result<(), Error>
     where
         F: FnOnce(&mut [u8]) -> usize;
 }
@@ -58,7 +104,7 @@ pub trait TargetedReceive {
     fn receive_to(
         &self,
         buffer: &mut [u8],
-    ) -> Result<(usize, IpAddr, SocketAddr), ::std::io::Error>;
+    ) -> Result<(usize, IpAddr, SocketAddr), Error>;
 }
 
 /// Joining and leaving multicast groups (by interface number)
@@ -73,7 +119,7 @@ pub trait Multicast {
         &self,
         multicast_address: &IpAddr,
         interface: InterfaceIndex,
-    ) -> Result<(), ::std::io::Error>;
+    ) -> Result<(), Error>;
 
     /// Leave a particular multicast group on a particular network interface
     ///
@@ -85,7 +131,7 @@ pub trait Multicast {
         &self,
         multicast_address: &IpAddr,
         interface: InterfaceIndex,
-    ) -> Result<(), ::std::io::Error>;
+    ) -> Result<(), Error>;
 }
 
 /// Utilities common to all implementations using `std::net` underneath
@@ -96,3 +142,66 @@ pub mod mio;
 
 /// Trait implementations for Tokio sockets
 pub mod tokio;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_pkt_error() {
+        let e = super::Error::NoPacketInfo;
+        let m = format!("{e}");
+        assert_eq!(m, "recvmsg: no pktinfo returned".to_string());
+
+        use ::std::error::Error;
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn debug_pkt_error() {
+        let e = Error::NoPacketInfo;
+        let e = format!("{e:?}");
+        assert_eq!(e, "NoPacketInfo".to_string());
+    }
+
+    #[test]
+    fn display_ipv6_error() {
+        let e = super::Error::Ipv6NotImplemented;
+        let m = format!("{e}");
+        assert_eq!(m, "IPv6 not implemented".to_string());
+
+        use ::std::error::Error;
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn debug_ipv6_error() {
+        let e = super::Error::Ipv6NotImplemented;
+        let e = format!("{e:?}");
+        assert_eq!(e, "Ipv6NotImplemented".to_string());
+    }
+
+    #[test]
+    fn display_syscall_error() {
+        let e = super::Error::Syscall(
+            Syscall::JoinMulticast,
+            ::std::io::Error::new(::std::io::ErrorKind::Other, "injected"),
+        );
+        let m = format!("{e}");
+        assert_eq!(m, "error from syscall JoinMulticast".to_string());
+
+        use ::std::error::Error;
+        let m = format!("{}", e.source().unwrap());
+        assert_eq!(m, "injected".to_string());
+    }
+
+    #[test]
+    fn debug_syscall_error() {
+        let e = Error::Syscall(
+            Syscall::JoinMulticast,
+            ::std::io::Error::new(::std::io::ErrorKind::Other, "injected"),
+        );
+        let e = format!("{e:?}");
+        assert_eq!(e, "Syscall(JoinMulticast, Custom { kind: Other, error: \"injected\" })".to_string());
+    }
+}

@@ -1,6 +1,7 @@
+use super::{Error, Syscall};
 use ::std::net::{IpAddr, SocketAddr};
-use std::os::unix::io::AsRawFd;
 use cotton_netif::InterfaceIndex;
+use std::os::unix::io::AsRawFd;
 
 impl super::TargetedSend for mio::net::UdpSocket {
     fn send_with<F>(
@@ -9,7 +10,7 @@ impl super::TargetedSend for mio::net::UdpSocket {
         to: &SocketAddr,
         from: &IpAddr,
         f: F,
-    ) -> Result<(), std::io::Error>
+    ) -> Result<(), Error>
     where
         F: FnOnce(&mut [u8]) -> usize,
     {
@@ -23,6 +24,7 @@ impl super::TargetedSend for mio::net::UdpSocket {
                 from,
             )
         })
+        .map_err(|e| Error::Syscall(Syscall::Sendmsg, e))
     }
 }
 
@@ -30,8 +32,9 @@ impl super::TargetedReceive for mio::net::UdpSocket {
     fn receive_to(
         &self,
         buffer: &mut [u8],
-    ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
+    ) -> Result<(usize, IpAddr, SocketAddr), Error> {
         self.try_io(|| super::std::receive_to(self.as_raw_fd(), buffer))
+            .map_err(|e| Error::Syscall(Syscall::Recvmsg, e))
     }
 }
 
@@ -40,26 +43,28 @@ impl super::Multicast for mio::net::UdpSocket {
         &self,
         address: &IpAddr,
         interface: InterfaceIndex,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), Error> {
         super::std::ipv4_multicast_operation(
             self.as_raw_fd(),
             libc::IP_ADD_MEMBERSHIP,
             address,
             interface,
         )
+        .map_err(|e| Error::Syscall(Syscall::JoinMulticast, e))
     }
 
     fn leave_multicast_group(
         &self,
         address: &IpAddr,
         interface: InterfaceIndex,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), Error> {
         super::std::ipv4_multicast_operation(
             self.as_raw_fd(),
             libc::IP_DROP_MEMBERSHIP,
             address,
             interface,
         )
+        .map_err(|e| Error::Syscall(Syscall::LeaveMulticast, e))
     }
 }
 

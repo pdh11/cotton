@@ -288,7 +288,7 @@ impl<CB: Callback> Engine<CB> {
     fn join_multicast<SCK: udp::TargetedSend + udp::Multicast>(
         interface: InterfaceIndex,
         multicast: &SCK,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), udp::Error> {
         multicast.join_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
             interface,
@@ -298,7 +298,7 @@ impl<CB: Callback> Engine<CB> {
     fn leave_multicast<SCK: udp::TargetedSend + udp::Multicast>(
         interface: InterfaceIndex,
         multicast: &SCK,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), udp::Error> {
         multicast.leave_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
             interface,
@@ -340,7 +340,7 @@ impl<CB: Callback> Engine<CB> {
         e: &NetworkEvent,
         multicast: &SCK,
         search: &SCK,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), udp::Error> {
         match e {
             NetworkEvent::NewLink(ix, _name, flags) => {
                 if flags.contains(cotton_netif::Flags::MULTICAST) {
@@ -686,7 +686,7 @@ mod tests {
             to: &SocketAddr,
             from: &IpAddr,
             f: F,
-        ) -> Result<(), std::io::Error>
+        ) -> Result<(), udp::Error>
         where
             F: FnOnce(&mut [u8]) -> usize,
         {
@@ -706,9 +706,12 @@ mod tests {
             &self,
             multicast_address: &IpAddr,
             interface: InterfaceIndex,
-        ) -> Result<(), std::io::Error> {
+        ) -> Result<(), udp::Error> {
             if self.injecting_multicast_error {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
+                Err(udp::Error::Syscall(
+                    udp::Syscall::JoinMulticast,
+                    std::io::Error::new(std::io::ErrorKind::Other, "injected"),
+                ))
             } else {
                 self.mcasts.lock().unwrap().push((
                     *multicast_address,
@@ -723,9 +726,12 @@ mod tests {
             &self,
             multicast_address: &IpAddr,
             interface: InterfaceIndex,
-        ) -> Result<(), std::io::Error> {
+        ) -> Result<(), udp::Error> {
             if self.injecting_multicast_error {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
+                Err(udp::Error::Syscall(
+                    udp::Syscall::LeaveMulticast,
+                    std::io::Error::new(std::io::ErrorKind::Other, "injected"),
+                ))
             } else {
                 self.mcasts.lock().unwrap().push((
                     *multicast_address,
