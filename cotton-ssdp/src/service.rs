@@ -105,7 +105,7 @@ this simpler example is not in itself compliant with that document.)
         uuid.to_string(),
         cotton_ssdp::Advertisement {
             notification_type: "test".to_string(),
-            location: url::Url::parse("http://127.0.0.1:3333/test").unwrap(),
+            location: "http://127.0.0.1:3333/test".to_string(),
         },
     );
 ```

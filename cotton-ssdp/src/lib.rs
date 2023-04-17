@@ -113,7 +113,7 @@ pub struct Advertisement {
     pub notification_type: String,
 
     /// Resource location
-    pub location: url::Url,
+    pub location: String,
 }
 
 #[cfg(feature = "async")]

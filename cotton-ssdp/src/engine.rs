@@ -36,6 +36,15 @@ fn target_match(search: &str, candidate: &str) -> bool {
     false
 }
 
+fn rewrite_host(base_url: &str, ip: &IpAddr) -> String {
+    if let Ok(mut url) = url::Url::parse(base_url) {
+        _ = url.set_ip_host(*ip);
+        url.to_string()
+    } else {
+        base_url.to_string()
+    }
+}
+
 /// A callback made by [`Engine`] when notification messages arrive
 ///
 /// See implementations in [`crate::Service`] and [`crate::AsyncService`].
@@ -219,8 +228,7 @@ impl<CB: Callback> Engine<CB> {
                             &search_target,
                             &value.notification_type,
                         ) {
-                            let mut url = value.location.clone();
-                            let _ = url.set_ip_host(wasto);
+                            let url = rewrite_host(&value.location, &wasto);
 
                             let response_type = if search_target == "ssdp:all"
                             {
@@ -237,7 +245,7 @@ impl<CB: Callback> Engine<CB> {
                                         b,
                                         response_type,
                                         key,
-                                        url.as_str(),
+                                        &url
                                     )
                                 },
                             );
@@ -378,8 +386,7 @@ impl<CB: Callback> Engine<CB> {
         source: &IpAddr,
         socket: &SCK,
     ) {
-        let mut url = advertisement.location.clone();
-        let _ = url.set_ip_host(*source);
+        let url = rewrite_host(&advertisement.location, source);
         let _ = socket.send_with(
             MAX_PACKET_SIZE,
             &SocketAddr::V4(SocketAddrV4::new(
@@ -392,7 +399,7 @@ impl<CB: Callback> Engine<CB> {
                     b,
                     &advertisement.notification_type,
                     unique_service_name,
-                    url.as_str(),
+                    &url
                 )
             },
         );
@@ -821,18 +828,14 @@ mod tests {
     fn root_advert() -> Advertisement {
         Advertisement {
             notification_type: "upnp:rootdevice".to_string(),
-            location: url::Url::parse("http://127.0.0.1/description.xml")
-                .unwrap(),
+            location: "http://127.0.0.1/description.xml".to_string(),
         }
     }
 
     fn root_advert_2() -> Advertisement {
         Advertisement {
             notification_type: "upnp:rootdevice".to_string(),
-            location: url::Url::parse(
-                "http://127.0.0.1/nested/description.xml",
-            )
-            .unwrap(),
+            location: "http://127.0.0.1/nested/description.xml".to_string(),
         }
     }
 
@@ -1206,10 +1209,7 @@ mod tests {
                 "uuid:137".to_string(),
                 Advertisement {
                     notification_type: "upnp::Directory:3".to_string(),
-                    location: url::Url::parse(
-                        "http://127.0.0.1/description.xml",
-                    )
-                    .unwrap(),
+                    location: "http://127.0.0.1/description.xml".to_string(),
                 },
                 &f.s,
             );
@@ -1482,5 +1482,25 @@ mod tests {
         f.e.deadvertise("uuid:137", &f.s);
 
         assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn url_host_rewritten() {
+        let url = rewrite_host("http://127.0.0.1/description.xml",
+                               &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1/description.xml");
+    }
+
+    #[test]
+    fn url_host_rewritten2() {
+        let url = rewrite_host("http://127.0.0.1/",
+                               &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1/");
+    }
+
+    #[test]
+    fn bogus_url_passed_through() {
+        let url = rewrite_host("fnord", &LOCAL_SRC);
+        assert_eq!(url, "fnord".to_string());
     }
 }

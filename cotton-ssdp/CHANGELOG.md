@@ -14,6 +14,9 @@
 
 * Pass NetworkEvent structs as references where appropriate.
 
+* Change the `location` field of `Advertisement` from url::Url to plain
+  String, for no_std compatibility.
+
 
 ## [0.0.1] 2023-03-29
 
