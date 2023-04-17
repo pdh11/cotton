@@ -1,4 +1,5 @@
 use crate::engine::{Callback, Engine};
+use crate::refresh_timer::RefreshTimer;
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
@@ -104,7 +105,7 @@ this simpler example is not in itself compliant with that document.)
         uuid.to_string(),
         cotton_ssdp::Advertisement {
             notification_type: "test".to_string(),
-            location: url::Url::parse("http://127.0.0.1:3333/test").unwrap(),
+            location: "http://127.0.0.1:3333/test".to_string(),
         },
     );
 ```
@@ -117,7 +118,7 @@ running. For instance, if your Ethernet IP address is 192.168.1.3,
 and your wifi IP address is 10.0.4.7, anyone listening to SSDP on
 Ethernet will see `http://192.168.1.3:3333/test` and anyone listening on
 wifi will see `http://10.0.4.7:3333/test`. (For how this is done, see the use
-of [`url::Url::set_ip_host`] in [`Engine::on_data`].)
+of `rewrite_host` in [`Engine::on_data`].)
 
 # The polling loop
 
@@ -158,11 +159,12 @@ this:
 */
 pub struct Service {
     engine: Engine<SyncCallback>,
+    refresh_timer: RefreshTimer,
     multicast_socket: mio::net::UdpSocket,
     search_socket: mio::net::UdpSocket,
 }
 
-/// The type of [`udp::setup_socket`]
+/// The type of [`udp::std::setup_socket`]
 type SocketFn = fn(u16) -> Result<std::net::UdpSocket, std::io::Error>;
 
 /// The type of [`mio::Registry::register`]
@@ -200,6 +202,7 @@ impl Service {
 
         Ok(Self {
             engine,
+            refresh_timer: RefreshTimer::default(),
             multicast_socket,
             search_socket,
         })
@@ -221,7 +224,7 @@ impl Service {
         Self::new_inner(
             registry,
             tokens,
-            udp::setup_socket,
+            udp::std::setup_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
             cotton_netif::get_interfaces()?.collect(),
         )
@@ -304,12 +307,13 @@ impl Service {
 
     /// Time before next wakeup
     pub fn next_wakeup(&self) -> std::time::Duration {
-        self.engine.next_wakeup()
+        self.refresh_timer.next_refresh()
     }
 
     /// Handler to be called when wakeup timer elapses
     pub fn wakeup(&mut self) {
-        self.engine.wakeup(&self.search_socket);
+        self.refresh_timer.update_refresh();
+        self.engine.refresh(&self.search_socket);
     }
 }
 
@@ -392,7 +396,7 @@ mod tests {
         let e = Service::new_inner(
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
-            udp::setup_socket,
+            udp::std::setup_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
             Vec::default(),
         );
@@ -410,7 +414,7 @@ mod tests {
         let e = Service::new_inner(
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
-            udp::setup_socket,
+            udp::std::setup_socket,
             bogus_register,
             cotton_netif::get_interfaces().unwrap().collect(),
         );
@@ -428,7 +432,7 @@ mod tests {
         let e = Service::new_inner(
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
-            udp::setup_socket,
+            udp::std::setup_socket,
             |_, _, t| {
                 if t == SSDP_TOKEN1 {
                     Ok(())

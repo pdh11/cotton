@@ -44,18 +44,25 @@
 //! (on Github).
 //!
 //! Todo:
-//!  - [ ] Make mio/tokio features
+//!  - [x] Make mio/tokio features
 //!  - [ ] Make advertise/subscribe features
 //!  - [ ] `Cow<'static>` for input strings?
 //!  - [ ] Hasher instead of `thread_rng`; hash over network interfaces sb unique
 //!  - [ ] Vary phase 1,2,3 timings but keep phase 0 timings on round numbers (needs _absolute_ wall time)
 //!  - [ ] Monotonic time instead of `Instant::now` (lifetime?)
-//!  - [ ] `smoltcp`/`no_std`, see <https://github.com/rust-lang/rust/pull/104265>
+//!  - [x] `smoltcp`/`no_std`, see <https://github.com/rust-lang/rust/pull/104265>
 //!  - [ ] IPv6, see UPnP DA appendix A
 //!
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
+#![cfg_attr(nightly, feature(doc_auto_cfg))]
+#![cfg_attr(nightly, feature(doc_cfg_hide))]
+#![cfg_attr(nightly, doc(cfg_hide(doc)))]
+
+extern crate alloc;
+use alloc::string::String;
 
 /// Incoming SSDP notification, obtained from [`Service::subscribe`]
 ///
@@ -106,29 +113,42 @@ pub struct Advertisement {
     pub notification_type: String,
 
     /// Resource location
-    pub location: url::Url,
+    pub location: String,
 }
 
+#[cfg(feature = "async")]
 mod async_service;
 
 /// Low-level SSDP API used inside [`Service`] and [`AsyncService`]
 pub mod engine;
+
 mod message;
+
+#[cfg(feature = "sync")]
 mod service;
 
 /// Traits used to abstract over various UDP socket implementations
 pub mod udp;
 
+/// Common code for triggering refreshes of [`Service`] and [`AsyncService`]
+#[cfg(feature = "std")]
+pub mod refresh_timer;
+
+#[cfg(feature = "async")]
 pub use async_service::AsyncService;
+
+#[cfg(feature = "sync")]
 pub use service::Service;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
+    use alloc::string::ToString;
 
     #[test]
     fn can_debug() {
-        println!(
+        let e = format!(
             "{:?}",
             Notification::Alive {
                 notification_type: String::new(),
@@ -136,6 +156,7 @@ mod tests {
                 location: String::new(),
             }
         );
+        assert_eq!(e, "Alive { notification_type: \"\", unique_service_name: \"\", location: \"\" }".to_string());
     }
 
     #[test]

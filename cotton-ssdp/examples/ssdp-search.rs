@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         uuid.to_string(),
         Advertisement {
             notification_type: "test".to_string(),
-            location: url::Url::parse("http://127.0.0.1/test").unwrap(),
+            location: "http://127.0.0.1/test".to_string(),
         },
     );
 

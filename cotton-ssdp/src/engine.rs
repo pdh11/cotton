@@ -2,18 +2,13 @@ use crate::message;
 use crate::message::Message;
 use crate::udp;
 use crate::{Advertisement, Notification};
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 use cotton_netif::{InterfaceIndex, NetworkEvent};
-use rand::Rng;
+use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use slotmap::SlotMap;
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::time::Duration;
-
-#[cfg(test)]
-use mock_instant::Instant;
-
-#[cfg(not(test))]
-use std::time::Instant;
 
 const MAX_PACKET_SIZE: usize = 512;
 
@@ -42,6 +37,17 @@ fn target_match(search: &str, candidate: &str) -> bool {
         }
     }
     false
+}
+
+fn rewrite_host(url: &str, ip: &IpAddr) -> String {
+    let Some(prefix) = url.find("://") else { return url.to_string(); };
+
+    if let Some(suffix) = url[prefix + 3..].find('/') {
+        return url[..prefix + 3].to_string()
+            + &ip.to_string()
+            + &url[suffix + prefix + 3..];
+    }
+    url[..prefix + 3].to_string() + &ip.to_string()
 }
 
 /// A callback made by [`Engine`] when notification messages arrive
@@ -73,18 +79,16 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 /// [`Engine::on_data`], and changes to available network interfaces
 /// (if required) to [`Engine::on_network_event`].
 ///
-/// The owner should also implement a timer facility: the [`Engine`]
-/// can be asked at any time when it next needs a timer callback
-/// ([`Engine::next_wakeup`]), and, when that time comes, the
-/// [`Engine::wakeup`] method must be called. See, for instance, the
-/// `tokio::select!` loop in `AsyncService::new_inner`.
+/// The notifications should be retransmitted on a timer; the owner
+/// should implement a timer facility, perhaps by using
+/// [`crate::refresh_timer::RefreshTimer`], and call [`Engine::refresh`] each time the timer
+/// expires. See, for instance, the `tokio::select!` loop in
+/// `AsyncService::new_inner`.
 ///
 pub struct Engine<CB: Callback> {
-    interfaces: HashMap<InterfaceIndex, Interface>,
+    interfaces: BTreeMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
-    advertisements: HashMap<String, Advertisement>,
-    next_salvo: Instant,
-    phase: u8,
+    advertisements: BTreeMap<String, Advertisement>,
 }
 
 impl<CB: Callback> Default for Engine<CB> {
@@ -99,36 +103,20 @@ impl<CB: Callback> Engine<CB> {
     #[must_use]
     pub fn new() -> Self {
         Engine {
-            interfaces: HashMap::default(),
+            interfaces: BTreeMap::default(),
             active_searches: SlotMap::with_key(),
-            advertisements: HashMap::default(),
-            next_salvo: Instant::now(),
-            phase: 0u8,
+            advertisements: BTreeMap::default(),
         }
     }
 
-    /// Obtain the desired delay before the next [`Engine::wakeup`] is needed
-    #[must_use]
-    pub fn next_wakeup(&self) -> std::time::Duration {
-        self.next_salvo.saturating_duration_since(Instant::now())
-    }
-
-    /// Notify the `Engine` that its timeout has expired
+    /// Re-send all messages
     ///
-    /// The desired timeout duration can be obtained from [`Engine::next_wakeup`].
-    ///
-    pub fn wakeup<SCK: udp::TargetedSend + udp::Multicast>(
+    /// This should be called periodically, perhaps with the help of a
+    /// [`crate::refresh_timer::RefreshTimer`]
+    pub fn refresh<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         socket: &SCK,
     ) {
-        if !self.next_wakeup().is_zero() {
-            return;
-        }
-        let random_offset = rand::thread_rng().gen_range(0..5);
-        let period_sec = if self.phase == 0 { 800 } else { 1 } + random_offset;
-        self.next_salvo += Duration::from_secs(period_sec);
-        self.phase = (self.phase + 1) % 4;
-
         for (key, value) in &self.advertisements {
             self.notify_on_all(key, value, socket);
         }
@@ -245,8 +233,7 @@ impl<CB: Callback> Engine<CB> {
                             &search_target,
                             &value.notification_type,
                         ) {
-                            let mut url = value.location.clone();
-                            let _ = url.set_ip_host(wasto);
+                            let url = rewrite_host(&value.location, &wasto);
 
                             let response_type = if search_target == "ssdp:all"
                             {
@@ -263,7 +250,7 @@ impl<CB: Callback> Engine<CB> {
                                         b,
                                         response_type,
                                         key,
-                                        url.as_str(),
+                                        &url,
                                     )
                                 },
                             );
@@ -288,7 +275,7 @@ impl<CB: Callback> Engine<CB> {
     fn join_multicast<SCK: udp::TargetedSend + udp::Multicast>(
         interface: InterfaceIndex,
         multicast: &SCK,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), udp::Error> {
         multicast.join_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
             interface,
@@ -298,7 +285,7 @@ impl<CB: Callback> Engine<CB> {
     fn leave_multicast<SCK: udp::TargetedSend + udp::Multicast>(
         interface: InterfaceIndex,
         multicast: &SCK,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), udp::Error> {
         multicast.leave_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
             interface,
@@ -340,7 +327,7 @@ impl<CB: Callback> Engine<CB> {
         e: &NetworkEvent,
         multicast: &SCK,
         search: &SCK,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), udp::Error> {
         match e {
             NetworkEvent::NewLink(ix, _name, flags) => {
                 if flags.contains(cotton_netif::Flags::MULTICAST) {
@@ -404,8 +391,7 @@ impl<CB: Callback> Engine<CB> {
         source: &IpAddr,
         socket: &SCK,
     ) {
-        let mut url = advertisement.location.clone();
-        let _ = url.set_ip_host(*source);
+        let url = rewrite_host(&advertisement.location, source);
         let _ = socket.send_with(
             MAX_PACKET_SIZE,
             &SocketAddr::V4(SocketAddrV4::new(
@@ -418,7 +404,7 @@ impl<CB: Callback> Engine<CB> {
                     b,
                     &advertisement.notification_type,
                     unique_service_name,
-                    url.as_str(),
+                    &url,
                 )
             },
         );
@@ -521,11 +507,11 @@ impl<CB: Callback> Engine<CB> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
     use crate::message::parse;
-    use std::net::{Ipv6Addr, SocketAddrV4};
+    use no_std_net::{Ipv6Addr, SocketAddrV4};
     use std::sync::{Arc, Mutex};
 
     /* ==== Tests for target_match() ==== */
@@ -686,7 +672,7 @@ mod tests {
             to: &SocketAddr,
             from: &IpAddr,
             f: F,
-        ) -> Result<(), std::io::Error>
+        ) -> Result<(), udp::Error>
         where
             F: FnOnce(&mut [u8]) -> usize,
         {
@@ -706,9 +692,12 @@ mod tests {
             &self,
             multicast_address: &IpAddr,
             interface: InterfaceIndex,
-        ) -> Result<(), std::io::Error> {
+        ) -> Result<(), udp::Error> {
             if self.injecting_multicast_error {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
+                Err(udp::Error::Syscall(
+                    udp::Syscall::JoinMulticast,
+                    std::io::Error::new(std::io::ErrorKind::Other, "injected"),
+                ))
             } else {
                 self.mcasts.lock().unwrap().push((
                     *multicast_address,
@@ -723,9 +712,12 @@ mod tests {
             &self,
             multicast_address: &IpAddr,
             interface: InterfaceIndex,
-        ) -> Result<(), std::io::Error> {
+        ) -> Result<(), udp::Error> {
             if self.injecting_multicast_error {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "injected"))
+                Err(udp::Error::Syscall(
+                    udp::Syscall::LeaveMulticast,
+                    std::io::Error::new(std::io::ErrorKind::Other, "injected"),
+                ))
             } else {
                 self.mcasts.lock().unwrap().push((
                     *multicast_address,
@@ -841,18 +833,14 @@ mod tests {
     fn root_advert() -> Advertisement {
         Advertisement {
             notification_type: "upnp:rootdevice".to_string(),
-            location: url::Url::parse("http://127.0.0.1/description.xml")
-                .unwrap(),
+            location: "http://127.0.0.1/description.xml".to_string(),
         }
     }
 
     fn root_advert_2() -> Advertisement {
         Advertisement {
             notification_type: "upnp:rootdevice".to_string(),
-            location: url::Url::parse(
-                "http://127.0.0.1/nested/description.xml",
-            )
-            .unwrap(),
+            location: "http://127.0.0.1/nested/description.xml".to_string(),
         }
     }
 
@@ -1226,10 +1214,7 @@ mod tests {
                 "uuid:137".to_string(),
                 Advertisement {
                     notification_type: "upnp::Directory:3".to_string(),
-                    location: url::Url::parse(
-                        "http://127.0.0.1/description.xml",
-                    )
-                    .unwrap(),
+                    location: "http://127.0.0.1/description.xml".to_string(),
                 },
                 &f.s,
             );
@@ -1353,51 +1338,8 @@ mod tests {
         assert!(f.e.on_network_event(&del_eth0(), &f.s, &f.s).is_err());
     }
 
-    /* ==== Tests for timer handling ==== */
-
     #[test]
-    fn retransmit_due_immediately() {
-        let f = Fixture::default();
-
-        assert!(f.e.next_wakeup().is_zero());
-    }
-
-    #[test]
-    fn retransmit_sets_timeouts() {
-        let mut f = Fixture::default();
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
-
-        // note no advance
-        f.e.wakeup(&f.s);
-        let t2 = f.e.next_wakeup();
-        assert!(t == t2);
-    }
-
-    #[test]
-    fn timeout_retransmits_adverts() {
+    fn refresh_retransmits_adverts() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
             f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
@@ -1405,7 +1347,7 @@ mod tests {
             f.e.advertise("uuid:XYZ".to_string(), root_advert_2(), &f.s);
         });
 
-        f.e.wakeup(&f.s);
+        f.e.refresh(&f.s);
 
         assert!(f.s.send_count() == 2);
         assert!(f.s.contains_send(
@@ -1425,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_retransmits_searches() {
+    fn refresh_retransmits_searches() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
             f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
@@ -1433,7 +1375,7 @@ mod tests {
             f.e.subscribe("upnp::Content:2".to_string(), f.c.clone(), &f.s);
         });
 
-        f.e.wakeup(&f.s);
+        f.e.refresh(&f.s);
 
         assert!(f.s.send_count() == 2);
         assert!(f.s.contains_send(
@@ -1453,7 +1395,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_retransmits_generic_search() {
+    fn refresh_retransmits_generic_search() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
             f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
@@ -1461,7 +1403,7 @@ mod tests {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
         });
 
-        f.e.wakeup(&f.s);
+        f.e.refresh(&f.s);
 
         assert!(f.s.send_count() == 1);
         assert!(f.s.contains_send(
@@ -1545,5 +1487,35 @@ mod tests {
         f.e.deadvertise("uuid:137", &f.s);
 
         assert!(f.s.no_sends());
+    }
+
+    #[test]
+    fn url_host_rewritten() {
+        let url = rewrite_host("http://127.0.0.1/description.xml", &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1/description.xml");
+    }
+
+    #[test]
+    fn url_host_rewritten2() {
+        let url = rewrite_host("http://127.0.0.1/", &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1/");
+    }
+
+    #[test]
+    fn url_host_rewritten3() {
+        let url = rewrite_host("http://127.0.0.1", &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1");
+    }
+
+    #[test]
+    fn bogus_url_passed_through() {
+        let url = rewrite_host("fnord", &LOCAL_SRC);
+        assert_eq!(url, "fnord".to_string());
+    }
+
+    #[test]
+    fn bogus_url_passed_through2() {
+        let url = rewrite_host("fnord:/", &LOCAL_SRC);
+        assert_eq!(url, "fnord:/".to_string());
     }
 }

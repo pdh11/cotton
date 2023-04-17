@@ -16,8 +16,7 @@ async fn services_communicate() {
         "uuid:999",
         Advertisement {
             notification_type: "upnp::Directory:3".to_string(),
-            location: url::Url::parse("http://127.0.0.1/description.xml")
-                .unwrap(),
+            location: "http://127.0.0.1/description.xml".to_string(),
         },
     );
 
