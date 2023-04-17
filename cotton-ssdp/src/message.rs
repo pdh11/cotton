@@ -1,5 +1,7 @@
-use std::collections::HashMap;
-use std::io::{Cursor, Write};
+extern crate alloc;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use core::fmt::Write;
 
 #[derive(Debug)]
 pub enum Message {
@@ -23,17 +25,24 @@ pub enum Message {
     },
 }
 
-pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
-    let packet = std::str::from_utf8(buf)
-        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Error {
+    InvalidData,
+    UnexpectedEof,
+}
+
+pub fn parse(buf: &[u8]) -> Result<Message, Error> {
+    let packet = core::str::from_utf8(buf)
+        .map_err(|_| Error::InvalidData)?;
 
     let mut iter = packet.lines();
 
     let prefix = iter
         .next()
-        .ok_or(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
+        .ok_or(Error::UnexpectedEof)?;
 
-    let mut map = HashMap::new();
+    let mut map = BTreeMap::new();
     for line in iter {
         if let Some((key, value)) = line.split_once(':') {
             map.insert(key.to_ascii_uppercase(), value.trim());
@@ -93,12 +102,44 @@ pub fn parse(buf: &[u8]) -> Result<Message, std::io::Error> {
         }
         _ => {}
     }
-    Err(std::io::ErrorKind::InvalidData.into())
+    Err(Error::InvalidData)
+}
+
+/// A replacement for Cursor that works in no_std
+struct MessageCursor<'a> {
+    buf: &'a mut [u8],
+    offset: usize,
+}
+
+impl<'a> MessageCursor<'a> {
+    pub fn new(buf: &'a mut [u8]) -> MessageCursor {
+        MessageCursor {
+            buf,
+            offset: 0,
+        }
+    }
+
+    pub fn position(&self) -> usize {
+        self.offset
+    }
+}
+
+impl<'a> core::fmt::Write for MessageCursor<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let n = s.len();
+        if n + self.offset > self.buf.len() {
+            return core::fmt::Result::Err(core::fmt::Error);
+        }
+        let b = s.as_bytes();
+        self.buf[self.offset..self.offset+n].clone_from_slice(b);
+        self.offset += n;
+        core::fmt::Result::Ok(())
+    }
 }
 
 #[allow(clippy::cast_possible_truncation)]
 pub fn build_search(buf: &mut [u8], search_type: &str) -> usize {
-    let mut cursor = Cursor::new(buf);
+    let mut cursor = MessageCursor::new(buf);
     let _ = write!(
         cursor,
         "M-SEARCH * HTTP/1.1\r
@@ -108,7 +149,7 @@ MX: 5\r
 ST: {search_type}\r
 \r\n"
     );
-    cursor.position() as usize
+    cursor.position()
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -118,7 +159,7 @@ pub fn build_response(
     unique_service_name: &str,
     location: &str,
 ) -> usize {
-    let mut cursor = Cursor::new(buf);
+    let mut cursor = MessageCursor::new(buf);
     let _ = write!(
         cursor,
         "HTTP/1.1 200 OK\r
@@ -131,7 +172,7 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
     );
-    cursor.position() as usize
+    cursor.position()
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -141,7 +182,7 @@ pub fn build_notify(
     unique_service_name: &str,
     location: &str,
 ) -> usize {
-    let mut cursor = Cursor::new(buf);
+    let mut cursor = MessageCursor::new(buf);
     let _ = write!(
         cursor,
         "NOTIFY * HTTP/1.1\r
@@ -159,7 +200,7 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
     );
-    cursor.position() as usize
+    cursor.position()
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -168,7 +209,7 @@ pub fn build_byebye(
     notification_type: &str,
     unique_service_name: &str,
 ) -> usize {
-    let mut cursor = Cursor::new(buf);
+    let mut cursor = MessageCursor::new(buf);
     let _ = write!(
         cursor,
         "NOTIFY * HTTP/1.1\r
@@ -184,7 +225,7 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
     );
-    cursor.position() as usize
+    cursor.position()
 }
 
 #[cfg(test)]
@@ -569,5 +610,19 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
                          Message::NotifyByeBye { notification_type, unique_service_name }
                          if notification_type == "upnp::rootdevice"
                          && unique_service_name == "uuid:xyz"));
+    }
+
+    #[test]
+    fn display_error() {
+        let e = Error::InvalidData;
+        let e = format!("{e:?}");
+        assert_eq!(e, "InvalidData".to_string());
+    }
+
+    #[test]
+    fn overflow() {
+        let mut buf = [0u8; 6];
+        let e = build_response(&mut buf, "foo", "bar", "wurdle");
+        assert!(e <= 6);
     }
 }
