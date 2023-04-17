@@ -25,11 +25,11 @@ socket2 = { version = "0.4.7", optional = true }
 url = { version = "2.3", default_features = false }
 rand = { version = "0.8", default_features = false, features = ["std", "std_rng"] }
 mock_instant = "0.2"
-mio = { version = "0.8", default_features = false, optional = true }
+mio = { version = "0.8", default_features = false, features = ["os-poll", "net"], optional = true }
 
 [features]
 default = ["std", "async", "sync"]
-std = ["cotton-netif/std", "no-std-net/std", "dep:libc", "dep:nix", "dep:socket2"]
+std = ["cotton-netif/sync", "no-std-net/std", "dep:libc", "dep:nix", "dep:socket2"]
 sync = ["std", "cotton-netif/sync", "dep:mio"]
 async = ["std", "cotton-netif/async", "dep:futures", "dep:futures-util", "dep:tokio", "dep:tokio-stream"]
 
