@@ -225,11 +225,12 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
     use alloc::string::ToString;
 
     #[test]
     fn can_debug() {
-        println!(
+        let e = format!(
             "{:?}",
             Message::NotifyAlive {
                 notification_type: String::new(),
@@ -237,21 +238,30 @@ mod tests {
                 location: String::new(),
             }
         );
-        println!(
+        assert_eq!(e, "NotifyAlive { notification_type: \"\", unique_service_name: \"\", location: \"\" }".to_string());
+
+        let e = format!(
             "{:?}",
             Message::NotifyByeBye {
                 notification_type: String::new(),
                 unique_service_name: String::new(),
             }
         );
-        println!(
+        assert_eq!(e, "NotifyByeBye { notification_type: \"\", unique_service_name: \"\" }".to_string());
+
+        let e = format!(
             "{:?}",
             Message::Search {
                 search_target: String::new(),
                 maximum_wait_sec: 3,
             }
         );
-        println!(
+        assert_eq!(
+            e,
+            "Search { search_target: \"\", maximum_wait_sec: 3 }".to_string()
+        );
+
+        let e = format!(
             "{:?}",
             Message::Response {
                 search_target: String::new(),
@@ -259,6 +269,7 @@ mod tests {
                 location: String::new(),
             }
         );
+        assert_eq!(e, "Response { search_target: \"\", unique_service_name: \"\", location: \"\" }".to_string());
     }
 
     #[test]

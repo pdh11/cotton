@@ -2,13 +2,13 @@ use crate::message;
 use crate::message::Message;
 use crate::udp;
 use crate::{Advertisement, Notification};
-use cotton_netif::{InterfaceIndex, NetworkEvent};
-use slotmap::SlotMap;
 use alloc::collections::BTreeMap;
-use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use alloc::vec::Vec;
-use alloc::string::ToString;
 use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use cotton_netif::{InterfaceIndex, NetworkEvent};
+use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use slotmap::SlotMap;
 
 const MAX_PACKET_SIZE: usize = 512;
 
@@ -507,11 +507,11 @@ impl<CB: Callback> Engine<CB> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
     use crate::message::parse;
-    use std::net::{Ipv6Addr, SocketAddrV4};
+    use no_std_net::{Ipv6Addr, SocketAddrV4};
     use std::sync::{Arc, Mutex};
 
     /* ==== Tests for target_match() ==== */
