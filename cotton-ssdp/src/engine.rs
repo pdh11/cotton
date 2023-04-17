@@ -3,17 +3,9 @@ use crate::message::Message;
 use crate::udp;
 use crate::{Advertisement, Notification};
 use cotton_netif::{InterfaceIndex, NetworkEvent};
-use rand::Rng;
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::time::Duration;
-
-#[cfg(test)]
-use mock_instant::Instant;
-
-#[cfg(not(test))]
-use std::time::Instant;
 
 const MAX_PACKET_SIZE: usize = 512;
 
@@ -73,18 +65,16 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 /// [`Engine::on_data`], and changes to available network interfaces
 /// (if required) to [`Engine::on_network_event`].
 ///
-/// The owner should also implement a timer facility: the [`Engine`]
-/// can be asked at any time when it next needs a timer callback
-/// ([`Engine::next_wakeup`]), and, when that time comes, the
-/// [`Engine::wakeup`] method must be called. See, for instance, the
-/// `tokio::select!` loop in `AsyncService::new_inner`.
+/// The notifications should be retransmitted on a timer; the owner
+/// should implement a timer facility, perhaps by using
+/// [`crate::refresh_timer::RefreshTimer`], and call [`Engine::refresh`] each time the timer
+/// expires. See, for instance, the `tokio::select!` loop in
+/// `AsyncService::new_inner`.
 ///
 pub struct Engine<CB: Callback> {
     interfaces: HashMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: HashMap<String, Advertisement>,
-    next_salvo: Instant,
-    phase: u8,
 }
 
 impl<CB: Callback> Default for Engine<CB> {
@@ -102,33 +92,17 @@ impl<CB: Callback> Engine<CB> {
             interfaces: HashMap::default(),
             active_searches: SlotMap::with_key(),
             advertisements: HashMap::default(),
-            next_salvo: Instant::now(),
-            phase: 0u8,
         }
     }
 
-    /// Obtain the desired delay before the next [`Engine::wakeup`] is needed
-    #[must_use]
-    pub fn next_wakeup(&self) -> std::time::Duration {
-        self.next_salvo.saturating_duration_since(Instant::now())
-    }
-
-    /// Notify the `Engine` that its timeout has expired
+    /// Re-send all messages
     ///
-    /// The desired timeout duration can be obtained from [`Engine::next_wakeup`].
-    ///
-    pub fn wakeup<SCK: udp::TargetedSend + udp::Multicast>(
+    /// This should be called periodically, perhaps with the help of a
+    /// [`crate::refresh_timer::RefreshTimer`]
+    pub fn refresh<SCK: udp::TargetedSend + udp::Multicast>(
         &mut self,
         socket: &SCK,
     ) {
-        if !self.next_wakeup().is_zero() {
-            return;
-        }
-        let random_offset = rand::thread_rng().gen_range(0..5);
-        let period_sec = if self.phase == 0 { 800 } else { 1 } + random_offset;
-        self.next_salvo += Duration::from_secs(period_sec);
-        self.phase = (self.phase + 1) % 4;
-
         for (key, value) in &self.advertisements {
             self.notify_on_all(key, value, socket);
         }
@@ -1359,51 +1333,8 @@ mod tests {
         assert!(f.e.on_network_event(&del_eth0(), &f.s, &f.s).is_err());
     }
 
-    /* ==== Tests for timer handling ==== */
-
     #[test]
-    fn retransmit_due_immediately() {
-        let f = Fixture::default();
-
-        assert!(f.e.next_wakeup().is_zero());
-    }
-
-    #[test]
-    fn retransmit_sets_timeouts() {
-        let mut f = Fixture::default();
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
-
-        f.e.wakeup(&f.s);
-        let t = f.e.next_wakeup();
-        assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
-
-        // note no advance
-        f.e.wakeup(&f.s);
-        let t2 = f.e.next_wakeup();
-        assert!(t == t2);
-    }
-
-    #[test]
-    fn timeout_retransmits_adverts() {
+    fn refresh_retransmits_adverts() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
             f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
@@ -1411,7 +1342,7 @@ mod tests {
             f.e.advertise("uuid:XYZ".to_string(), root_advert_2(), &f.s);
         });
 
-        f.e.wakeup(&f.s);
+        f.e.refresh(&f.s);
 
         assert!(f.s.send_count() == 2);
         assert!(f.s.contains_send(
@@ -1431,7 +1362,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_retransmits_searches() {
+    fn refresh_retransmits_searches() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
             f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
@@ -1439,7 +1370,7 @@ mod tests {
             f.e.subscribe("upnp::Content:2".to_string(), f.c.clone(), &f.s);
         });
 
-        f.e.wakeup(&f.s);
+        f.e.refresh(&f.s);
 
         assert!(f.s.send_count() == 2);
         assert!(f.s.contains_send(
@@ -1459,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_retransmits_generic_search() {
+    fn refresh_retransmits_generic_search() {
         let mut f = Fixture::new_with(|f| {
             f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
             f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
@@ -1467,7 +1398,7 @@ mod tests {
             f.e.subscribe("ssdp:all".to_string(), f.c.clone(), &f.s);
         });
 
-        f.e.wakeup(&f.s);
+        f.e.refresh(&f.s);
 
         assert!(f.s.send_count() == 1);
         assert!(f.s.contains_send(

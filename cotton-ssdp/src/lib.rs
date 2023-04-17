@@ -125,6 +125,10 @@ mod service;
 /// Traits used to abstract over various UDP socket implementations
 pub mod udp;
 
+/// Common code for triggering refreshes of [`Service`] and [`AsyncService`]
+#[cfg(feature = "std")]
+pub mod refresh_timer;
+
 #[cfg(feature = "async")]
 pub use async_service::AsyncService;
 

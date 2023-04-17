@@ -142,8 +142,8 @@ pub mod std;
 #[cfg(feature = "sync")]
 pub mod mio;
 
-#[cfg(feature = "async")]
 /// Trait implementations for Tokio sockets
+#[cfg(feature = "async")]
 pub mod tokio;
 
 #[cfg(test)]
