@@ -35,7 +35,7 @@ use bitflags::bitflags;
 
 /** Kernel network interface index (1-based)
  */
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InterfaceIndex(pub u32);
 
 bitflags! {
@@ -140,6 +140,24 @@ mod tests {
     fn test_index_partialeq() {
         assert!(InterfaceIndex(1).eq(&InterfaceIndex(1)));
         assert!(InterfaceIndex(2).ne(&InterfaceIndex(3)));
+    }
+
+    #[test]
+    fn test_index_partialord() {
+        assert!(InterfaceIndex(1).lt(&InterfaceIndex(2)));
+        assert!(InterfaceIndex(3).ge(&InterfaceIndex(2)));
+    }
+
+    #[test]
+    fn test_index_ord() {
+        assert_eq!(
+            InterfaceIndex(1).cmp(&InterfaceIndex(2)),
+            core::cmp::Ordering::Less
+        );
+        assert_eq!(
+            InterfaceIndex(3).cmp(&InterfaceIndex(2)),
+            core::cmp::Ordering::Greater
+        );
     }
 
     #[cfg(feature = "std")]
