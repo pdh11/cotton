@@ -1,7 +1,7 @@
 use crate::engine::{Callback, Engine};
+use crate::refresh_timer::RefreshTimer;
 use crate::udp;
 use crate::udp::TargetedReceive;
-use crate::refresh_timer::RefreshTimer;
 use crate::{Advertisement, Notification};
 
 struct SyncCallback {

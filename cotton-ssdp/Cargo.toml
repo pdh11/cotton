@@ -10,6 +10,10 @@ authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 license = "CC0-1.0"
 rust-version = "1.65"
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "nightly"]
+
 [dependencies]
 cotton-netif = { path = "../cotton-netif", version = "0.0.3", default_features = false }
 no-std-net = { version = "0.6", default_features = false }

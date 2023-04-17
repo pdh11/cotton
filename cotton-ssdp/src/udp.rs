@@ -1,5 +1,5 @@
-use ::std::net::{IpAddr, SocketAddr};
 use cotton_netif::InterfaceIndex;
+use no_std_net::{IpAddr, SocketAddr};
 
 /// The list of system calls which can return errors
 #[non_exhaustive]
@@ -25,6 +25,7 @@ pub enum Error {
     Ipv6NotImplemented,
 
     /// A system call returned an error
+    #[cfg(feature = "std")]
     Syscall(Syscall, ::std::io::Error),
 }
 
@@ -33,11 +34,14 @@ impl ::core::fmt::Display for Error {
         match self {
             Error::NoPacketInfo => f.write_str("recvmsg: no pktinfo returned"),
             Error::Ipv6NotImplemented => f.write_str("IPv6 not implemented"),
+
+            #[cfg(feature = "std")]
             Error::Syscall(s, _) => write!(f, "error from syscall {s:?}"),
         }
     }
 }
 
+#[cfg(feature = "std")]
 impl ::std::error::Error for Error {
     fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
         match self {
@@ -149,8 +153,11 @@ pub mod tokio;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
+    use alloc::string::ToString;
 
     #[test]
+    #[cfg(feature = "std")]
     fn display_pkt_error() {
         let e = super::Error::NoPacketInfo;
         let m = format!("{e}");
@@ -168,6 +175,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn display_ipv6_error() {
         let e = super::Error::Ipv6NotImplemented;
         let m = format!("{e}");
@@ -185,6 +193,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn display_syscall_error() {
         let e = super::Error::Syscall(
             Syscall::JoinMulticast,
@@ -199,6 +208,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn debug_syscall_error() {
         let e = Error::Syscall(
             Syscall::JoinMulticast,

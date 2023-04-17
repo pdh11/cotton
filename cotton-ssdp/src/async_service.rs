@@ -1,8 +1,8 @@
 use crate::engine::{Callback, Engine};
+use crate::refresh_timer::RefreshTimer;
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
-use crate::refresh_timer::RefreshTimer;
 use futures::Stream;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;

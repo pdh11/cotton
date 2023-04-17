@@ -54,8 +54,15 @@
 //!  - [ ] IPv6, see UPnP DA appendix A
 //!
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
+#![cfg_attr(nightly, feature(doc_auto_cfg))]
+#![cfg_attr(nightly, feature(doc_cfg_hide))]
+#![cfg_attr(nightly, doc(cfg_hide(doc)))]
+
+extern crate alloc;
+use alloc::string::String;
 
 /// Incoming SSDP notification, obtained from [`Service::subscribe`]
 ///
@@ -138,10 +145,12 @@ pub use service::Service;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
+    use alloc::string::ToString;
 
     #[test]
     fn can_debug() {
-        println!(
+        let e = format!(
             "{:?}",
             Notification::Alive {
                 notification_type: String::new(),
@@ -149,6 +158,7 @@ mod tests {
                 location: String::new(),
             }
         );
+        assert_eq!(e, "Alive { notification_type: \"\", unique_service_name: \"\", location: \"\" }".to_string());
     }
 
     #[test]
