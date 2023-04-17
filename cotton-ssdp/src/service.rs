@@ -162,7 +162,7 @@ pub struct Service {
     search_socket: mio::net::UdpSocket,
 }
 
-/// The type of [`udp::setup_socket`]
+/// The type of [`udp::std::setup_socket`]
 type SocketFn = fn(u16) -> Result<std::net::UdpSocket, std::io::Error>;
 
 /// The type of [`mio::Registry::register`]
@@ -221,7 +221,7 @@ impl Service {
         Self::new_inner(
             registry,
             tokens,
-            udp::setup_socket,
+            udp::std::setup_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
             cotton_netif::get_interfaces()?.collect(),
         )
@@ -392,7 +392,7 @@ mod tests {
         let e = Service::new_inner(
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
-            udp::setup_socket,
+            udp::std::setup_socket,
             |r, s, t| r.register(s, t, mio::Interest::READABLE),
             Vec::default(),
         );
@@ -410,7 +410,7 @@ mod tests {
         let e = Service::new_inner(
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
-            udp::setup_socket,
+            udp::std::setup_socket,
             bogus_register,
             cotton_netif::get_interfaces().unwrap().collect(),
         );
@@ -428,7 +428,7 @@ mod tests {
         let e = Service::new_inner(
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
-            udp::setup_socket,
+            udp::std::setup_socket,
             |_, _, t| {
                 if t == SSDP_TOKEN1 {
                     Ok(())

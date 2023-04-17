@@ -1,4 +1,5 @@
 use crate::engine::{Callback, Engine};
+use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
 use futures::Stream;
@@ -16,7 +17,7 @@ impl Callback for AsyncCallback {
     }
 }
 
-/// The type of [`udp::setup_socket`]
+/// The type of [`udp::std::setup_socket`]
 type SetupSocketFn = fn(u16) -> Result<std::net::UdpSocket, std::io::Error>;
 
 /// The type of [`tokio::net::UdpSocket::from_std`]
@@ -33,7 +34,7 @@ impl Inner {
     fn new(engine: Engine<AsyncCallback>) -> Result<Inner, std::io::Error> {
         Self::new_inner(
             engine,
-            crate::udp::setup_socket,
+            udp::std::setup_socket,
             tokio::net::UdpSocket::from_std,
         )
     }
@@ -264,8 +265,11 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_fromstd_failure() {
         let engine = Engine::<AsyncCallback>::new();
-        let e =
-            Inner::new_inner(engine, crate::udp::setup_socket, bogus_fromstd);
+        let e = Inner::new_inner(
+            engine,
+            crate::udp::std::setup_socket,
+            bogus_fromstd,
+        );
 
         assert!(e.is_err());
     }
@@ -279,14 +283,17 @@ mod tests {
             .unwrap()
             .block_on(async {
                 let engine = Engine::<AsyncCallback>::new();
-                let e =
-                    Inner::new_inner(engine, crate::udp::setup_socket, |s| {
+                let e = Inner::new_inner(
+                    engine,
+                    crate::udp::std::setup_socket,
+                    |s| {
                         if s.local_addr().unwrap().port() == 1900u16 {
                             tokio::net::UdpSocket::from_std(s)
                         } else {
                             Err(my_err())
                         }
-                    });
+                    },
+                );
 
                 assert!(e.is_err());
             });
