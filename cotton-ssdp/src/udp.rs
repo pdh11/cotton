@@ -135,11 +135,14 @@ pub trait Multicast {
 }
 
 /// Utilities common to all implementations using `std::net` underneath
+#[cfg(any(feature = "sync", feature = "async"))]
 pub mod std;
 
 /// Trait implementations for MIO sockets
+#[cfg(feature = "sync")]
 pub mod mio;
 
+#[cfg(feature = "async")]
 /// Trait implementations for Tokio sockets
 pub mod tokio;
 

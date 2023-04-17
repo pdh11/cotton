@@ -109,17 +109,26 @@ pub struct Advertisement {
     pub location: url::Url,
 }
 
+#[cfg(feature = "async")]
 mod async_service;
 
 /// Low-level SSDP API used inside [`Service`] and [`AsyncService`]
+#[cfg(feature = "std")] // temporarily
 pub mod engine;
+
+#[cfg(feature = "std")] // temporarily
 mod message;
+
+#[cfg(feature = "sync")]
 mod service;
 
 /// Traits used to abstract over various UDP socket implementations
 pub mod udp;
 
+#[cfg(feature = "async")]
 pub use async_service::AsyncService;
+
+#[cfg(feature = "sync")]
 pub use service::Service;
 
 #[cfg(test)]
