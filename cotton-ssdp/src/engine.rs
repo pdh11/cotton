@@ -4,7 +4,7 @@ use crate::udp;
 use crate::{Advertisement, Notification};
 use cotton_netif::{InterfaceIndex, NetworkEvent};
 use slotmap::SlotMap;
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
 use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use alloc::vec::Vec;
 use alloc::string::ToString;
@@ -86,9 +86,9 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 /// `AsyncService::new_inner`.
 ///
 pub struct Engine<CB: Callback> {
-    interfaces: HashMap<InterfaceIndex, Interface>,
+    interfaces: BTreeMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
-    advertisements: HashMap<String, Advertisement>,
+    advertisements: BTreeMap<String, Advertisement>,
 }
 
 impl<CB: Callback> Default for Engine<CB> {
@@ -103,9 +103,9 @@ impl<CB: Callback> Engine<CB> {
     #[must_use]
     pub fn new() -> Self {
         Engine {
-            interfaces: HashMap::default(),
+            interfaces: BTreeMap::default(),
             active_searches: SlotMap::with_key(),
-            advertisements: HashMap::default(),
+            advertisements: BTreeMap::default(),
         }
     }
 
