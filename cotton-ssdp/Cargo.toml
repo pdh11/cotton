@@ -26,7 +26,6 @@ nix = { version = "0.24", default_features = false, features = ["uio"], optional
 libc = { version = "0.2", optional = true }
 uuid = { version = "1.3", default_features = false, features = ["v4"] }
 socket2 = { version = "0.4.7", optional = true }
-url = { version = "2.3", default_features = false }
 rand = { version = "0.8", default_features = false, features = ["std", "std_rng"] }
 mock_instant = "0.2"
 mio = { version = "0.8", default_features = false, features = ["os-poll", "net"], optional = true }

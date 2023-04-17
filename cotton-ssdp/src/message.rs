@@ -225,6 +225,7 @@ SERVER: none/0 UPnP/1.0 {}/{}\r
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn can_debug() {

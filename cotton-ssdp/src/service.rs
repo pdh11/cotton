@@ -118,7 +118,7 @@ running. For instance, if your Ethernet IP address is 192.168.1.3,
 and your wifi IP address is 10.0.4.7, anyone listening to SSDP on
 Ethernet will see `http://192.168.1.3:3333/test` and anyone listening on
 wifi will see `http://10.0.4.7:3333/test`. (For how this is done, see the use
-of [`url::Url::set_ip_host`] in [`Engine::on_data`].)
+of `rewrite_host` in [`Engine::on_data`].)
 
 # The polling loop
 

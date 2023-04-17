@@ -5,7 +5,10 @@ use crate::{Advertisement, Notification};
 use cotton_netif::{InterfaceIndex, NetworkEvent};
 use slotmap::SlotMap;
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use alloc::vec::Vec;
+use alloc::string::ToString;
+use alloc::string::String;
 
 const MAX_PACKET_SIZE: usize = 512;
 
@@ -36,13 +39,15 @@ fn target_match(search: &str, candidate: &str) -> bool {
     false
 }
 
-fn rewrite_host(base_url: &str, ip: &IpAddr) -> String {
-    if let Ok(mut url) = url::Url::parse(base_url) {
-        _ = url.set_ip_host(*ip);
-        url.to_string()
-    } else {
-        base_url.to_string()
+fn rewrite_host(url: &str, ip: &IpAddr) -> String {
+    let Some(prefix) = url.find("://") else { return url.to_string(); };
+
+    if let Some(suffix) = url[prefix + 3..].find('/') {
+        return url[..prefix + 3].to_string()
+            + &ip.to_string()
+            + &url[suffix + prefix + 3..];
     }
+    url[..prefix + 3].to_string() + &ip.to_string()
 }
 
 /// A callback made by [`Engine`] when notification messages arrive
@@ -245,7 +250,7 @@ impl<CB: Callback> Engine<CB> {
                                         b,
                                         response_type,
                                         key,
-                                        &url
+                                        &url,
                                     )
                                 },
                             );
@@ -399,7 +404,7 @@ impl<CB: Callback> Engine<CB> {
                     b,
                     &advertisement.notification_type,
                     unique_service_name,
-                    &url
+                    &url,
                 )
             },
         );
@@ -1486,21 +1491,31 @@ mod tests {
 
     #[test]
     fn url_host_rewritten() {
-        let url = rewrite_host("http://127.0.0.1/description.xml",
-                               &LOCAL_SRC);
+        let url = rewrite_host("http://127.0.0.1/description.xml", &LOCAL_SRC);
         assert_eq!(url, "http://192.168.100.1/description.xml");
     }
 
     #[test]
     fn url_host_rewritten2() {
-        let url = rewrite_host("http://127.0.0.1/",
-                               &LOCAL_SRC);
+        let url = rewrite_host("http://127.0.0.1/", &LOCAL_SRC);
         assert_eq!(url, "http://192.168.100.1/");
+    }
+
+    #[test]
+    fn url_host_rewritten3() {
+        let url = rewrite_host("http://127.0.0.1", &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1");
     }
 
     #[test]
     fn bogus_url_passed_through() {
         let url = rewrite_host("fnord", &LOCAL_SRC);
         assert_eq!(url, "fnord".to_string());
+    }
+
+    #[test]
+    fn bogus_url_passed_through2() {
+        let url = rewrite_host("fnord:/", &LOCAL_SRC);
+        assert_eq!(url, "fnord:/".to_string());
     }
 }
