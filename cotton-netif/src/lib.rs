@@ -42,7 +42,7 @@ bitflags! {
     /// Flags describing a network interface's features and state
     ///
     /// Corresponds to Linux's SIOCGIFFLAGS
-    #[derive(Default)]
+    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
     pub struct Flags: u32 {
         #[doc = "Interface is enabled"]
         const UP = 0x1;
