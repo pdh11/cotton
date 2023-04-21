@@ -42,10 +42,17 @@ fn target_match(search: &str, candidate: &str) -> bool {
 fn rewrite_host(url: &str, ip: &IpAddr) -> String {
     let Some(prefix) = url.find("://") else { return url.to_string(); };
 
-    if let Some(suffix) = url[prefix + 3..].find('/') {
+    if let Some(slash) = url[prefix + 3..].find('/') {
+        if let Some(colon) = url[prefix + 3..].find(':') {
+            if colon < slash {
+                return url[..prefix + 3].to_string()
+                    + &ip.to_string()
+                    + &url[colon + prefix + 3..];
+            }
+        }
         return url[..prefix + 3].to_string()
             + &ip.to_string()
-            + &url[suffix + prefix + 3..];
+            + &url[slash + prefix + 3..];
     }
     url[..prefix + 3].to_string() + &ip.to_string()
 }
@@ -1505,6 +1512,12 @@ mod tests {
     fn url_host_rewritten3() {
         let url = rewrite_host("http://127.0.0.1", &LOCAL_SRC);
         assert_eq!(url, "http://192.168.100.1");
+    }
+
+    #[test]
+    fn url_host_rewritten4() {
+        let url = rewrite_host("http://127.0.0.1:3333/foo/bar", &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1:3333/foo/bar");
     }
 
     #[test]
