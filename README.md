@@ -9,12 +9,18 @@ A collection of Rust crates for low-level networking functionality.
 
 So far:
 
- - [cotton-netif](https://crates.io/crates/cotton-netif) [![Crates.io](https://img.shields.io/crates/v/cotton-netif)](https://crates.io/crates/cotton-netif) [![docs.rs](https://img.shields.io/docsrs/cotton-netif)](https://docs.rs/cotton-netif/latest/cotton_netif/): enumerating
+ - [cotton-netif](https://crates.io/crates/cotton-netif)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-netif)](https://crates.io/crates/cotton-netif)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-netif)](https://crates.io/crates/cotton-netif)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-netif)](https://docs.rs/cotton-netif/latest/cotton_netif/): enumerating
    available network interfaces and their IP addresses, including
    ongoing (asynchronous) comings and goings of network interfaces
-   (e.g. on USB hotplug/unplug); so far, for Linux only
+   (e.g. on USB hotplug/unplug); so far, for Linux only.
 
- - [cotton-ssdp](https://crates.io/crates/cotton-ssdp) [![Crates.io](https://img.shields.io/crates/v/cotton-ssdp)](https://crates.io/crates/cotton-ssdp) [![docs.rs](https://img.shields.io/docsrs/cotton-ssdp)](https://docs.rs/cotton-ssdp/latest/cotton_ssdp/): implementing
+ - [cotton-ssdp](https://crates.io/crates/cotton-ssdp)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-ssdp)](https://crates.io/crates/cotton-ssdp)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-ssdp)](https://crates.io/crates/cotton-ssdp)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-ssdp)](https://docs.rs/cotton-ssdp/latest/cotton_ssdp/): implementing
    SSDP, the Simple Service Discovery Protocol, a mechanism for
    discovering available resources (service) on a local network. Uses
    cotton-netif, in order to do the Right Thing on multi-homed hosts.
