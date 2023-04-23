@@ -42,7 +42,7 @@ bitflags! {
     /// Flags describing a network interface's features and state
     ///
     /// Corresponds to Linux's SIOCGIFFLAGS
-    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Default)]
     pub struct Flags: u32 {
         #[doc = "Interface is enabled"]
         const UP = 0x1;
@@ -181,5 +181,38 @@ mod tests {
         let e = NetworkEvent::DelLink(InterfaceIndex(1));
         let e2 = e.clone();
         assert_eq!(e, e2);
+    }
+
+    #[test]
+    fn test_flags_default() {
+        let f = Flags::default();
+        assert_eq!(f, Flags::empty());
+    }
+
+    #[test]
+    #[allow(clippy::clone_on_copy)]
+    fn test_flags_clone() {
+        let f = Flags::POINTTOPOINT;
+        let g = f.clone();
+        assert_eq!(g, Flags::POINTTOPOINT);
+    }
+
+    #[test]
+    fn test_flags_copy() {
+        let f = Flags::POINTTOPOINT;
+        let g = f;
+        assert_eq!(g, Flags::POINTTOPOINT);
+    }
+
+    #[test]
+    fn test_flags_partialeq() {
+        assert!(Flags::POINTTOPOINT.ne(&Flags::empty()));
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_flags_debug() {
+        let s = format!("{:?}", Flags::MULTICAST);
+        assert_eq!(s, "MULTICAST");
     }
 }

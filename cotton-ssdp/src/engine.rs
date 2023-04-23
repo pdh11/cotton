@@ -1521,6 +1521,13 @@ mod tests {
     }
 
     #[test]
+    fn url_host_rewritten5() {
+        // NB not a port number!
+        let url = rewrite_host("http://127.0.0.1/foo:3333/foo/bar", &LOCAL_SRC);
+        assert_eq!(url, "http://192.168.100.1/foo:3333/foo/bar");
+    }
+
+    #[test]
     fn bogus_url_passed_through() {
         let url = rewrite_host("fnord", &LOCAL_SRC);
         assert_eq!(url, "fnord".to_string());
