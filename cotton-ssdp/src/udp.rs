@@ -159,11 +159,12 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn display_pkt_error() {
+        use ::std::error::Error;
+
         let e = super::Error::NoPacketInfo;
         let m = format!("{e}");
         assert_eq!(m, "recvmsg: no pktinfo returned".to_string());
 
-        use ::std::error::Error;
         assert!(e.source().is_none());
     }
 
@@ -177,11 +178,12 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn display_ipv6_error() {
+        use ::std::error::Error;
+
         let e = super::Error::Ipv6NotImplemented;
         let m = format!("{e}");
         assert_eq!(m, "IPv6 not implemented".to_string());
 
-        use ::std::error::Error;
         assert!(e.source().is_none());
     }
 
@@ -195,6 +197,8 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn display_syscall_error() {
+        use ::std::error::Error;
+
         let e = super::Error::Syscall(
             Syscall::JoinMulticast,
             ::std::io::Error::new(::std::io::ErrorKind::Other, "injected"),
@@ -202,7 +206,6 @@ mod tests {
         let m = format!("{e}");
         assert_eq!(m, "error from syscall JoinMulticast".to_string());
 
-        use ::std::error::Error;
         let m = format!("{}", e.source().unwrap());
         assert_eq!(m, "injected".to_string());
     }

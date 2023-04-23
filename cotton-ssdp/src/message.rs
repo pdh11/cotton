@@ -102,7 +102,7 @@ pub fn parse(buf: &[u8]) -> Result<Message, Error> {
     Err(Error::InvalidData)
 }
 
-/// A replacement for Cursor that works in no_std
+/// A replacement for Cursor that works in `no_std`
 struct MessageCursor<'a> {
     buf: &'a mut [u8],
     offset: usize,

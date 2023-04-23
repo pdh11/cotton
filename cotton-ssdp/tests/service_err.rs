@@ -1,4 +1,4 @@
-use cotton_ssdp::*;
+use cotton_ssdp::Service;
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -15,7 +15,7 @@ fn getinterface_failure_passed_on() {
     };
     unsafe {
         libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim);
-        let mut new_lim = lim.clone();
+        let mut new_lim = lim;
         new_lim.rlim_cur = 0;
         libc::setrlimit(libc::RLIMIT_NOFILE, &new_lim);
     }

@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ssdp.subscribe(
         "ssdp:all",
         Box::new(move |r| {
-            println!("GOT {:?}", r);
+            println!("GOT {r:?}");
             if let Notification::Alive {
                 ref notification_type,
                 ref unique_service_name,
@@ -40,8 +40,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             {
                 let mut m = map.borrow_mut();
                 if !m.contains_key(unique_service_name) {
-                    println!("+ {}", notification_type);
-                    println!("  {} at {}", unique_service_name, location);
+                    println!("+ {notification_type}");
+                    println!("  {unique_service_name} at {location}");
                     m.insert(unique_service_name.clone(), r.clone());
                 }
             }

@@ -1,4 +1,4 @@
-use cotton_ssdp::*;
+use cotton_ssdp::{Advertisement, AsyncService, Notification};
 use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::error::Error;
@@ -36,8 +36,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     } = r
                     {
                         if !map.contains_key(unique_service_name) {
-                            println!("+ {}", notification_type);
-                            println!("  {} at {}", unique_service_name, location);
+                            println!("+ {notification_type}");
+                            println!("  {unique_service_name} at {location}");
                             map.insert(unique_service_name.clone(), r);
                         }
                     }

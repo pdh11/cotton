@@ -1,4 +1,4 @@
-use cotton_ssdp::*;
+use cotton_ssdp::{Advertisement, AsyncService, Notification};
 use futures_util::StreamExt;
 
 #[tokio::test]

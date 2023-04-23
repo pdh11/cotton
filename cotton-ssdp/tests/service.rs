@@ -1,4 +1,4 @@
-use cotton_ssdp::*;
+use cotton_ssdp::{Advertisement, Notification, Service};
 use std::cell::RefCell;
 use std::rc::Rc;
 

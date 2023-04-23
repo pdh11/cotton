@@ -25,7 +25,7 @@ impl Default for RefreshTimer {
 }
 
 impl RefreshTimer {
-    /// Create a new RefreshTimer
+    /// Create a new [`RefreshTimer`]
     ///
     #[must_use]
     pub fn new() -> Self {
