@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-...
+### Changed
+
+* InterfaceIndex, which can't be zero, now contains a NonZeroU32.
 
 ## [0.0.3] 2023-03-29
 

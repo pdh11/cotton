@@ -77,7 +77,7 @@ pub(crate) fn ipv4_multicast_operation(
                     s_addr: u32::from_ne_bytes(mcast.octets()),
                 },
                 imr_address: libc::in_addr { s_addr: 0 },
-                imr_ifindex: interface.0 as libc::c_int,
+                imr_ifindex: interface.0.get() as libc::c_int,
             };
             unsafe {
                 let ret = libc::setsockopt(

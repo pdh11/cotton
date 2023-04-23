@@ -36,7 +36,7 @@ use bitflags::bitflags;
 /** Kernel network interface index (1-based)
  */
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct InterfaceIndex(pub u32);
+pub struct InterfaceIndex(pub core::num::NonZeroU32);
 
 bitflags! {
     /// Flags describing a network interface's features and state
@@ -108,10 +108,14 @@ mod tests {
     #[cfg(feature = "std")]
     use std::collections::HashMap;
 
+    fn make_index(i: u32) -> InterfaceIndex {
+        InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())
+    }
+
     #[cfg(feature = "std")]
     #[test]
     fn test_index_debug() {
-        let ix = InterfaceIndex(3);
+        let ix = make_index(3);
         let s = format!("{ix:?}");
         assert_eq!(s, "InterfaceIndex(3)".to_string());
     }
@@ -119,7 +123,7 @@ mod tests {
     #[test]
     #[allow(clippy::clone_on_copy)]
     fn test_index_clone() {
-        let ix = InterfaceIndex(4);
+        let ix = make_index(4);
         let ix2 = ix.clone();
         let ix3 = ix;
         assert_eq!(ix, ix2);
@@ -130,32 +134,32 @@ mod tests {
     #[test]
     fn test_index_hash() {
         let mut h = HashMap::new();
-        h.insert(InterfaceIndex(1), "eth0");
-        h.insert(InterfaceIndex(2), "eth1");
+        h.insert(make_index(1), "eth0");
+        h.insert(make_index(2), "eth1");
 
-        assert_eq!(h.get(&InterfaceIndex(1)), Some(&"eth0"));
+        assert_eq!(h.get(&make_index(1)), Some(&"eth0"));
     }
 
     #[test]
     fn test_index_partialeq() {
-        assert!(InterfaceIndex(1).eq(&InterfaceIndex(1)));
-        assert!(InterfaceIndex(2).ne(&InterfaceIndex(3)));
+        assert!(make_index(1).eq(&make_index(1)));
+        assert!(make_index(2).ne(&make_index(3)));
     }
 
     #[test]
     fn test_index_partialord() {
-        assert!(InterfaceIndex(1).lt(&InterfaceIndex(2)));
-        assert!(InterfaceIndex(3).ge(&InterfaceIndex(2)));
+        assert!(make_index(1).lt(&make_index(2)));
+        assert!(make_index(3).ge(&make_index(2)));
     }
 
     #[test]
     fn test_index_ord() {
         assert_eq!(
-            InterfaceIndex(1).cmp(&InterfaceIndex(2)),
+            make_index(1).cmp(&make_index(2)),
             core::cmp::Ordering::Less
         );
         assert_eq!(
-            InterfaceIndex(3).cmp(&InterfaceIndex(2)),
+            make_index(3).cmp(&make_index(2)),
             core::cmp::Ordering::Greater
         );
     }
@@ -163,22 +167,22 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn test_event_debug() {
-        let e = NetworkEvent::DelLink(InterfaceIndex(7));
+        let e = NetworkEvent::DelLink(make_index(7));
         let s = format!("{e:?}");
         assert_eq!(s, "DelLink(InterfaceIndex(7))");
     }
 
     #[test]
     fn test_event_partialeq() {
-        assert!(NetworkEvent::DelLink(InterfaceIndex(1))
-            .eq(&NetworkEvent::DelLink(InterfaceIndex(1))));
-        assert!(NetworkEvent::DelLink(InterfaceIndex(2))
-            .ne(&NetworkEvent::DelLink(InterfaceIndex(3))));
+        assert!(NetworkEvent::DelLink(make_index(1))
+            .eq(&NetworkEvent::DelLink(make_index(1))));
+        assert!(NetworkEvent::DelLink(make_index(2))
+            .ne(&NetworkEvent::DelLink(make_index(3))));
     }
 
     #[test]
     fn test_event_clone() {
-        let e = NetworkEvent::DelLink(InterfaceIndex(1));
+        let e = NetworkEvent::DelLink(make_index(1));
         let e2 = e.clone();
         assert_eq!(e, e2);
     }

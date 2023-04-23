@@ -96,7 +96,7 @@ fn get_interfaces_inner2(
     nametoindex: NameToIndexFn,
 ) -> impl Iterator<Item = NetworkEvent> {
     let mut msgs = Vec::default();
-    let mut indexes: HashSet<u32> = HashSet::default();
+    let mut indexes: HashSet<core::num::NonZeroU32> = HashSet::default();
 
     for ifaddr in ifaddrs {
         /* Undo Linux aliasing: "eth0:1" is "eth0" really. */
@@ -106,37 +106,41 @@ fn get_interfaces_inner2(
         };
 
         if let Ok(index) = nametoindex(&name[..]) {
-            if indexes.insert(index) {
-                // New entry
-                msgs.push(NetworkEvent::NewLink(
-                    InterfaceIndex(index),
-                    name,
-                    map_interface_flags(ifaddr.flags),
-                ));
-            }
+            if let Some(index) = core::num::NonZeroU32::new(index) {
+                if indexes.insert(index) {
+                    // New entry
+                    msgs.push(NetworkEvent::NewLink(
+                        InterfaceIndex(index),
+                        name,
+                        map_interface_flags(ifaddr.flags),
+                    ));
+                }
 
-            if let (Some(addr), Some(mask)) = (ifaddr.address, ifaddr.netmask)
-            {
-                if let Some(ipv4) = addr.as_sockaddr_in() {
-                    let ip = IpAddr::from(Ipv4Addr::from(ipv4.ip()));
-                    if let Some(netmask) = mask.as_sockaddr_in() {
-                        msgs.push(NetworkEvent::NewAddr(
-                            InterfaceIndex(index),
-                            ip,
-                            (netmask.ip().leading_ones() & 0xFF) as u8,
-                        ));
-                    }
-                } else if let Some(ipv6) = addr.as_sockaddr_in6() {
-                    if let Some(netmask) = mask.as_sockaddr_in6() {
-                        msgs.push(NetworkEvent::NewAddr(
-                            InterfaceIndex(index),
-                            IpAddr::from(ipv6.ip()),
-                            (u128::from_be_bytes(
-                                netmask.as_ref().sin6_addr.s6_addr,
-                            )
-                            .leading_ones()
-                                & 0xFF) as u8,
-                        ));
+                if let (Some(addr), Some(mask)) =
+                    (ifaddr.address, ifaddr.netmask)
+                {
+                    if let Some(ipv4) = addr.as_sockaddr_in() {
+                        let ip = IpAddr::from(Ipv4Addr::from(ipv4.ip()));
+                        if let Some(netmask) = mask.as_sockaddr_in() {
+                            msgs.push(NetworkEvent::NewAddr(
+                                InterfaceIndex(index),
+                                ip,
+                                (netmask.ip().leading_ones() & 0xFF) as u8,
+                            ));
+                        }
+                    } else if let Some(ipv6) = addr.as_sockaddr_in6() {
+                        if let Some(netmask) = mask.as_sockaddr_in6() {
+                            msgs.push(NetworkEvent::NewAddr(
+                                InterfaceIndex(index),
+                                IpAddr::from(ipv6.ip()),
+                                (u128::from_be_bytes(
+                                    netmask.as_ref().sin6_addr.s6_addr,
+                                )
+                                .leading_ones()
+                                    & 0xFF)
+                                    as u8,
+                            ));
+                        }
                     }
                 }
             }
@@ -171,6 +175,10 @@ mod tests {
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV4;
     use std::net::SocketAddrV6;
+
+    fn make_index(i: u32) -> InterfaceIndex {
+        InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())
+    }
 
     #[allow(clippy::unnecessary_wraps)]
     fn index_1(name: &str) -> nix::Result<libc::c_uint> {
@@ -249,7 +257,7 @@ mod tests {
         assert_eq!(
             link.unwrap(),
             NetworkEvent::NewLink(
-                InterfaceIndex(1),
+                make_index(1),
                 "eth0".to_string(),
                 Flags::UP
             )
@@ -260,7 +268,7 @@ mod tests {
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
-                InterfaceIndex(1),
+                make_index(1),
                 Ipv4Addr::new(192, 168, 100, 1).into(),
                 24
             )
@@ -287,6 +295,29 @@ mod tests {
 
         let mut iter = get_interfaces_inner2(vec![ifaddr], |_| {
             Err(nix::errno::Errno::ENOTTY)
+        });
+
+        let link = iter.next();
+
+        assert!(link.is_none());
+    }
+
+    #[test]
+    fn zero_index_ignored() {
+        let addr = SocketAddrV4::new(Ipv4Addr::new(192, 168, 100, 1), 80);
+        let mask = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 0), 80);
+
+        let ifaddr = ifaddrs::InterfaceAddress {
+            interface_name: "eth0".to_string(),
+            flags: InterfaceFlags::IFF_UP,
+            address: Some(addr.into()),
+            netmask: Some(mask.into()),
+            broadcast: None,
+            destination: None,
+        };
+
+        let mut iter = get_interfaces_inner2(vec![ifaddr], |_| {
+            Ok(0)
         });
 
         let link = iter.next();
@@ -326,7 +357,7 @@ mod tests {
         assert_eq!(
             link.unwrap(),
             NetworkEvent::NewLink(
-                InterfaceIndex(1),
+                make_index(1),
                 "eth0".to_string(),
                 Flags::UP
             )
@@ -337,7 +368,7 @@ mod tests {
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
-                InterfaceIndex(1),
+                make_index(1),
                 Ipv4Addr::new(192, 168, 100, 1).into(),
                 24
             )
@@ -429,7 +460,7 @@ mod tests {
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
-                InterfaceIndex(1),
+                make_index(1),
                 Ipv4Addr::new(169, 254, 99, 99).into(),
                 16
             )
@@ -478,7 +509,7 @@ mod tests {
         assert_eq!(
             link.unwrap(),
             NetworkEvent::NewLink(
-                InterfaceIndex(2),
+                make_index(2),
                 "eth1".to_string(),
                 Flags::UP | Flags::RUNNING
             )
@@ -489,7 +520,7 @@ mod tests {
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
-                InterfaceIndex(2),
+                make_index(2),
                 Ipv4Addr::new(169, 254, 99, 99).into(),
                 16
             )
@@ -544,7 +575,7 @@ mod tests {
         assert_eq!(
             link.unwrap(),
             NetworkEvent::NewLink(
-                InterfaceIndex(1),
+                make_index(1),
                 "eth0".to_string(),
                 Flags::UP
             )
@@ -557,7 +588,7 @@ mod tests {
         assert_eq!(
             addr.unwrap(),
             NetworkEvent::NewAddr(
-                InterfaceIndex(1),
+                make_index(1),
                 Ipv4Addr::new(192, 168, 100, 1).into(),
                 24
             )
@@ -570,7 +601,7 @@ mod tests {
         assert_eq!(
             addr2.unwrap(),
             NetworkEvent::NewAddr(
-                InterfaceIndex(1),
+                make_index(1),
                 Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).into(),
                 32
             )

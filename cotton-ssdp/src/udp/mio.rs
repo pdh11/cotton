@@ -77,6 +77,10 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::net::Ipv6Addr;
 
+    fn make_index(i: u32) -> InterfaceIndex {
+        InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn mio_traits() {
@@ -112,37 +116,37 @@ mod tests {
 
         let r = rx.join_multicast_group(
             &IpAddr::V4("127.0.0.1".parse().unwrap()),
-            InterfaceIndex(1),
+            make_index(1),
         ); // Not a mcast addr
         assert!(r.is_err());
 
         let r = rx.join_multicast_group(
             &IpAddr::V6("::1".parse().unwrap()),
-            InterfaceIndex(1),
+            make_index(1),
         ); // IPv6 NYI
         assert!(r.is_err());
 
         let r = rx.join_multicast_group(
             &IpAddr::V4("239.255.255.250".parse().unwrap()),
-            InterfaceIndex(1),
+            make_index(1),
         );
         assert!(r.is_ok());
 
         let r = rx.leave_multicast_group(
             &IpAddr::V6("::1".parse().unwrap()),
-            InterfaceIndex(1),
+            make_index(1),
         ); // IPv6 NYI
         assert!(r.is_err());
 
         let r = rx.leave_multicast_group(
             &IpAddr::V4("127.0.0.1".parse().unwrap()),
-            InterfaceIndex(1),
+            make_index(1),
         ); // Not a mcast addr
         assert!(r.is_err());
 
         let r = rx.leave_multicast_group(
             &IpAddr::V4("239.255.255.250".parse().unwrap()),
-            InterfaceIndex(1),
+            make_index(1),
         );
         assert!(r.is_ok());
     }

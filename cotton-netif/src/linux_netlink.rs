@@ -96,17 +96,19 @@ fn translate_link_message(
                     .ok();
                 if let Some(name) = name {
                     let newflags = map_flags(&p.ifi_flags);
-                    return Some(NetworkEvent::NewLink(
-                        InterfaceIndex(p.ifi_index as u32),
-                        name,
-                        newflags,
-                    ));
+                    return core::num::NonZeroU32::new(p.ifi_index as u32)
+                        .map(|ix| {
+                            NetworkEvent::NewLink(
+                                InterfaceIndex(ix),
+                                name,
+                                newflags,
+                            )
+                        });
                 }
             }
             Rtm::Dellink => {
-                return Some(NetworkEvent::DelLink(InterfaceIndex(
-                    p.ifi_index as u32,
-                )))
+                return core::num::NonZeroU32::new(p.ifi_index as u32)
+                    .map(|ix| NetworkEvent::DelLink(InterfaceIndex(ix)));
             }
             _ => (),
         }
@@ -127,18 +129,24 @@ fn translate_addr_message(
         {
             match msg.nl_type {
                 Rtm::Newaddr => {
-                    return Some(NetworkEvent::NewAddr(
-                        InterfaceIndex(p.ifa_index as u32),
-                        addr,
-                        p.ifa_prefixlen,
-                    ))
+                    return core::num::NonZeroU32::new(p.ifa_index as u32)
+                        .map(|ix| {
+                            NetworkEvent::NewAddr(
+                                InterfaceIndex(ix),
+                                addr,
+                                p.ifa_prefixlen,
+                            )
+                        });
                 }
                 Rtm::Deladdr => {
-                    return Some(NetworkEvent::DelAddr(
-                        InterfaceIndex(p.ifa_index as u32),
-                        addr,
-                        p.ifa_prefixlen,
-                    ))
+                    return core::num::NonZeroU32::new(p.ifa_index as u32)
+                        .map(|ix| {
+                            NetworkEvent::DelAddr(
+                                InterfaceIndex(ix),
+                                addr,
+                                p.ifa_prefixlen,
+                            )
+                        });
                 }
                 _ => (),
             }
@@ -421,6 +429,10 @@ mod tests {
     use neli::ToBytes;
     use std::os::unix::io::FromRawFd;
 
+    fn make_index(i: u32) -> InterfaceIndex {
+        InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())
+    }
+
     #[test]
     fn parse_4byte_addr() {
         let input = [192u8, 168u8, 0u8, 200u8];
@@ -615,7 +627,7 @@ mod tests {
         assert_eq!(
             event.unwrap(),
             NetworkEvent::NewLink(
-                InterfaceIndex(3),
+                make_index(3),
                 "eth0".to_string(),
                 Flags::default()
             )
@@ -645,7 +657,7 @@ mod tests {
 
         let event = translate_link_message(&msg);
         assert!(event.is_some());
-        assert_eq!(event.unwrap(), NetworkEvent::DelLink(InterfaceIndex(2)));
+        assert_eq!(event.unwrap(), NetworkEvent::DelLink(make_index(2)));
     }
 
     #[test]
@@ -757,7 +769,7 @@ mod tests {
         assert_eq!(
             event.unwrap(),
             NetworkEvent::NewAddr(
-                InterfaceIndex(2),
+                make_index(2),
                 ip(&[255, 255, 0, 0]).unwrap(),
                 24
             )
@@ -790,7 +802,7 @@ mod tests {
         assert_eq!(
             event.unwrap(),
             NetworkEvent::DelAddr(
-                InterfaceIndex(2),
+                make_index(2),
                 ip(&[255, 255, 0, 0]).unwrap(),
                 24
             )
@@ -961,7 +973,7 @@ mod tests {
         assert!(s.is_some());
         let result = s.unwrap();
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), NetworkEvent::DelLink(InterfaceIndex(2)));
+        assert_eq!(result.unwrap(), NetworkEvent::DelLink(make_index(2)));
     }
 
     #[tokio::test]
@@ -1132,7 +1144,7 @@ mod tests {
         assert_eq!(
             event.unwrap(),
             NetworkEvent::DelAddr(
-                InterfaceIndex(2),
+                make_index(2),
                 ip(&[255, 255, 0, 0]).unwrap(),
                 24
             )

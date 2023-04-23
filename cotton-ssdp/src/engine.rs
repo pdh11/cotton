@@ -521,6 +521,24 @@ mod tests {
     use no_std_net::{Ipv6Addr, SocketAddrV4};
     use std::sync::{Arc, Mutex};
 
+    // Bit of a palaver to make make_index() const even though it can panic,
+    // see https://ktkaufman03.github.io/blog/2023/04/20/rust-compile-time-checks/
+    trait IsValidIndex {
+        const RESULT: ();
+    }
+
+    struct CustomIndex<const I: u32>;
+
+    impl<const I: u32> IsValidIndex for CustomIndex<I> {
+        const RESULT: () = assert!(I != 0, "Zero is not a valid index");
+    }
+
+    #[allow(clippy::let_unit_value)]
+    const fn make_index<const I: u32>() -> InterfaceIndex {
+        let _ = <CustomIndex<I> as IsValidIndex>::RESULT;
+        unsafe { InterfaceIndex(core::num::NonZeroU32::new_unchecked(I)) }
+    }
+
     /* ==== Tests for target_match() ==== */
 
     #[test]
@@ -783,7 +801,7 @@ mod tests {
         ))
     }
 
-    const LOCAL_IX: InterfaceIndex = InterfaceIndex(4);
+    const LOCAL_IX: InterfaceIndex = make_index::<4>();
     const LOCAL_SRC: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 100, 1));
     const LOCAL_SRC_2: IpAddr = IpAddr::V4(Ipv4Addr::new(169, 254, 33, 203));
     const MULTICAST_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250));
@@ -797,7 +815,7 @@ mod tests {
 
     fn new_eth0_if() -> NetworkEvent {
         NetworkEvent::NewLink(
-            LOCAL_IX,
+            make_index::<4>(),
             "jeth0".to_string(),
             cotton_netif::Flags::UP
                 | cotton_netif::Flags::RUNNING
@@ -1523,7 +1541,8 @@ mod tests {
     #[test]
     fn url_host_rewritten5() {
         // NB not a port number!
-        let url = rewrite_host("http://127.0.0.1/foo:3333/foo/bar", &LOCAL_SRC);
+        let url =
+            rewrite_host("http://127.0.0.1/foo:3333/foo/bar", &LOCAL_SRC);
         assert_eq!(url, "http://192.168.100.1/foo:3333/foo/bar");
     }
 
