@@ -15,7 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "nightly"]
 
 [dependencies]
-cotton-netif = { path = "../cotton-netif", version = "0.0.3", default_features = false }
+cotton-netif = { path = "../cotton-netif", version = "0.0.4", default_features = false }
 no-std-net = { version = "0.6", default_features = false }
 tokio = { version = "1.24", default_features = false, features = ["macros", "net", "rt"], optional = true }
 tokio-stream = { version = "0.1", default_features = false, optional = true }

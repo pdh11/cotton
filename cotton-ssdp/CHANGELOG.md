@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.0.2] 2023-04-23
+
 ### Changed
 
 * Move call to `cotton_netif::get_interfaces_async` out of
