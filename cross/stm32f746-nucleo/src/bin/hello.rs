@@ -7,7 +7,7 @@ use cortex_m::asm;
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
-    cotton_stm32_eth_core::hello();
+    defmt::println!("Hello STM32F746 Nucleo!");
 
     loop {
         asm::bkpt()

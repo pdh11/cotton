@@ -2,11 +2,11 @@
 members = [
     "cotton-netif",
     "cotton-ssdp",
-    "cotton-stm32-eth",
+    "systemtests",
 ]
 
 exclude = [
-        "cross-stm32f7-nucleo"
+    "cross",
 ]
 
 resolver = "2"

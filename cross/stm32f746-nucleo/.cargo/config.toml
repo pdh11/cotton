@@ -4,4 +4,3 @@ rustflags = [
   "-C", "link-arg=-Tlink.x",
   "-C", "link-arg=-Tdefmt.x",
 ]
-target-dir = "target-arm" # To match what the outer Cargo's build.rs does

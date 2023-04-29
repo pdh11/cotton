@@ -1,0 +1,31 @@
+[package]
+name = "systemtests"
+version = "0.0.1"
+description = "System tests for Cotton"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = ["network-programming"]
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+edition = "2021"
+license = "CC0-1.0"
+autotests = false
+publish = false
+
+# We don't want cargo test-all-features to require the existence of
+# tons of devboards. We don't even want it to require a cross-compiler
+# (feature="arm").
+[package.metadata.cargo-all-features]
+allowlist = []
+
+[dependencies]
+serial_test = { version = "0.6" }
+assertables = { version = "7" }
+
+[features]
+arm = []
+stm32f746-nucleo = ["arm"]
+
+[[test]]
+name = "stm32f746-nucleo"
+path = "tests/stm32f746-nucleo.rs"
+required-features = ["stm32f746-nucleo"]
