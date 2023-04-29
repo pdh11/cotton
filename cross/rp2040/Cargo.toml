@@ -5,8 +5,6 @@ publish = false
 edition = "2021"
 version = "0.0.1"
 autotests = false
-doctest = false
-harness = false
 
 [[bin]]
 name="hello"
