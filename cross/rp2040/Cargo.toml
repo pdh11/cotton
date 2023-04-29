@@ -1,0 +1,25 @@
+[package]
+authors = ["Peter Hartley <peter@electricimp.com>"]
+name = "cross-rp2040"
+publish = false
+edition = "2021"
+version = "0.0.1"
+autotests = false
+doctest = false
+harness = false
+
+[[bin]]
+name="hello"
+test = false
+doctest = false
+harness = false
+
+[dependencies]
+cotton-ssdp = { path = "../../cotton-ssdp", default_features = false }
+cortex-m = { version = "0.7.6" }
+cortex-m-rt = "0.7"
+defmt = "0.3.2"
+defmt-rtt = "0.4.0"
+#defmt-test = "0.3.0"
+panic-probe = { version = "0.3.0", features = ["print-defmt"] }
+rp-pico = "0.6"
