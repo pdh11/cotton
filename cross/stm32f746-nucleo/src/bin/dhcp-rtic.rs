@@ -7,7 +7,7 @@ use stm32f7xx_hal as _;
 
 use smoltcp::{
     iface::{self, SocketStorage},
-    wire::{self, IpAddress, Ipv4Address},
+    wire,
 };
 
 use stm32_eth::{
@@ -110,7 +110,7 @@ mod pins {
             gpiog,
         } = gpio;
 
-        let ref_clk = gpioa.pa1.into_floating_input();
+        let ref_clk = gpioa.pa1; //.into_floating_input();
         let crs = gpioa.pa7.into_floating_input();
         let tx_d1 = gpiob.pb13.into_floating_input();
         let rx_d0 = gpioc.pc4.into_floating_input();
@@ -256,8 +256,6 @@ impl<M: Miim> EthernetPhy<M> {
     }
 }
 
-const ADDRESS: (IpAddress, u16) = (IpAddress::Ipv4(Ipv4Address::new(10, 0, 0, 1)), 1337);
-
 #[rtic::app(device = stm32_eth::stm32, dispatchers = [SPI1])]
 mod app {
 
@@ -275,9 +273,7 @@ mod app {
     use core::hash::Hasher;
     use smoltcp::{
         iface::{self, Interface, SocketHandle},
-        socket::TcpSocket,
         socket::{Dhcpv4Event, Dhcpv4Socket},
-        socket::{TcpSocketBuffer, TcpState},
         wire::{EthernetAddress, IpCidr},
     };
 
@@ -287,7 +283,6 @@ mod app {
     struct Local {
         interface:
             Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
-        tcp_handle: SocketHandle,
         dhcp_handle: SocketHandle,
     }
 
@@ -380,13 +375,6 @@ mod app {
         let neighbor_cache =
             smoltcp::iface::NeighborCache::new(&mut store.neighbor_cache[..]);
 
-        let rx_buffer =
-            TcpSocketBuffer::new(&mut store.tcp_socket_storage.rx_storage[..]);
-        let tx_buffer =
-            TcpSocketBuffer::new(&mut store.tcp_socket_storage.tx_storage[..]);
-
-        let socket = TcpSocket::new(rx_buffer, tx_buffer);
-
         let mut interface =
             iface::InterfaceBuilder::new(dma, &mut store.sockets[..])
                 .hardware_addr(
@@ -396,14 +384,6 @@ mod app {
                 .ip_addrs(&mut store.ip_addrs[..])
                 .routes(routes)
                 .finalize();
-
-        let tcp_handle = interface.add_socket(socket);
-
-        let dhcp_socket = Dhcpv4Socket::new();
-        let dhcp_handle = interface.add_socket(dhcp_socket);
-
-        let socket = interface.get_socket::<TcpSocket>(tcp_handle);
-        socket.listen(crate::ADDRESS).ok();
 
         interface.poll(now_fn()).unwrap();
 
@@ -438,27 +418,24 @@ mod app {
             );
         }
 
-        defmt::println!("Setup done. Listening at {}", crate::ADDRESS);
+        let dhcp_socket = Dhcpv4Socket::new();
+        let dhcp_handle = interface.add_socket(dhcp_socket);
+
+        interface.poll(now_fn()).unwrap();
 
         (
             Shared {},
             Local {
                 interface,
-                tcp_handle,
                 dhcp_handle,
             },
             init::Monotonics(mono),
         )
     }
 
-    #[task(binds = ETH, local = [interface, tcp_handle, dhcp_handle, data: [u8; 512] = [0u8; 512]], priority = 2)]
+    #[task(binds = ETH, local = [interface, dhcp_handle], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (iface, tcp_handle, dhcp_handle, buffer) = (
-            cx.local.interface,
-            cx.local.tcp_handle,
-            cx.local.dhcp_handle,
-            cx.local.data,
-        );
+        let (iface, dhcp_handle) = (cx.local.interface, cx.local.dhcp_handle);
 
         let interrupt_reason = iface.device_mut().interrupt_handler();
         defmt::trace!(
@@ -498,22 +475,6 @@ mod app {
             }
         }
 
-        let socket = iface.get_socket::<TcpSocket>(*tcp_handle);
-        if let Ok(recv_bytes) = socket.recv_slice(buffer) {
-            if recv_bytes > 0 {
-                socket.send_slice(&buffer[..recv_bytes]).ok();
-                defmt::println!("Echoed {} bytes.", recv_bytes);
-            }
-        }
-
-        if !socket.is_listening() && !socket.is_open()
-            || socket.state() == TcpState::CloseWait
-        {
-            socket.abort();
-            socket.listen(crate::ADDRESS).ok();
-            defmt::warn!("Disconnected... Reopening listening socket.");
-        }
-
         iface.poll(now_fn()).ok();
     }
 }
@@ -522,14 +483,13 @@ mod app {
 pub struct NetworkStorage {
     pub ip_addrs: [wire::IpCidr; 1],
     pub sockets: [iface::SocketStorage<'static>; 2],
-    pub tcp_socket_storage: TcpSocketStorage,
     pub neighbor_cache: [Option<(wire::IpAddress, iface::Neighbor)>; 8],
     pub routes_cache: [Option<(wire::IpCidr, iface::Route)>; 8],
 }
 
 impl NetworkStorage {
     const IP_INIT: wire::IpCidr = wire::IpCidr::Ipv4(wire::Ipv4Cidr::new(
-        wire::Ipv4Address::new(10, 0, 0, 1),
+        wire::Ipv4Address::UNSPECIFIED,
         24,
     ));
 
@@ -539,23 +499,6 @@ impl NetworkStorage {
             neighbor_cache: [None; 8],
             routes_cache: [None; 8],
             sockets: [SocketStorage::EMPTY; 2],
-            tcp_socket_storage: TcpSocketStorage::new(),
-        }
-    }
-}
-
-/// Storage of TCP sockets
-#[derive(Copy, Clone)]
-pub struct TcpSocketStorage {
-    rx_storage: [u8; 512],
-    tx_storage: [u8; 512],
-}
-
-impl TcpSocketStorage {
-    const fn new() -> Self {
-        Self {
-            rx_storage: [0; 512],
-            tx_storage: [0; 512],
         }
     }
 }
