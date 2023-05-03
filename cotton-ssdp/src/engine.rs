@@ -120,7 +120,7 @@ impl<CB: Callback> Engine<CB> {
     ///
     /// This should be called periodically, perhaps with the help of a
     /// [`crate::refresh_timer::RefreshTimer`]
-    pub fn refresh<SCK: udp::TargetedSend + udp::Multicast>(
+    pub fn refresh<SCK: udp::TargetedSend>(
         &mut self,
         socket: &SCK,
     ) {
@@ -143,7 +143,7 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    fn search_on<SCK: udp::TargetedSend + udp::Multicast>(
+    fn search_on<SCK: udp::TargetedSend>(
         search_type: &str,
         source: &IpAddr,
         socket: &SCK,
@@ -156,7 +156,7 @@ impl<CB: Callback> Engine<CB> {
         );
     }
 
-    fn search_on_all<SCK: udp::TargetedSend + udp::Multicast>(
+    fn search_on_all<SCK: udp::TargetedSend>(
         &self,
         search_type: &str,
         socket: &SCK,
@@ -173,7 +173,7 @@ impl<CB: Callback> Engine<CB> {
     /// Subscribe to notifications of a particular service type
     ///
     /// And send searches.
-    pub fn subscribe<SCK: udp::TargetedSend + udp::Multicast>(
+    pub fn subscribe<SCK: udp::TargetedSend>(
         &mut self,
         notification_type: String,
         callback: CB,
@@ -205,7 +205,7 @@ impl<CB: Callback> Engine<CB> {
     }
 
     /// Notify the `Engine` that data is ready on one of its sockets
-    pub fn on_data<SCK: udp::TargetedSend + udp::Multicast>(
+    pub fn on_data<SCK: udp::TargetedSend>(
         &mut self,
         buf: &[u8],
         socket: &SCK,
@@ -279,9 +279,9 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    fn join_multicast<SCK: udp::TargetedSend + udp::Multicast>(
+    fn join_multicast<MCAST: udp::Multicast>(
         interface: InterfaceIndex,
-        multicast: &SCK,
+        multicast: &MCAST,
     ) -> Result<(), udp::Error> {
         multicast.join_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
@@ -289,9 +289,9 @@ impl<CB: Callback> Engine<CB> {
         )
     }
 
-    fn leave_multicast<SCK: udp::TargetedSend + udp::Multicast>(
+    fn leave_multicast<MCAST: udp::Multicast>(
         interface: InterfaceIndex,
-        multicast: &SCK,
+        multicast: &MCAST,
     ) -> Result<(), udp::Error> {
         multicast.leave_multicast_group(
             &IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)),
@@ -299,7 +299,7 @@ impl<CB: Callback> Engine<CB> {
         )
     }
 
-    fn send_all<SCK: udp::TargetedSend + udp::Multicast>(
+    fn send_all<SCK: udp::TargetedSend>(
         &self,
         ips: &[IpAddr],
         search: &SCK,
@@ -329,10 +329,10 @@ impl<CB: Callback> Engine<CB> {
     ///
     /// Passes on errors from the underlying system-calls for joining
     /// (and leaving) multicast groups.
-    pub fn on_network_event<SCK: udp::TargetedSend + udp::Multicast>(
+    pub fn on_network_event<SCK: udp::TargetedSend, MCAST: udp::Multicast>(
         &mut self,
         e: &NetworkEvent,
-        multicast: &SCK,
+        multicast: &MCAST,
         search: &SCK,
     ) -> Result<(), udp::Error> {
         match e {
@@ -392,7 +392,7 @@ impl<CB: Callback> Engine<CB> {
         Ok(())
     }
 
-    fn notify_on<SCK: udp::TargetedSend + udp::Multicast>(
+    fn notify_on<SCK: udp::TargetedSend>(
         unique_service_name: &str,
         advertisement: &Advertisement,
         source: &IpAddr,
@@ -417,7 +417,7 @@ impl<CB: Callback> Engine<CB> {
         );
     }
 
-    fn notify_on_all<SCK: udp::TargetedSend + udp::Multicast>(
+    fn notify_on_all<SCK: udp::TargetedSend>(
         &self,
         unique_service_name: &str,
         advertisement: &Advertisement,
@@ -437,7 +437,7 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    fn byebye_on<SCK: udp::TargetedSend + udp::Multicast>(
+    fn byebye_on<SCK: udp::TargetedSend>(
         unique_service_name: &str,
         notification_type: &str,
         source: &IpAddr,
@@ -460,7 +460,7 @@ impl<CB: Callback> Engine<CB> {
         );
     }
 
-    fn byebye_on_all<SCK: udp::TargetedSend + udp::Multicast>(
+    fn byebye_on_all<SCK: udp::TargetedSend>(
         &self,
         notification_type: &str,
         unique_service_name: &str,
@@ -481,7 +481,7 @@ impl<CB: Callback> Engine<CB> {
     }
 
     /// Advertise a local resource to SSDP peers
-    pub fn advertise<SCK: udp::TargetedSend + udp::Multicast>(
+    pub fn advertise<SCK: udp::TargetedSend>(
         &mut self,
         unique_service_name: String,
         advertisement: Advertisement,
@@ -497,7 +497,7 @@ impl<CB: Callback> Engine<CB> {
     /// For instance, it is "polite" to call this if shutting down
     /// cleanly.
     ///
-    pub fn deadvertise<SCK: udp::TargetedSend + udp::Multicast>(
+    pub fn deadvertise<SCK: udp::TargetedSend>(
         &mut self,
         unique_service_name: &str,
         socket: &SCK,

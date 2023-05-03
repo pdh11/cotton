@@ -1,6 +1,13 @@
+
 # cotton-ssdp Changelog
 
 ## Unreleased
+
+### Changed
+
+* Don't require "sockets" passed to Engine to be *both* Multicast and
+  TargetedSend. Engine never needs to do both things to the same socket,
+  and under smoltcp the two might be different types.
 
 ## [0.0.2] 2023-04-23
 
