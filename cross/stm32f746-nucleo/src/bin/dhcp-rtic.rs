@@ -10,141 +10,18 @@ use smoltcp::{
     wire,
 };
 
-use stm32_eth::{
-    hal::{gpio::GpioExt, rcc::Clocks},
-    PartsIn,
-};
-
-pub use pins::{setup_pins, Gpio};
+use stm32_eth::hal::rcc::Clocks;
 
 use fugit::RateExtU32;
 use stm32_eth::hal::rcc::RccExt;
 
-/// Setup the clocks and return clocks and a GPIO struct that
-/// can be used to set up all of the pins.
-///
-/// This configures HCLK to be at least 25 MHz, which is the minimum required
-/// for ethernet operation to be valid.
-pub fn setup_peripherals(
-    p: stm32_eth::stm32::Peripherals,
-) -> (Clocks, Gpio, PartsIn) {
-    let ethernet = PartsIn {
-        dma: p.ETHERNET_DMA,
-        mac: p.ETHERNET_MAC,
-        mmc: p.ETHERNET_MMC,
-    };
+pub fn setup_clocks(rcc: stm32_eth::stm32::RCC) -> Clocks {
+    let rcc = rcc.constrain();
 
-    {
-        let rcc = p.RCC.constrain();
-
-        let clocks = rcc.cfgr.sysclk(100.MHz()).hclk(100.MHz());
-
-        let clocks = {
-            if cfg!(hse = "bypass") {
-                clocks.hse(stm32_eth::hal::rcc::HSEClock::new(
-                    8.MHz(),
-                    stm32_eth::hal::rcc::HSEClockMode::Bypass,
-                ))
-            } else if cfg!(hse = "oscillator") {
-                clocks.hse(stm32_eth::hal::rcc::HSEClock::new(
-                    8.MHz(),
-                    stm32_eth::hal::rcc::HSEClockMode::Oscillator,
-                ))
-            } else {
-                clocks
-            }
-        };
-
-        let clocks = clocks.freeze();
-
-        let gpio = Gpio {
-            gpioa: p.GPIOA.split(),
-            gpiob: p.GPIOB.split(),
-            gpioc: p.GPIOC.split(),
-            gpiog: p.GPIOG.split(),
-        };
-
-        (clocks, gpio, ethernet)
-    }
-}
-
-pub use pins::*;
-
-mod pins {
-    use stm32_eth::{hal::gpio::*, EthPins};
-
-    pub struct Gpio {
-        pub gpioa: gpioa::Parts,
-        pub gpiob: gpiob::Parts,
-        pub gpioc: gpioc::Parts,
-        pub gpiog: gpiog::Parts,
-    }
-
-    pub type RefClk = PA1<Input>;
-    pub type Crs = PA7<Input>;
-    pub type TxD1 = PB13<Input>;
-    pub type RxD0 = PC4<Input>;
-    pub type RxD1 = PC5<Input>;
-
-    pub type TxEn = PG11<Input>;
-    pub type TxD0 = PG13<Input>;
-
-    pub type Mdio = PA2<Alternate<11>>;
-    pub type Mdc = PC1<Alternate<11>>;
-
-    pub type Pps = PB5<Output<PushPull>>;
-
-    pub fn setup_pins(
-        gpio: Gpio,
-    ) -> (
-        EthPins<RefClk, Crs, TxEn, TxD0, TxD1, RxD0, RxD1>,
-        Mdio,
-        Mdc,
-        Pps,
-    ) {
-        #[allow(unused_variables)]
-        let Gpio {
-            gpioa,
-            gpiob,
-            gpioc,
-            gpiog,
-        } = gpio;
-
-        let ref_clk = gpioa.pa1; //.into_floating_input();
-        let crs = gpioa.pa7.into_floating_input();
-        let tx_d1 = gpiob.pb13.into_floating_input();
-        let rx_d0 = gpioc.pc4.into_floating_input();
-        let rx_d1 = gpioc.pc5.into_floating_input();
-
-        let (tx_en, tx_d0) = {
-            (
-                gpiog.pg11.into_floating_input(),
-                gpiog.pg13.into_floating_input(),
-            )
-        };
-
-        let (mdio, mdc) = (
-            gpioa.pa2.into_alternate().set_speed(Speed::VeryHigh),
-            gpioc.pc1.into_alternate().set_speed(Speed::VeryHigh),
-        );
-
-        let pps = gpiob.pb5.into_push_pull_output();
-
-        (
-            EthPins {
-                ref_clk,
-                crs,
-                tx_en,
-                tx_d0,
-                tx_d1,
-                rx_d0,
-                rx_d1,
-            },
-            mdio,
-            mdc,
-            pps,
-        )
-    }
+    rcc.cfgr
+        .sysclk(100.MHz())
+        .hclk(100.MHz())
+        .freeze()
 }
 
 use ieee802_3_miim::{
@@ -266,6 +143,7 @@ mod app {
 
     use stm32_eth::{
         dma::{EthernetDMA, RxRingEntry, TxRingEntry},
+        hal::gpio::GpioExt,
         mac::Speed,
         Parts,
     };
@@ -311,7 +189,12 @@ mod app {
         let rx_ring = cx.local.rx_ring;
         let tx_ring = cx.local.tx_ring;
 
-        let (clocks, gpio, ethernet) = super::setup_peripherals(p);
+        let clocks = super::setup_clocks(p.RCC);
+        let ethernet = stm32_eth::PartsIn {
+            dma: p.ETHERNET_DMA,
+            mac: p.ETHERNET_MAC,
+            mmc: p.ETHERNET_MMC,
+        };
         let mono = Systick::new(core.SYST, clocks.hclk().raw());
 
         // Chip unique ID, RM0385 rev5 s41.1
@@ -349,12 +232,30 @@ mod app {
         );
 
         defmt::println!("Setting up pins");
-        let (pins, mdio, mdc, _) = super::setup_pins(gpio);
+
+        let gpioa = p.GPIOA.split();
+        let gpiob = p.GPIOB.split();
+        let gpioc = p.GPIOC.split();
+        let gpiog = p.GPIOG.split();
 
         defmt::println!("Configuring ethernet");
 
         let Parts { dma, mac } = stm32_eth::new_with_mii(
-            ethernet, rx_ring, tx_ring, clocks, pins, mdio, mdc,
+            ethernet,
+            rx_ring,
+            tx_ring,
+            clocks,
+            stm32_eth::EthPins {
+                ref_clk: gpioa.pa1,
+                crs: gpioa.pa7,
+                tx_en: gpiog.pg11,
+                tx_d0: gpiog.pg13,
+                tx_d1: gpiob.pb13,
+                rx_d0: gpioc.pc4,
+                rx_d1: gpioc.pc5,
+            },
+            gpioa.pa2.into_alternate(), // mdio
+            gpioc.pc1.into_alternate(), // mdc
         )
         .unwrap();
 
@@ -422,6 +323,7 @@ mod app {
         let dhcp_handle = interface.add_socket(dhcp_socket);
 
         interface.poll(now_fn()).unwrap();
+        interface.get_socket::<Dhcpv4Socket>(dhcp_handle).poll();
 
         (
             Shared {},
