@@ -18,9 +18,16 @@ test = false
 doctest = false
 harness = false
 
+[[bin]]
+name = "ssdp-rtic"
+test = false
+doctest = false
+harness = false
+
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default_features = false }
-smoltcp = { version = "0.8", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4" ], default-features = false }
+cotton-netif = { path = "../../cotton-netif", default_features = false }
+smoltcp = { version = "0.8", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp" ], default-features = false }
 stm32-eth = { version = "0.4", features = ["defmt", "stm32f746", "smoltcp-phy"], default-features = false }
 ieee802_3_miim = "0.8"
 stm32f7xx-hal = { version = "0.7.0" }
@@ -34,3 +41,5 @@ systick-monotonic = "1.0"
 rtic = { package = "cortex-m-rtic", version = "1.0" }
 fugit = "0.3"
 siphasher = { version = "0.3", default-features = false }
+linked_list_allocator = { version = "0.10", default_features = false, features = ["use_spin_nightly"] }
+no-std-net = { version = "0.6", default_features = false }
