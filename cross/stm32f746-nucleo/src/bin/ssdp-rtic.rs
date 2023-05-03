@@ -2,17 +2,17 @@
 #![no_main]
 
 use defmt_rtt as _; // global logger
+use fugit::RateExtU32;
+use linked_list_allocator::LockedHeap;
 use panic_probe as _;
-use stm32f7xx_hal as _;
+use smoltcp::socket::UdpPacketMetadata;
 use smoltcp::{
     iface::{self, SocketStorage},
     wire,
 };
-use smoltcp::socket::UdpPacketMetadata;
 use stm32_eth::hal::rcc::Clocks;
-use fugit::RateExtU32;
 use stm32_eth::hal::rcc::RccExt;
-use linked_list_allocator::LockedHeap;
+use stm32f7xx_hal as _;
 
 extern crate alloc;
 
@@ -158,13 +158,15 @@ mod app {
     use smoltcp::{
         iface::{self, Interface, SocketHandle},
         socket::{Dhcpv4Event, Dhcpv4Socket},
-        wire::{EthernetAddress, IpCidr},
+        wire::{self, EthernetAddress, IpCidr},
     };
 
     use smoltcp::socket::{UdpSocket, UdpSocketBuffer};
 
-    use crate::alloc::string::ToString;
     use super::NetworkStorage;
+    use crate::alloc::string::ToString;
+
+    pub struct Listener {}
 
     #[local]
     struct Local {
@@ -172,31 +174,53 @@ mod app {
             Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
         dhcp_handle: SocketHandle,
         udp_handle: SocketHandle,
-        ssdp: cotton_ssdp::engine::Engine::<Local>,
+        ssdp: cotton_ssdp::engine::Engine<Listener>,
     }
-    
-    impl cotton_ssdp::engine::Callback for Local {
+
+    impl cotton_ssdp::engine::Callback for Listener {
         fn on_notification(&self, notification: &cotton_ssdp::Notification) {
             if let cotton_ssdp::Notification::Alive {
                 ref notification_type,
                 ..
-            } = notification {
-                defmt::println!("{:?}", &notification_type[..]);
+            } = notification
+            {
+                defmt::println!("SSDP! {:?}", &notification_type[..]);
             }
         }
     }
 
-    struct WrappedSocket {
+    struct WrappedInterface(
+        core::cell::RefCell<
+            Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
+        >,
+    );
+
+    fn convert_ip_address(ip: &no_std_net::IpAddr) -> wire::IpAddress {
+        match ip {
+            no_std_net::IpAddr::V4(a) => {
+                wire::IpAddress::Ipv4(wire::Ipv4Address(a.octets()))
+            }
+            _ => wire::IpAddress::Unspecified,
+            //            no_std_net::IpAddr::V6(a) => wire::IpAddress::Ipv6(
+            //                wire::Ipv6Address(a.octets())),
+        }
     }
 
-    impl cotton_ssdp::udp::Multicast for WrappedSocket {
+    impl cotton_ssdp::udp::Multicast for WrappedInterface {
         fn join_multicast_group(
             &self,
-            _multicast_address: &no_std_net::IpAddr,
+            multicast_address: &no_std_net::IpAddr,
             _interface: cotton_netif::InterfaceIndex,
         ) -> Result<(), cotton_ssdp::udp::Error> {
             defmt::println!("JMG!");
-            Err(cotton_ssdp::udp::Error::NoPacketInfo)
+            self.0
+                .borrow_mut()
+                .join_multicast_group(
+                    convert_ip_address(multicast_address),
+                    now_fn(),
+                )
+                .map(|_| ())
+                .map_err(|_| cotton_ssdp::udp::Error::NoPacketInfo)
         }
 
         fn leave_multicast_group(
@@ -209,6 +233,8 @@ mod app {
         }
     }
 
+    struct WrappedSocket {}
+
     impl cotton_ssdp::udp::TargetedSend for WrappedSocket {
         fn send_with<F>(
             &self,
@@ -217,8 +243,9 @@ mod app {
             _from: &no_std_net::IpAddr,
             _f: F,
         ) -> Result<(), cotton_ssdp::udp::Error>
-            where
-            F: FnOnce(&mut [u8]) -> usize {
+        where
+            F: FnOnce(&mut [u8]) -> usize,
+        {
             defmt::println!("Send!");
             Err(cotton_ssdp::udp::Error::NoPacketInfo)
         }
@@ -228,7 +255,10 @@ mod app {
         fn receive_to(
             &self,
             _buffer: &mut [u8],
-        ) -> Result<(usize, no_std_net::IpAddr, no_std_net::SocketAddr), cotton_ssdp::udp::Error> {
+        ) -> Result<
+            (usize, no_std_net::IpAddr, no_std_net::SocketAddr),
+            cotton_ssdp::udp::Error,
+        > {
             defmt::println!("Receive!");
             Err(cotton_ssdp::udp::Error::NoPacketInfo)
         }
@@ -246,12 +276,14 @@ mod app {
     }
 
     fn init_heap() {
-        const STACK_SIZE: usize = 16*1024;
+        const STACK_SIZE: usize = 16 * 1024;
         unsafe {
             let heap_start = &super::__sheap as *const u32 as usize;
             let heap_end = &super::_stack_start as *const u32 as usize;
             let heap_size = heap_end - heap_start - STACK_SIZE;
-            super::ALLOCATOR.lock().init(heap_start as *mut u8, heap_size);
+            super::ALLOCATOR
+                .lock()
+                .init(heap_start as *mut u8, heap_size);
         }
     }
 
@@ -413,41 +445,48 @@ mod app {
             &mut store.udp_socket_storage.tx_metadata[..],
             &mut store.udp_socket_storage.tx_storage[..],
         );
-        let udp_socket = UdpSocket::new(udp_rx_buffer, udp_tx_buffer);
+        let mut udp_socket = UdpSocket::new(udp_rx_buffer, udp_tx_buffer);
+        _ = udp_socket.bind(1900);
         let udp_handle = interface.add_socket(udp_socket);
 
         interface.poll(now_fn()).unwrap();
         interface.get_socket::<Dhcpv4Socket>(dhcp_handle).poll();
 
-        let mut loc = Local {
-            interface,
-            dhcp_handle,
-            udp_handle,
-            ssdp: cotton_ssdp::engine::Engine::new(),
-        };
+        let mut ssdp = cotton_ssdp::engine::Engine::new();
 
-        let ix = cotton_netif::InterfaceIndex(core::num::NonZeroU32::new(1).unwrap());
-        let ev = cotton_netif::NetworkEvent::NewLink(ix,
-                                                     "".to_string(),
-                                                     cotton_netif::Flags::MULTICAST);
+        let ix = cotton_netif::InterfaceIndex(
+            core::num::NonZeroU32::new(1).unwrap(),
+        );
+        let ev = cotton_netif::NetworkEvent::NewLink(
+            ix,
+            "".to_string(),
+            cotton_netif::Flags::MULTICAST,
+        );
         let ws = WrappedSocket {};
         defmt::println!("Calling o-n-e");
-        _ = loc.ssdp.on_network_event(&ev, &ws, &ws);
+        let wi = WrappedInterface(core::cell::RefCell::new(interface));
+        _ = ssdp.on_network_event(&ev, &wi, &ws);
         defmt::println!("o-n-e returned");
 
-        (
-            Shared {},
-            loc,
-            init::Monotonics(mono),
-        )
+        let mut loc = Local {
+            interface: wi.0.into_inner(),
+            dhcp_handle,
+            udp_handle,
+            ssdp,
+        };
+
+        loc.ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+
+        (Shared {}, loc, init::Monotonics(mono))
     }
 
-    #[task(binds = ETH, local = [interface, dhcp_handle, udp_handle], priority = 2)]
+    #[task(binds = ETH, local = [interface, dhcp_handle, udp_handle, ssdp], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (iface, dhcp_handle, _udp_handle) = (
+        let (iface, dhcp_handle, udp_handle, ssdp) = (
             cx.local.interface,
             cx.local.dhcp_handle,
             cx.local.udp_handle,
+            cx.local.ssdp,
         );
 
         let interrupt_reason = iface.device_mut().interrupt_handler();
@@ -486,6 +525,32 @@ mod app {
             Some(Dhcpv4Event::Deconfigured) => {
                 defmt::println!("DHCP lost config!");
             }
+        }
+
+        let socket = iface.get_socket::<UdpSocket>(*udp_handle);
+        if socket.can_recv() {
+            socket
+                .recv()
+                .map(|(data, sender)| {
+                    defmt::println!("{} from {}", data.len(), sender);
+                    let ws = WrappedSocket {};
+                    ssdp.on_data(
+                        data,
+                        &ws,
+                        no_std_net::IpAddr::V4(
+                            no_std_net::Ipv4Addr::UNSPECIFIED,
+                        ),
+                        no_std_net::SocketAddr::V4(
+                            no_std_net::SocketAddrV4::new(
+                                no_std_net::Ipv4Addr::UNSPECIFIED,
+                                9999,
+                            ),
+                        ),
+                    );
+                })
+                .unwrap_or_else(|e| {
+                    defmt::println!("Recv UDP error: {:?}", e)
+                });
         }
 
         iface.poll(now_fn()).ok();
