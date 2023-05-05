@@ -144,6 +144,7 @@ mod app {
 
     use super::EthernetPhy;
 
+    use fugit::ExtU64;
     use ieee802_3_miim::{phy::PhySpeed, Phy};
     use systick_monotonic::Systick;
 
@@ -175,6 +176,7 @@ mod app {
         dhcp_handle: SocketHandle,
         udp_handle: SocketHandle,
         ssdp: cotton_ssdp::engine::Engine<Listener>,
+        nvic: stm32_eth::stm32::NVIC,
     }
 
     impl cotton_ssdp::engine::Callback for Listener {
@@ -301,8 +303,8 @@ mod app {
 
     struct WrappedInterface(
         core::cell::RefCell<
-            Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
-        >,
+                Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
+            >,
     );
 
     impl cotton_ssdp::udp::Multicast for WrappedInterface {
@@ -332,7 +334,7 @@ mod app {
         }
     }
 
-    struct WrappedSocket {}
+    struct WrappedSocket;
 
     impl cotton_ssdp::udp::TargetedSend for WrappedSocket {
         fn send_with<F>(
@@ -546,11 +548,6 @@ mod app {
         );
         let mut udp_socket = UdpSocket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let udp_handle = interface.add_socket(udp_socket);
-
-        interface.poll(now_fn()).unwrap();
-        interface.get_socket::<Dhcpv4Socket>(dhcp_handle).poll();
-
         let mut ssdp = cotton_ssdp::engine::Engine::new();
 
         let ix = cotton_netif::InterfaceIndex(
@@ -561,22 +558,40 @@ mod app {
             "".to_string(),
             cotton_netif::Flags::MULTICAST,
         );
-        let ws = WrappedSocket {};
+
+        let ws = WrappedSocket;
         defmt::println!("Calling o-n-e");
         let wi = WrappedInterface(core::cell::RefCell::new(interface));
         _ = ssdp.on_network_event(&ev, &wi, &ws);
         defmt::println!("o-n-e returned");
+        let mut interface = wi.0.into_inner();
 
-        let mut loc = Local {
-            interface: wi.0.into_inner(),
+        ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+
+        let udp_handle = interface.add_socket(udp_socket);
+
+        interface.poll(now_fn()).unwrap();
+        interface.get_socket::<Dhcpv4Socket>(dhcp_handle).poll();
+
+        let loc = Local {
+            interface,
             dhcp_handle,
             udp_handle,
             ssdp,
+            nvic: core.NVIC,
         };
 
-        loc.ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+        periodic::spawn_after(2.secs()).unwrap();
 
         (Shared {}, loc, init::Monotonics(mono))
+    }
+
+    #[task(local = [nvic])]
+    fn periodic(cx: periodic::Context) {
+        let nvic = cx.local.nvic;
+        nvic.request
+                (stm32_eth::stm32::Interrupt::ETH);
+        periodic::spawn_after(2.secs()).unwrap();
     }
 
     #[task(binds = ETH, local = [interface, dhcp_handle, udp_handle, ssdp], priority = 2)]
@@ -588,11 +603,11 @@ mod app {
             cx.local.ssdp,
         );
 
-        let interrupt_reason = iface.device_mut().interrupt_handler();
-        defmt::trace!(
-            "Got an ethernet interrupt! Reason: {}",
-            interrupt_reason
-        );
+//        let interrupt_reason = iface.device_mut().interrupt_handler();
+//        defmt::trace!(
+//            "Got an ethernet interrupt! Reason: {}",
+//            interrupt_reason
+//        );
 
         iface.poll(now_fn()).ok();
 
@@ -612,6 +627,8 @@ mod app {
                 if let Some(router) = config.router {
                     defmt::println!("Default gateway: {}", router);
                     iface.routes_mut().add_default_ipv4_route(router).unwrap();
+                    let ws = WrappedSocket;
+                    ssdp.refresh(&ws);
                 } else {
                     defmt::println!("Default gateway: None");
                     iface.routes_mut().remove_default_ipv4_route();
@@ -634,7 +651,7 @@ mod app {
                     .recv()
                     .map(|(data, sender)| {
                         defmt::println!("{} from {}", data.len(), sender);
-                        let ws = WrappedSocket {};
+                        let ws = WrappedSocket;
                         ssdp.on_data(
                             data,
                             &ws,
