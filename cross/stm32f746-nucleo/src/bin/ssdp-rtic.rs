@@ -189,22 +189,121 @@ mod app {
         }
     }
 
+    struct GenericIpv4Address(no_std_net::Ipv4Addr);
+
+    impl From<wire::Ipv4Address> for GenericIpv4Address {
+        fn from(ip: wire::Ipv4Address) -> Self {
+            GenericIpv4Address(no_std_net::Ipv4Addr::from(ip.0))
+        }
+    }
+
+    impl From<GenericIpv4Address> for wire::Ipv4Address {
+        fn from(ip: GenericIpv4Address) -> Self {
+            wire::Ipv4Address(ip.0.octets())
+        }
+    }
+
+    impl From<no_std_net::Ipv4Addr> for GenericIpv4Address {
+        fn from(ip: no_std_net::Ipv4Addr) -> Self {
+            GenericIpv4Address(ip)
+        }
+    }
+
+    impl From<GenericIpv4Address> for no_std_net::Ipv4Addr {
+        fn from(ip: GenericIpv4Address) -> Self {
+            ip.0
+        }
+    }
+
+    struct GenericIpAddress(no_std_net::IpAddr);
+
+    impl From<wire::IpAddress> for GenericIpAddress {
+        fn from(ip: wire::IpAddress) -> Self {
+            match ip {
+                wire::IpAddress::Ipv4(v4) => GenericIpAddress(
+                    no_std_net::IpAddr::V4(no_std_net::Ipv4Addr::from(v4.0)),
+                ),
+                _ => GenericIpAddress(no_std_net::IpAddr::V4(
+                    no_std_net::Ipv4Addr::UNSPECIFIED,
+                )),
+            }
+        }
+    }
+
+    impl From<GenericIpAddress> for wire::IpAddress {
+        fn from(ip: GenericIpAddress) -> Self {
+            match ip.0 {
+                no_std_net::IpAddr::V4(v4) => {
+                    wire::IpAddress::Ipv4(wire::Ipv4Address(v4.octets()))
+                }
+                // no_std_net::IpAddr::V6(v6) => wire::IpAddress::Ipv6(v6.octets()),
+                _ => wire::IpAddress::Unspecified,
+            }
+        }
+    }
+
+    impl From<no_std_net::IpAddr> for GenericIpAddress {
+        fn from(ip: no_std_net::IpAddr) -> Self {
+            GenericIpAddress(ip)
+        }
+    }
+
+    impl From<GenericIpAddress> for no_std_net::IpAddr {
+        fn from(ip: GenericIpAddress) -> Self {
+            ip.0
+        }
+    }
+
+    struct GenericSocketAddr(no_std_net::SocketAddr);
+
+    impl From<wire::IpEndpoint> for GenericSocketAddr {
+        fn from(ep: wire::IpEndpoint) -> Self {
+            match ep.addr {
+                wire::IpAddress::Ipv4(v4) => GenericSocketAddr(
+                    no_std_net::SocketAddr::V4(no_std_net::SocketAddrV4::new(
+                        GenericIpv4Address::from(v4).into(),
+                        ep.port,
+                    )),
+                ),
+                _ => GenericSocketAddr(no_std_net::SocketAddr::V4(
+                    no_std_net::SocketAddrV4::new(
+                        no_std_net::Ipv4Addr::UNSPECIFIED,
+                        ep.port,
+                    ),
+                )),
+            }
+        }
+    }
+
+    impl From<GenericSocketAddr> for wire::IpEndpoint {
+        fn from(sa: GenericSocketAddr) -> Self {
+            match sa.0 {
+                no_std_net::SocketAddr::V4(v4) => wire::IpEndpoint::new(
+                    wire::IpAddress::Ipv4(GenericIpv4Address(*v4.ip()).into()),
+                    v4.port(),
+                ),
+                _ => wire::IpEndpoint::new(wire::IpAddress::Unspecified, 0),
+            }
+        }
+    }
+
+    impl From<no_std_net::SocketAddr> for GenericSocketAddr {
+        fn from(ip: no_std_net::SocketAddr) -> Self {
+            GenericSocketAddr(ip)
+        }
+    }
+
+    impl From<GenericSocketAddr> for no_std_net::SocketAddr {
+        fn from(ip: GenericSocketAddr) -> Self {
+            ip.0
+        }
+    }
+
     struct WrappedInterface(
         core::cell::RefCell<
             Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
         >,
     );
-
-    fn convert_ip_address(ip: &no_std_net::IpAddr) -> wire::IpAddress {
-        match ip {
-            no_std_net::IpAddr::V4(a) => {
-                wire::IpAddress::Ipv4(wire::Ipv4Address(a.octets()))
-            }
-            _ => wire::IpAddress::Unspecified,
-            //            no_std_net::IpAddr::V6(a) => wire::IpAddress::Ipv6(
-            //                wire::Ipv6Address(a.octets())),
-        }
-    }
 
     impl cotton_ssdp::udp::Multicast for WrappedInterface {
         fn join_multicast_group(
@@ -215,8 +314,8 @@ mod app {
             defmt::println!("JMG!");
             self.0
                 .borrow_mut()
-                .join_multicast_group(
-                    convert_ip_address(multicast_address),
+                .join_multicast_group::<wire::IpAddress>(
+                    GenericIpAddress::from(*multicast_address).into(),
                     now_fn(),
                 )
                 .map(|_| ())
@@ -527,30 +626,26 @@ mod app {
             }
         }
 
-        let socket = iface.get_socket::<UdpSocket>(*udp_handle);
-        if socket.can_recv() {
-            socket
-                .recv()
-                .map(|(data, sender)| {
-                    defmt::println!("{} from {}", data.len(), sender);
-                    let ws = WrappedSocket {};
-                    ssdp.on_data(
-                        data,
-                        &ws,
-                        no_std_net::IpAddr::V4(
-                            no_std_net::Ipv4Addr::UNSPECIFIED,
-                        ),
-                        no_std_net::SocketAddr::V4(
-                            no_std_net::SocketAddrV4::new(
-                                no_std_net::Ipv4Addr::UNSPECIFIED,
-                                9999,
-                            ),
-                        ),
-                    );
-                })
-                .unwrap_or_else(|e| {
-                    defmt::println!("Recv UDP error: {:?}", e)
-                });
+        if let Some(wasto) = iface.ipv4_addr() {
+            let wasto = wire::IpAddress::Ipv4(wasto);
+            let socket = iface.get_socket::<UdpSocket>(*udp_handle);
+            if socket.can_recv() {
+                socket
+                    .recv()
+                    .map(|(data, sender)| {
+                        defmt::println!("{} from {}", data.len(), sender);
+                        let ws = WrappedSocket {};
+                        ssdp.on_data(
+                            data,
+                            &ws,
+                            GenericIpAddress::from(wasto).into(),
+                            GenericSocketAddr::from(sender).into(),
+                        );
+                    })
+                    .unwrap_or_else(|e| {
+                        defmt::println!("Recv UDP error: {:?}", e)
+                    });
+            }
         }
 
         iface.poll(now_fn()).ok();
