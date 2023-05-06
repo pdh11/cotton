@@ -303,8 +303,11 @@ mod app {
 
     struct WrappedInterface<'a>(
         core::cell::RefCell<
-                &'a mut Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
+            &'a mut Interface<
+                'static,
+                &'static mut EthernetDMA<'static, 'static>,
             >,
+        >,
     );
 
     impl<'a> cotton_ssdp::udp::Multicast for WrappedInterface<'a> {
@@ -335,9 +338,8 @@ mod app {
     }
 
     struct WrappedSocket<'a, 'b>(
-        core::cell::RefCell<
-                &'a mut smoltcp::socket::UdpSocket<'b>
-                >);
+        core::cell::RefCell<&'a mut smoltcp::socket::UdpSocket<'b>>,
+    );
 
     impl<'a, 'b> WrappedSocket<'a, 'b> {
         fn new(socket: &'a mut smoltcp::socket::UdpSocket<'b>) -> Self {
@@ -357,10 +359,13 @@ mod app {
             F: FnOnce(&mut [u8]) -> usize,
         {
             defmt::println!("Send?");
-            let actual_size = f(self.0.borrow_mut().send(size, GenericSocketAddr::from(*to).into())
+            let actual_size = f(self
+                .0
+                .borrow_mut()
+                .send(size, GenericSocketAddr::from(*to).into())
                 .map_err(|_| cotton_ssdp::udp::Error::NoPacketInfo)?);
             defmt::println!("Send!");
-            assert_eq!(size, actual_size); // not clear what to do if not
+            //assert_eq!(size, actual_size); // not clear what to do if not
             Ok(())
         }
     }
@@ -576,7 +581,8 @@ mod app {
 
         defmt::println!("Calling o-n-e");
         {
-            let wi = WrappedInterface(core::cell::RefCell::new(&mut interface));
+            let wi =
+                WrappedInterface(core::cell::RefCell::new(&mut interface));
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
             ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
@@ -604,8 +610,7 @@ mod app {
     #[task(local = [nvic])]
     fn periodic(cx: periodic::Context) {
         let nvic = cx.local.nvic;
-        nvic.request
-                (stm32_eth::stm32::Interrupt::ETH);
+        nvic.request(stm32_eth::stm32::Interrupt::ETH);
         periodic::spawn_after(2.secs()).unwrap();
     }
 
@@ -618,11 +623,11 @@ mod app {
             cx.local.ssdp,
         );
 
-//        let interrupt_reason = iface.device_mut().interrupt_handler();
-//        defmt::trace!(
-//            "Got an ethernet interrupt! Reason: {}",
-//            interrupt_reason
-//        );
+        //        let interrupt_reason = iface.device_mut().interrupt_handler();
+        //        defmt::trace!(
+        //            "Got an ethernet interrupt! Reason: {}",
+        //            interrupt_reason
+        //        );
 
         iface.poll(now_fn()).ok();
 
@@ -653,23 +658,17 @@ mod app {
                 let mut socket = iface.get_socket::<UdpSocket>(*udp_handle);
                 let ws = WrappedSocket::new(&mut socket);
 
-                /*
-        let ix = cotton_netif::InterfaceIndex(
-            core::num::NonZeroU32::new(1).unwrap(),
-        );
-        let ev = cotton_netif::NetworkEvent::NewAddr(
-            ix,
-            no_std_net::IpAddr::V4(GenericIpv4Address::from(config.address.address()).into()),
-            config.address.prefix_len(),
-        );
+                ssdp.on_new_addr_event(
+                    &cotton_netif::InterfaceIndex(
+                        core::num::NonZeroU32::new(1).unwrap(),
+                    ),
+                    &no_std_net::IpAddr::V4(
+                        GenericIpv4Address::from(config.address.address())
+                            .into(),
+                    ),
+                    &ws,
+                );
 
-                defmt::println!("Calling o-n-e");
-        let wi = WrappedInterface(core::cell::RefCell::new(iface));
-        {
-            _ = ssdp.on_network_event(&ev, &wi, &ws);
-        }
-        defmt::println!("o-n-e returned");
-*/
                 defmt::println!("Refreshing!");
                 ssdp.refresh(&ws);
             }
