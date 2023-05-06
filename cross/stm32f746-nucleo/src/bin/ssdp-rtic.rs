@@ -5,11 +5,7 @@ use defmt_rtt as _; // global logger
 use fugit::RateExtU32;
 use linked_list_allocator::LockedHeap;
 use panic_probe as _;
-use smoltcp::socket::UdpPacketMetadata;
-use smoltcp::{
-    iface::{self, SocketStorage},
-    wire,
-};
+use smoltcp::iface::{self, SocketStorage};
 use stm32_eth::hal::rcc::Clocks;
 use stm32_eth::hal::rcc::RccExt;
 use stm32f7xx_hal as _;
@@ -157,12 +153,10 @@ mod app {
 
     use core::hash::Hasher;
     use smoltcp::{
-        iface::{self, Interface, SocketHandle},
-        socket::{Dhcpv4Event, Dhcpv4Socket},
+        iface::{self, Interface, SocketHandle, SocketSet},
+        socket::{dhcpv4, udp},
         wire::{self, EthernetAddress, IpCidr},
     };
-
-    use smoltcp::socket::{UdpSocket, UdpSocketBuffer};
 
     use super::NetworkStorage;
     use crate::alloc::string::ToString;
@@ -171,8 +165,9 @@ mod app {
 
     #[local]
     struct Local {
-        interface:
-            Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
+        device: EthernetDMA<'static, 'static>,
+        interface: Interface,
+        socket_set: SocketSet<'static>,
         dhcp_handle: SocketHandle,
         udp_handle: SocketHandle,
         ssdp: cotton_ssdp::engine::Engine<Listener>,
@@ -221,6 +216,9 @@ mod app {
 
     impl From<wire::IpAddress> for GenericIpAddress {
         fn from(ip: wire::IpAddress) -> Self {
+            // smoltcp may or may not have been compiled with IPv6 support, and
+            // we can't tell
+            #[allow(unreachable_patterns)]
             match ip {
                 wire::IpAddress::Ipv4(v4) => GenericIpAddress(
                     no_std_net::IpAddr::V4(no_std_net::Ipv4Addr::from(v4.0)),
@@ -234,12 +232,14 @@ mod app {
 
     impl From<GenericIpAddress> for wire::IpAddress {
         fn from(ip: GenericIpAddress) -> Self {
+            // smoltcp may or may not have been compiled with IPv6 support, and
+            // we can't tell
+            #[allow(unreachable_patterns)]
             match ip.0 {
                 no_std_net::IpAddr::V4(v4) => {
                     wire::IpAddress::Ipv4(wire::Ipv4Address(v4.octets()))
                 }
-                // no_std_net::IpAddr::V6(v6) => wire::IpAddress::Ipv6(v6.octets()),
-                _ => wire::IpAddress::Unspecified,
+                _ => wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED),
             }
         }
     }
@@ -260,6 +260,9 @@ mod app {
 
     impl From<wire::IpEndpoint> for GenericSocketAddr {
         fn from(ep: wire::IpEndpoint) -> Self {
+            // smoltcp may or may not have been compiled with IPv6 support, and
+            // we can't tell
+            #[allow(unreachable_patterns)]
             match ep.addr {
                 wire::IpAddress::Ipv4(v4) => GenericSocketAddr(
                     no_std_net::SocketAddr::V4(no_std_net::SocketAddrV4::new(
@@ -284,7 +287,10 @@ mod app {
                     wire::IpAddress::Ipv4(GenericIpv4Address(*v4.ip()).into()),
                     v4.port(),
                 ),
-                _ => wire::IpEndpoint::new(wire::IpAddress::Unspecified, 0),
+                _ => wire::IpEndpoint::new(
+                    wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED),
+                    0,
+                ),
             }
         }
     }
@@ -302,12 +308,8 @@ mod app {
     }
 
     struct WrappedInterface<'a>(
-        core::cell::RefCell<
-            &'a mut Interface<
-                'static,
-                &'static mut EthernetDMA<'static, 'static>,
-            >,
-        >,
+        core::cell::RefCell<&'a mut Interface>,
+        core::cell::RefCell<&'a mut EthernetDMA<'static, 'static>>,
     );
 
     impl<'a> cotton_ssdp::udp::Multicast for WrappedInterface<'a> {
@@ -319,7 +321,8 @@ mod app {
             defmt::println!("JMG!");
             self.0
                 .borrow_mut()
-                .join_multicast_group::<wire::IpAddress>(
+                .join_multicast_group::<&mut EthernetDMA, wire::IpAddress>(
+                    &mut self.1.borrow_mut(),
                     GenericIpAddress::from(*multicast_address).into(),
                     now_fn(),
                 )
@@ -338,11 +341,11 @@ mod app {
     }
 
     struct WrappedSocket<'a, 'b>(
-        core::cell::RefCell<&'a mut smoltcp::socket::UdpSocket<'b>>,
+        core::cell::RefCell<&'a mut smoltcp::socket::udp::Socket<'b>>,
     );
 
     impl<'a, 'b> WrappedSocket<'a, 'b> {
-        fn new(socket: &'a mut smoltcp::socket::UdpSocket<'b>) -> Self {
+        fn new(socket: &'a mut smoltcp::socket::udp::Socket<'b>) -> Self {
             Self(core::cell::RefCell::new(socket))
         }
     }
@@ -359,13 +362,11 @@ mod app {
             F: FnOnce(&mut [u8]) -> usize,
         {
             defmt::println!("Send?");
-            let actual_size = f(self
-                .0
+            self.0
                 .borrow_mut()
-                .send(size, GenericSocketAddr::from(*to).into())
-                .map_err(|_| cotton_ssdp::udp::Error::NoPacketInfo)?);
+                .send_with(size, GenericSocketAddr::from(*to).into(), f)
+                .map_err(|_| cotton_ssdp::udp::Error::NoPacketInfo)?;
             defmt::println!("Send!");
-            //assert_eq!(size, actual_size); // not clear what to do if not
             Ok(())
         }
     }
@@ -410,7 +411,6 @@ mod app {
         rx_ring: [RxRingEntry; 2] = [RxRingEntry::new(),RxRingEntry::new()],
         tx_ring: [TxRingEntry; 2] = [TxRingEntry::new(),TxRingEntry::new()],
         storage: NetworkStorage = NetworkStorage::new(),
-        dma: core::mem::MaybeUninit<EthernetDMA<'static, 'static>> = core::mem::MaybeUninit::uninit(),
     ])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
@@ -472,7 +472,7 @@ mod app {
 
         defmt::println!("Configuring ethernet");
 
-        let Parts { dma, mac } = stm32_eth::new_with_mii(
+        let Parts { mut dma, mac } = stm32_eth::new_with_mii(
             ethernet,
             rx_ring,
             tx_ring,
@@ -491,35 +491,20 @@ mod app {
         )
         .unwrap();
 
-        let dma = cx.local.dma.write(dma);
-
         defmt::println!("Enabling interrupts");
         dma.enable_interrupt();
 
         defmt::println!("Setting up smoltcp");
         let store = cx.local.storage;
 
-        let mut routes =
-            smoltcp::iface::Routes::new(&mut store.routes_cache[..]);
-        routes
-            .add_default_ipv4_route(smoltcp::wire::Ipv4Address::UNSPECIFIED)
-            .ok();
+        let mut config = smoltcp::iface::Config::new();
+        // config.random_seed = mono.now();
+        config.hardware_addr =
+            Some(EthernetAddress::from_bytes(&mac_address).into());
 
-        let neighbor_cache =
-            smoltcp::iface::NeighborCache::new(&mut store.neighbor_cache[..]);
-
-        let mut interface =
-            iface::InterfaceBuilder::new(dma, &mut store.sockets[..])
-                .hardware_addr(
-                    EthernetAddress::from_bytes(&mac_address).into(),
-                )
-                .neighbor_cache(neighbor_cache)
-                .ip_addrs(&mut store.ip_addrs[..])
-                .routes(routes)
-                .ipv4_multicast_groups(&mut store.multicast_storage[..])
-                .finalize();
-
-        interface.poll(now_fn()).unwrap();
+        let mut interface = iface::Interface::new(config, &mut &mut dma);
+        let mut socket_set =
+            smoltcp::iface::SocketSet::new(&mut store.sockets[..]);
 
         if let Ok(mut phy) = EthernetPhy::from_miim(mac, 0) {
             defmt::println!(
@@ -552,19 +537,19 @@ mod app {
             );
         }
 
-        let dhcp_socket = Dhcpv4Socket::new();
-        let dhcp_handle = interface.add_socket(dhcp_socket);
+        let dhcp_socket = dhcpv4::Socket::new();
+        let dhcp_handle = socket_set.add(dhcp_socket);
 
-        let udp_rx_buffer = UdpSocketBuffer::new(
+        let udp_rx_buffer = udp::PacketBuffer::new(
             &mut store.udp_socket_storage.rx_metadata[..],
             &mut store.udp_socket_storage.rx_storage[..],
         );
 
-        let udp_tx_buffer = UdpSocketBuffer::new(
+        let udp_tx_buffer = udp::PacketBuffer::new(
             &mut store.udp_socket_storage.tx_metadata[..],
             &mut store.udp_socket_storage.tx_storage[..],
         );
-        let mut udp_socket = UdpSocket::new(udp_rx_buffer, udp_tx_buffer);
+        let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
         let mut ssdp = cotton_ssdp::engine::Engine::new();
 
@@ -581,21 +566,25 @@ mod app {
 
         defmt::println!("Calling o-n-e");
         {
-            let wi =
-                WrappedInterface(core::cell::RefCell::new(&mut interface));
+            let wi = WrappedInterface(
+                core::cell::RefCell::new(&mut interface),
+                core::cell::RefCell::new(&mut dma),
+            );
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
             ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
         }
         defmt::println!("o-n-e returned");
 
-        let udp_handle = interface.add_socket(udp_socket);
+        let udp_handle = socket_set.add(udp_socket);
 
-        interface.poll(now_fn()).unwrap();
-        interface.get_socket::<Dhcpv4Socket>(dhcp_handle).poll();
+        interface.poll(now_fn(), &mut &mut dma, &mut socket_set);
+        socket_set.get_mut::<dhcpv4::Socket>(dhcp_handle).poll();
 
         let loc = Local {
+            device: dma,
             interface,
+            socket_set,
             dhcp_handle,
             udp_handle,
             ssdp,
@@ -614,34 +603,36 @@ mod app {
         periodic::spawn_after(2.secs()).unwrap();
     }
 
-    #[task(binds = ETH, local = [interface, dhcp_handle, udp_handle, ssdp], priority = 2)]
+    #[task(binds = ETH, local = [device, interface, socket_set, dhcp_handle, udp_handle, ssdp], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (iface, dhcp_handle, udp_handle, ssdp) = (
+        let (mut device, iface, socket_set, dhcp_handle, udp_handle, ssdp) = (
+            cx.local.device,
             cx.local.interface,
+            cx.local.socket_set,
             cx.local.dhcp_handle,
             cx.local.udp_handle,
             cx.local.ssdp,
         );
 
-        //        let interrupt_reason = iface.device_mut().interrupt_handler();
-        //        defmt::trace!(
-        //            "Got an ethernet interrupt! Reason: {}",
-        //            interrupt_reason
-        //        );
+        // let interrupt_reason = iface.device_mut().interrupt_handler();
+        // defmt::trace!(
+        //     "Got an ethernet interrupt! Reason: {}",
+        //     interrupt_reason
+        // );
 
-        iface.poll(now_fn()).ok();
+        iface.poll(now_fn(), &mut device, socket_set);
 
-        let event = iface.get_socket::<Dhcpv4Socket>(*dhcp_handle).poll();
+        let event = socket_set.get_mut::<dhcpv4::Socket>(*dhcp_handle).poll();
+        let old_ip = iface.ipv4_addr();
         match event {
             None => {}
-            Some(Dhcpv4Event::Configured(config)) => {
+            Some(dhcpv4::Event::Configured(config)) => {
                 defmt::println!("DHCP config acquired!");
 
                 defmt::println!("IP address:      {}", config.address);
 
                 iface.update_ip_addrs(|addrs| {
-                    let dest = addrs.iter_mut().next().unwrap();
-                    *dest = IpCidr::Ipv4(config.address);
+                    addrs.push(IpCidr::Ipv4(config.address)).unwrap();
                 });
 
                 if let Some(router) = config.router {
@@ -655,31 +646,35 @@ mod app {
                 for (i, s) in config.dns_servers.iter().enumerate() {
                     defmt::println!("DNS server {}:    {}", i, s);
                 }
-                let mut socket = iface.get_socket::<UdpSocket>(*udp_handle);
-                let ws = WrappedSocket::new(&mut socket);
-
-                ssdp.on_new_addr_event(
-                    &cotton_netif::InterfaceIndex(
-                        core::num::NonZeroU32::new(1).unwrap(),
-                    ),
-                    &no_std_net::IpAddr::V4(
-                        GenericIpv4Address::from(config.address.address())
-                            .into(),
-                    ),
-                    &ws,
-                );
-
-                defmt::println!("Refreshing!");
-                ssdp.refresh(&ws);
             }
-            Some(Dhcpv4Event::Deconfigured) => {
+            Some(dhcpv4::Event::Deconfigured) => {
                 defmt::println!("DHCP lost config!");
+                iface.update_ip_addrs(|addrs| {
+                    addrs.clear();
+                });
             }
         }
 
-        if let Some(wasto) = iface.ipv4_addr() {
+        let new_ip = iface.ipv4_addr();
+        if let (None, Some(ip)) = (old_ip, new_ip) {
+            let mut socket = socket_set.get_mut::<udp::Socket>(*udp_handle);
+            let ws = WrappedSocket::new(&mut socket);
+
+            ssdp.on_new_addr_event(
+                &cotton_netif::InterfaceIndex(
+                    core::num::NonZeroU32::new(1).unwrap(),
+                ),
+                &no_std_net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
+                &ws,
+            );
+
+            defmt::println!("Refreshing!");
+            ssdp.refresh(&ws);
+        }
+
+        if let Some(wasto) = new_ip {
             let wasto = wire::IpAddress::Ipv4(wasto);
-            let mut socket = iface.get_socket::<UdpSocket>(*udp_handle);
+            let mut socket = socket_set.get_mut::<udp::Socket>(*udp_handle);
             if socket.can_recv() {
                 // Shame about the copy here, but we need the socket
                 // borrowed mutably to write to it (in on_data), and
@@ -702,53 +697,40 @@ mod app {
             }
         }
 
-        iface.poll(now_fn()).ok();
+        iface.poll(now_fn(), &mut device, socket_set);
     }
 }
 
 /// All storage required for networking
 pub struct NetworkStorage {
-    pub ip_addrs: [wire::IpCidr; 1],
     pub sockets: [iface::SocketStorage<'static>; 2],
-    pub neighbor_cache: [Option<(wire::IpAddress, iface::Neighbor)>; 8],
-    pub routes_cache: [Option<(wire::IpCidr, iface::Route)>; 8],
-    pub multicast_storage: [Option<(wire::Ipv4Address, ())>; 1],
     pub udp_socket_storage: UdpSocketStorage,
 }
 
 impl NetworkStorage {
-    const IP_INIT: wire::IpCidr = wire::IpCidr::Ipv4(wire::Ipv4Cidr::new(
-        wire::Ipv4Address::UNSPECIFIED,
-        24,
-    ));
-
     pub const fn new() -> Self {
         NetworkStorage {
-            ip_addrs: [Self::IP_INIT],
             sockets: [SocketStorage::EMPTY; 2],
-            neighbor_cache: [None; 8],
-            routes_cache: [None; 8],
-            multicast_storage: [None; 1],
             udp_socket_storage: UdpSocketStorage::new(),
         }
     }
 }
 
-/// Storage of TCP sockets
+/// Storage for UDP socket
 #[derive(Copy, Clone)]
 pub struct UdpSocketStorage {
-    rx_metadata: [UdpPacketMetadata; 16],
+    rx_metadata: [smoltcp::socket::udp::PacketMetadata; 16],
     rx_storage: [u8; 8192],
-    tx_metadata: [UdpPacketMetadata; 4],
+    tx_metadata: [smoltcp::socket::udp::PacketMetadata; 4],
     tx_storage: [u8; 512],
 }
 
 impl UdpSocketStorage {
     const fn new() -> Self {
         Self {
-            rx_metadata: [UdpPacketMetadata::EMPTY; 16],
+            rx_metadata: [smoltcp::socket::udp::PacketMetadata::EMPTY; 16],
             rx_storage: [0; 8192],
-            tx_metadata: [UdpPacketMetadata::EMPTY; 4],
+            tx_metadata: [smoltcp::socket::udp::PacketMetadata::EMPTY; 4],
             tx_storage: [0; 512],
         }
     }
