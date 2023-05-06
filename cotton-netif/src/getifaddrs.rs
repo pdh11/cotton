@@ -316,9 +316,7 @@ mod tests {
             destination: None,
         };
 
-        let mut iter = get_interfaces_inner2(vec![ifaddr], |_| {
-            Ok(0)
-        });
+        let mut iter = get_interfaces_inner2(vec![ifaddr], |_| Ok(0));
 
         let link = iter.next();
 

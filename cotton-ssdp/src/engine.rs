@@ -120,10 +120,7 @@ impl<CB: Callback> Engine<CB> {
     ///
     /// This should be called periodically, perhaps with the help of a
     /// [`crate::refresh_timer::RefreshTimer`]
-    pub fn refresh<SCK: udp::TargetedSend>(
-        &mut self,
-        socket: &SCK,
-    ) {
+    pub fn refresh<SCK: udp::TargetedSend>(&mut self, socket: &SCK) {
         for (key, value) in &self.advertisements {
             self.notify_on_all(key, value, socket);
         }
@@ -299,11 +296,7 @@ impl<CB: Callback> Engine<CB> {
         )
     }
 
-    fn send_all<SCK: udp::TargetedSend>(
-        &self,
-        ips: &[IpAddr],
-        search: &SCK,
-    ) {
+    fn send_all<SCK: udp::TargetedSend>(&self, ips: &[IpAddr], search: &SCK) {
         for ip in ips {
             if let Some(all) = self
                 .active_searches
@@ -393,11 +386,12 @@ impl<CB: Callback> Engine<CB> {
     /// NB. If your IP address notifications are coming from `cotton-netif`,
     /// you should call the general `on_network_event` instead of this specific
     /// method.
-    pub fn on_new_addr_event<SCK: udp::TargetedSend>(&mut self,
-                                                     ix: &InterfaceIndex,
-                                                     addr: &IpAddr,
-                                                     search: &SCK)
-    {
+    pub fn on_new_addr_event<SCK: udp::TargetedSend>(
+        &mut self,
+        ix: &InterfaceIndex,
+        addr: &IpAddr,
+        search: &SCK,
+    ) {
         if addr.is_ipv4() {
             if let Some(ref mut v) = self.interfaces.get_mut(ix) {
                 if !v.ips.contains(addr) {
@@ -415,10 +409,7 @@ impl<CB: Callback> Engine<CB> {
     /// NB. If your IP address notifications are coming from `cotton-netif`,
     /// you should call the general `on_network_event` instead of this specific
     /// method.
-    pub fn on_del_addr_event(&mut self,
-                             ix: &InterfaceIndex,
-                             addr: &IpAddr)
-    {
+    pub fn on_del_addr_event(&mut self, ix: &InterfaceIndex, addr: &IpAddr) {
         if let Some(ref mut v) = self.interfaces.get_mut(ix) {
             if let Some(n) = v.ips.iter().position(|a| a == addr) {
                 v.ips.swap_remove(n);
@@ -439,14 +430,18 @@ impl<CB: Callback> Engine<CB> {
         search: &SCK,
     ) -> Result<(), udp::Error> {
         match e {
-            NetworkEvent::NewLink(ix, _name, flags) =>
-                self.on_new_link_event(ix, flags, multicast, search)?,
-            NetworkEvent::DelLink(ix) =>
-                self.on_del_link_event(ix, multicast)?,
-            NetworkEvent::NewAddr(ix, addr, _prefix) =>
-                self.on_new_addr_event(ix, addr, search),
-            NetworkEvent::DelAddr(ix, addr, _prefix) =>
-                self.on_del_addr_event(ix, addr),
+            NetworkEvent::NewLink(ix, _name, flags) => {
+                self.on_new_link_event(ix, flags, multicast, search)?;
+            }
+            NetworkEvent::DelLink(ix) => {
+                self.on_del_link_event(ix, multicast)?;
+            }
+            NetworkEvent::NewAddr(ix, addr, _prefix) => {
+                self.on_new_addr_event(ix, addr, search);
+            }
+            NetworkEvent::DelAddr(ix, addr, _prefix) => {
+                self.on_del_addr_event(ix, addr);
+            }
         }
         Ok(())
     }
