@@ -301,13 +301,13 @@ mod app {
         }
     }
 
-    struct WrappedInterface(
+    struct WrappedInterface<'a>(
         core::cell::RefCell<
-                Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
+                &'a mut Interface<'static, &'static mut EthernetDMA<'static, 'static>>,
             >,
     );
 
-    impl cotton_ssdp::udp::Multicast for WrappedInterface {
+    impl<'a> cotton_ssdp::udp::Multicast for WrappedInterface<'a> {
         fn join_multicast_group(
             &self,
             multicast_address: &no_std_net::IpAddr,
@@ -334,25 +334,38 @@ mod app {
         }
     }
 
-    struct WrappedSocket;
+    struct WrappedSocket<'a, 'b>(
+        core::cell::RefCell<
+                &'a mut smoltcp::socket::UdpSocket<'b>
+                >);
 
-    impl cotton_ssdp::udp::TargetedSend for WrappedSocket {
+    impl<'a, 'b> WrappedSocket<'a, 'b> {
+        fn new(socket: &'a mut smoltcp::socket::UdpSocket<'b>) -> Self {
+            Self(core::cell::RefCell::new(socket))
+        }
+    }
+
+    impl<'a, 'b> cotton_ssdp::udp::TargetedSend for WrappedSocket<'a, 'b> {
         fn send_with<F>(
             &self,
-            _size: usize,
-            _to: &no_std_net::SocketAddr,
+            size: usize,
+            to: &no_std_net::SocketAddr,
             _from: &no_std_net::IpAddr,
-            _f: F,
+            f: F,
         ) -> Result<(), cotton_ssdp::udp::Error>
         where
             F: FnOnce(&mut [u8]) -> usize,
         {
+            defmt::println!("Send?");
+            let actual_size = f(self.0.borrow_mut().send(size, GenericSocketAddr::from(*to).into())
+                .map_err(|_| cotton_ssdp::udp::Error::NoPacketInfo)?);
             defmt::println!("Send!");
-            Err(cotton_ssdp::udp::Error::NoPacketInfo)
+            assert_eq!(size, actual_size); // not clear what to do if not
+            Ok(())
         }
     }
 
-    impl cotton_ssdp::udp::TargetedReceive for WrappedSocket {
+    impl<'a, 'b> cotton_ssdp::udp::TargetedReceive for WrappedSocket<'a, 'b> {
         fn receive_to(
             &self,
             _buffer: &mut [u8],
@@ -556,17 +569,19 @@ mod app {
         let ev = cotton_netif::NetworkEvent::NewLink(
             ix,
             "".to_string(),
-            cotton_netif::Flags::MULTICAST,
+            cotton_netif::Flags::UP
+                | cotton_netif::Flags::RUNNING
+                | cotton_netif::Flags::MULTICAST,
         );
 
-        let ws = WrappedSocket;
         defmt::println!("Calling o-n-e");
-        let wi = WrappedInterface(core::cell::RefCell::new(interface));
-        _ = ssdp.on_network_event(&ev, &wi, &ws);
+        {
+            let wi = WrappedInterface(core::cell::RefCell::new(&mut interface));
+            let ws = WrappedSocket::new(&mut udp_socket);
+            _ = ssdp.on_network_event(&ev, &wi, &ws);
+            ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+        }
         defmt::println!("o-n-e returned");
-        let mut interface = wi.0.into_inner();
-
-        ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
 
         let udp_handle = interface.add_socket(udp_socket);
 
@@ -627,8 +642,6 @@ mod app {
                 if let Some(router) = config.router {
                     defmt::println!("Default gateway: {}", router);
                     iface.routes_mut().add_default_ipv4_route(router).unwrap();
-                    let ws = WrappedSocket;
-                    ssdp.refresh(&ws);
                 } else {
                     defmt::println!("Default gateway: None");
                     iface.routes_mut().remove_default_ipv4_route();
@@ -637,6 +650,28 @@ mod app {
                 for (i, s) in config.dns_servers.iter().enumerate() {
                     defmt::println!("DNS server {}:    {}", i, s);
                 }
+                let mut socket = iface.get_socket::<UdpSocket>(*udp_handle);
+                let ws = WrappedSocket::new(&mut socket);
+
+                /*
+        let ix = cotton_netif::InterfaceIndex(
+            core::num::NonZeroU32::new(1).unwrap(),
+        );
+        let ev = cotton_netif::NetworkEvent::NewAddr(
+            ix,
+            no_std_net::IpAddr::V4(GenericIpv4Address::from(config.address.address()).into()),
+            config.address.prefix_len(),
+        );
+
+                defmt::println!("Calling o-n-e");
+        let wi = WrappedInterface(core::cell::RefCell::new(iface));
+        {
+            _ = ssdp.on_network_event(&ev, &wi, &ws);
+        }
+        defmt::println!("o-n-e returned");
+*/
+                defmt::println!("Refreshing!");
+                ssdp.refresh(&ws);
             }
             Some(Dhcpv4Event::Deconfigured) => {
                 defmt::println!("DHCP lost config!");
@@ -645,23 +680,26 @@ mod app {
 
         if let Some(wasto) = iface.ipv4_addr() {
             let wasto = wire::IpAddress::Ipv4(wasto);
-            let socket = iface.get_socket::<UdpSocket>(*udp_handle);
+            let mut socket = iface.get_socket::<UdpSocket>(*udp_handle);
             if socket.can_recv() {
-                socket
-                    .recv()
-                    .map(|(data, sender)| {
-                        defmt::println!("{} from {}", data.len(), sender);
-                        let ws = WrappedSocket;
-                        ssdp.on_data(
-                            data,
-                            &ws,
-                            GenericIpAddress::from(wasto).into(),
-                            GenericSocketAddr::from(sender).into(),
-                        );
-                    })
-                    .unwrap_or_else(|e| {
-                        defmt::println!("Recv UDP error: {:?}", e)
-                    });
+                // Shame about the copy here, but we need the socket
+                // borrowed mutably to write to it (in on_data), and
+                // we also need the data borrowed to read it -- but
+                // that's an immutable borrow at the same time as a
+                // mutable borrow, which isn't allowed.  We could
+                // perhaps have entirely separate sockets for send and
+                // receive, but it's simpler just to copy the data.
+                let mut buffer = [0u8; 512];
+                if let Ok((size, sender)) = socket.recv_slice(&mut buffer) {
+                    defmt::println!("{} from {}", size, sender);
+                    let ws = WrappedSocket::new(&mut socket);
+                    ssdp.on_data(
+                        &buffer[0..size],
+                        &ws,
+                        GenericIpAddress::from(wasto).into(),
+                        GenericSocketAddr::from(sender).into(),
+                    );
+                }
             }
         }
 
@@ -700,8 +738,8 @@ impl NetworkStorage {
 /// Storage of TCP sockets
 #[derive(Copy, Clone)]
 pub struct UdpSocketStorage {
-    rx_metadata: [UdpPacketMetadata; 4],
-    rx_storage: [u8; 512],
+    rx_metadata: [UdpPacketMetadata; 16],
+    rx_storage: [u8; 8192],
     tx_metadata: [UdpPacketMetadata; 4],
     tx_storage: [u8; 512],
 }
@@ -709,8 +747,8 @@ pub struct UdpSocketStorage {
 impl UdpSocketStorage {
     const fn new() -> Self {
         Self {
-            rx_metadata: [UdpPacketMetadata::EMPTY; 4],
-            rx_storage: [0; 512],
+            rx_metadata: [UdpPacketMetadata::EMPTY; 16],
+            rx_storage: [0; 8192],
             tx_metadata: [UdpPacketMetadata::EMPTY; 4],
             tx_storage: [0; 512],
         }
