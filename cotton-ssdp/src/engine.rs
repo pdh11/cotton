@@ -88,9 +88,9 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 ///
 /// The notifications should be retransmitted on a timer; the owner
 /// should implement a timer facility, perhaps by using
-/// [`crate::refresh_timer::RefreshTimer`], and call [`Engine::refresh`] each time the timer
-/// expires. See, for instance, the `tokio::select!` loop in
-/// `AsyncService::new_inner`.
+/// [`crate::refresh_timer::RefreshTimer`], and call
+/// [`Engine::refresh`] each time the timer expires. See, for
+/// instance, the `tokio::select!` loop in `AsyncService::new_inner`.
 ///
 pub struct Engine<CB: Callback> {
     interfaces: BTreeMap<InterfaceIndex, Interface>,
@@ -323,6 +323,109 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
+    /// Notify the `Engine` of a new network interface
+    ///
+    /// NB. If your network-interface notifications are coming from `cotton-netif`,
+    /// you should call the general `on_network_event` instead of this specific
+    /// method.
+    ///
+    /// # Errors
+    ///
+    /// Passes on errors from the underlying system-calls for joining
+    /// multicast groups.
+    pub fn on_new_link_event<SCK: udp::TargetedSend, MCAST: udp::Multicast>(
+        &mut self,
+        ix: &InterfaceIndex,
+        flags: &cotton_netif::Flags,
+        multicast: &MCAST,
+        search: &SCK,
+    ) -> Result<(), udp::Error> {
+        if flags.contains(cotton_netif::Flags::MULTICAST) {
+            let up = flags.contains(
+                cotton_netif::Flags::RUNNING | cotton_netif::Flags::UP,
+            );
+            let mut do_send = false;
+            if let Some(v) = self.interfaces.get_mut(ix) {
+                if up && !v.up {
+                    do_send = true;
+                }
+                v.up = up;
+            } else {
+                Self::join_multicast(*ix, multicast)?;
+                self.interfaces.insert(
+                    *ix,
+                    Interface {
+                        ips: Vec::new(),
+                        up,
+                    },
+                );
+            }
+            if do_send {
+                self.send_all(&self.interfaces[ix].ips, search);
+            }
+        }
+        Ok(())
+    }
+
+    /// Notify the `Engine` of a deleted network interface
+    ///
+    /// NB. If your network-interface notifications are coming from `cotton-netif`,
+    /// you should call the general `on_network_event` instead of this specific
+    /// method.
+    ///
+    /// # Errors
+    ///
+    /// Passes on errors from the underlying system-calls for leaving
+    /// multicast groups.
+    pub fn on_del_link_event<MCAST: udp::Multicast>(
+        &mut self,
+        ix: &InterfaceIndex,
+        multicast: &MCAST,
+    ) -> Result<(), udp::Error> {
+        if self.interfaces.remove(ix).is_some() {
+            Self::leave_multicast(*ix, multicast)?;
+        }
+        Ok(())
+    }
+
+    /// Notify the `Engine` of a new IP address
+    ///
+    /// NB. If your IP address notifications are coming from `cotton-netif`,
+    /// you should call the general `on_network_event` instead of this specific
+    /// method.
+    pub fn on_new_addr_event<SCK: udp::TargetedSend>(&mut self,
+                                                     ix: &InterfaceIndex,
+                                                     addr: &IpAddr,
+                                                     search: &SCK)
+    {
+        if addr.is_ipv4() {
+            if let Some(ref mut v) = self.interfaces.get_mut(ix) {
+                if !v.ips.contains(addr) {
+                    v.ips.push(*addr);
+                    if v.up {
+                        self.send_all(&[*addr], search);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Notify the `Engine` of a deleted IP address
+    ///
+    /// NB. If your IP address notifications are coming from `cotton-netif`,
+    /// you should call the general `on_network_event` instead of this specific
+    /// method.
+    pub fn on_del_addr_event(&mut self,
+                             ix: &InterfaceIndex,
+                             addr: &IpAddr)
+    {
+        if let Some(ref mut v) = self.interfaces.get_mut(ix) {
+            if let Some(n) = v.ips.iter().position(|a| a == addr) {
+                v.ips.swap_remove(n);
+            }
+        }
+    }
+
     /// Notify the `Engine` of a network interface change
     ///
     /// # Errors
@@ -336,58 +439,14 @@ impl<CB: Callback> Engine<CB> {
         search: &SCK,
     ) -> Result<(), udp::Error> {
         match e {
-            NetworkEvent::NewLink(ix, _name, flags) => {
-                if flags.contains(cotton_netif::Flags::MULTICAST) {
-                    let up = flags.contains(
-                        cotton_netif::Flags::RUNNING | cotton_netif::Flags::UP,
-                    );
-                    let mut do_send = false;
-                    if let Some(v) = self.interfaces.get_mut(ix) {
-                        if up && !v.up {
-                            do_send = true;
-                        }
-                        v.up = up;
-                    } else {
-                        Self::join_multicast(*ix, multicast)?;
-                        self.interfaces.insert(
-                            *ix,
-                            Interface {
-                                ips: Vec::new(),
-                                up,
-                            },
-                        );
-                    }
-                    if do_send {
-                        self.send_all(&self.interfaces[ix].ips, search);
-                    }
-                }
-            }
-            NetworkEvent::DelLink(ix) => {
-                if self.interfaces.remove(ix).is_some() {
-                    Self::leave_multicast(*ix, multicast)?;
-                }
-            }
-            NetworkEvent::NewAddr(ix, addr, _prefix) => {
-                if addr.is_ipv4() {
-                    // cotton-netif guarantees we get a NewLink before
-                    // any NewAddr
-                    if let Some(ref mut v) = self.interfaces.get_mut(ix) {
-                        if !v.ips.contains(addr) {
-                            v.ips.push(*addr);
-                            if v.up {
-                                self.send_all(&[*addr], search);
-                            }
-                        }
-                    }
-                }
-            }
-            NetworkEvent::DelAddr(ix, addr, _prefix) => {
-                if let Some(ref mut v) = self.interfaces.get_mut(ix) {
-                    if let Some(n) = v.ips.iter().position(|a| a == addr) {
-                        v.ips.swap_remove(n);
-                    }
-                }
-            }
+            NetworkEvent::NewLink(ix, _name, flags) =>
+                self.on_new_link_event(ix, flags, multicast, search)?,
+            NetworkEvent::DelLink(ix) =>
+                self.on_del_link_event(ix, multicast)?,
+            NetworkEvent::NewAddr(ix, addr, _prefix) =>
+                self.on_new_addr_event(ix, addr, search),
+            NetworkEvent::DelAddr(ix, addr, _prefix) =>
+                self.on_del_addr_event(ix, addr),
         }
         Ok(())
     }
