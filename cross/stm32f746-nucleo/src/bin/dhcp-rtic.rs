@@ -2,12 +2,12 @@
 #![no_main]
 
 use defmt_rtt as _; // global logger
+use fugit::RateExtU32;
 use panic_probe as _;
-use stm32f7xx_hal as _;
 use smoltcp::iface::{self, SocketStorage};
 use stm32_eth::hal::rcc::Clocks;
-use fugit::RateExtU32;
 use stm32_eth::hal::rcc::RccExt;
+use stm32f7xx_hal as _;
 
 pub fn setup_clocks(rcc: stm32_eth::stm32::RCC) -> Clocks {
     let rcc = rcc.constrain();
@@ -17,21 +17,21 @@ pub fn setup_clocks(rcc: stm32_eth::stm32::RCC) -> Clocks {
 
 #[rtic::app(device = stm32_eth::stm32, dispatchers = [SPI1])]
 mod app {
+    use super::NetworkStorage;
+    use core::hash::Hasher;
     use ieee802_3_miim::{phy::PhySpeed, Phy};
-    use systick_monotonic::Systick;
+    use smoltcp::{
+        iface::{self, Interface, SocketHandle, SocketSet},
+        socket::dhcpv4,
+        wire::{EthernetAddress, IpCidr},
+    };
     use stm32_eth::{
         dma::{EthernetDMA, RxRingEntry, TxRingEntry},
         hal::gpio::GpioExt,
         mac::Speed,
         Parts,
     };
-    use core::hash::Hasher;
-    use smoltcp::{
-        iface::{self, Interface, SocketHandle, SocketSet},
-        socket::dhcpv4,
-        wire::{EthernetAddress, IpCidr},
-    };
-    use super::NetworkStorage;
+    use systick_monotonic::Systick;
 
     #[local]
     struct Local {

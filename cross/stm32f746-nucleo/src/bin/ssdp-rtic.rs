@@ -28,23 +28,27 @@ extern "C" {
 
 #[rtic::app(device = stm32_eth::stm32, dispatchers = [SPI1])]
 mod app {
+    use super::NetworkStorage;
+    use crate::alloc::string::ToString;
+    use core::hash::Hasher;
+    use cotton_ssdp::udp::smoltcp::{
+        GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
+        WrappedInterface, WrappedSocket,
+    };
     use fugit::ExtU64;
     use ieee802_3_miim::{phy::PhySpeed, Phy};
-    use systick_monotonic::Systick;
+    use smoltcp::{
+        iface::{self, Interface, SocketHandle, SocketSet},
+        socket::{dhcpv4, udp},
+        wire::{self, EthernetAddress, IpCidr},
+    };
     use stm32_eth::{
         dma::{EthernetDMA, RxRingEntry, TxRingEntry},
         hal::gpio::GpioExt,
         mac::Speed,
         Parts,
     };
-    use core::hash::Hasher;
-    use smoltcp::{
-        iface::{self, Interface, SocketHandle, SocketSet},
-        socket::{dhcpv4, udp},
-        wire::{self, EthernetAddress, IpCidr},
-    };
-    use super::NetworkStorage;
-    use crate::alloc::string::ToString;
+    use systick_monotonic::Systick;
 
     pub struct Listener {}
 
@@ -68,204 +72,6 @@ mod app {
             {
                 defmt::println!("SSDP! {:?}", &notification_type[..]);
             }
-        }
-    }
-
-    struct GenericIpv4Address(no_std_net::Ipv4Addr);
-
-    impl From<wire::Ipv4Address> for GenericIpv4Address {
-        fn from(ip: wire::Ipv4Address) -> Self {
-            GenericIpv4Address(no_std_net::Ipv4Addr::from(ip.0))
-        }
-    }
-
-    impl From<GenericIpv4Address> for wire::Ipv4Address {
-        fn from(ip: GenericIpv4Address) -> Self {
-            wire::Ipv4Address(ip.0.octets())
-        }
-    }
-
-    impl From<no_std_net::Ipv4Addr> for GenericIpv4Address {
-        fn from(ip: no_std_net::Ipv4Addr) -> Self {
-            GenericIpv4Address(ip)
-        }
-    }
-
-    impl From<GenericIpv4Address> for no_std_net::Ipv4Addr {
-        fn from(ip: GenericIpv4Address) -> Self {
-            ip.0
-        }
-    }
-
-    struct GenericIpAddress(no_std_net::IpAddr);
-
-    impl From<wire::IpAddress> for GenericIpAddress {
-        fn from(ip: wire::IpAddress) -> Self {
-            // smoltcp may or may not have been compiled with IPv6 support, and
-            // we can't tell
-            #[allow(unreachable_patterns)]
-            match ip {
-                wire::IpAddress::Ipv4(v4) => GenericIpAddress(
-                    no_std_net::IpAddr::V4(no_std_net::Ipv4Addr::from(v4.0)),
-                ),
-                _ => GenericIpAddress(no_std_net::IpAddr::V4(
-                    no_std_net::Ipv4Addr::UNSPECIFIED,
-                )),
-            }
-        }
-    }
-
-    impl From<GenericIpAddress> for wire::IpAddress {
-        fn from(ip: GenericIpAddress) -> Self {
-            // smoltcp may or may not have been compiled with IPv6 support, and
-            // we can't tell
-            #[allow(unreachable_patterns)]
-            match ip.0 {
-                no_std_net::IpAddr::V4(v4) => {
-                    wire::IpAddress::Ipv4(wire::Ipv4Address(v4.octets()))
-                }
-                _ => wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED),
-            }
-        }
-    }
-
-    impl From<no_std_net::IpAddr> for GenericIpAddress {
-        fn from(ip: no_std_net::IpAddr) -> Self {
-            GenericIpAddress(ip)
-        }
-    }
-
-    impl From<GenericIpAddress> for no_std_net::IpAddr {
-        fn from(ip: GenericIpAddress) -> Self {
-            ip.0
-        }
-    }
-
-    struct GenericSocketAddr(no_std_net::SocketAddr);
-
-    impl From<wire::IpEndpoint> for GenericSocketAddr {
-        fn from(ep: wire::IpEndpoint) -> Self {
-            // smoltcp may or may not have been compiled with IPv6 support, and
-            // we can't tell
-            #[allow(unreachable_patterns)]
-            match ep.addr {
-                wire::IpAddress::Ipv4(v4) => GenericSocketAddr(
-                    no_std_net::SocketAddr::V4(no_std_net::SocketAddrV4::new(
-                        GenericIpv4Address::from(v4).into(),
-                        ep.port,
-                    )),
-                ),
-                _ => GenericSocketAddr(no_std_net::SocketAddr::V4(
-                    no_std_net::SocketAddrV4::new(
-                        no_std_net::Ipv4Addr::UNSPECIFIED,
-                        ep.port,
-                    ),
-                )),
-            }
-        }
-    }
-
-    impl From<GenericSocketAddr> for wire::IpEndpoint {
-        fn from(sa: GenericSocketAddr) -> Self {
-            match sa.0 {
-                no_std_net::SocketAddr::V4(v4) => wire::IpEndpoint::new(
-                    wire::IpAddress::Ipv4(GenericIpv4Address(*v4.ip()).into()),
-                    v4.port(),
-                ),
-                _ => wire::IpEndpoint::new(
-                    wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED),
-                    0,
-                ),
-            }
-        }
-    }
-
-    impl From<no_std_net::SocketAddr> for GenericSocketAddr {
-        fn from(ip: no_std_net::SocketAddr) -> Self {
-            GenericSocketAddr(ip)
-        }
-    }
-
-    impl From<GenericSocketAddr> for no_std_net::SocketAddr {
-        fn from(ip: GenericSocketAddr) -> Self {
-            ip.0
-        }
-    }
-
-    struct WrappedInterface<'a>(
-        core::cell::RefCell<&'a mut Interface>,
-        core::cell::RefCell<&'a mut EthernetDMA<'static, 'static>>,
-    );
-
-    impl<'a> cotton_ssdp::udp::Multicast for WrappedInterface<'a> {
-        fn join_multicast_group(
-            &self,
-            multicast_address: &no_std_net::IpAddr,
-            _interface: cotton_netif::InterfaceIndex,
-        ) -> Result<(), cotton_ssdp::udp::Error> {
-            defmt::println!("JMG!");
-            self.0
-                .borrow_mut()
-                .join_multicast_group::<&mut EthernetDMA, wire::IpAddress>(
-                    &mut self.1.borrow_mut(),
-                    GenericIpAddress::from(*multicast_address).into(),
-                    now_fn(),
-                )
-                .map(|_| ())
-                .map_err(|_| cotton_ssdp::udp::Error::NoPacketInfo)
-        }
-
-        fn leave_multicast_group(
-            &self,
-            _multicast_address: &no_std_net::IpAddr,
-            _interface: cotton_netif::InterfaceIndex,
-        ) -> Result<(), cotton_ssdp::udp::Error> {
-            defmt::println!("LMG!");
-            Err(cotton_ssdp::udp::Error::NoPacketInfo)
-        }
-    }
-
-    struct WrappedSocket<'a, 'b>(
-        core::cell::RefCell<&'a mut smoltcp::socket::udp::Socket<'b>>,
-    );
-
-    impl<'a, 'b> WrappedSocket<'a, 'b> {
-        fn new(socket: &'a mut smoltcp::socket::udp::Socket<'b>) -> Self {
-            Self(core::cell::RefCell::new(socket))
-        }
-    }
-
-    impl<'a, 'b> cotton_ssdp::udp::TargetedSend for WrappedSocket<'a, 'b> {
-        fn send_with<F>(
-            &self,
-            size: usize,
-            to: &no_std_net::SocketAddr,
-            _from: &no_std_net::IpAddr,
-            f: F,
-        ) -> Result<(), cotton_ssdp::udp::Error>
-        where
-            F: FnOnce(&mut [u8]) -> usize,
-        {
-            defmt::println!("Send?");
-            self.0
-                .borrow_mut()
-                .send_with(size, GenericSocketAddr::from(*to).into(), f)
-                .map_err(|_| cotton_ssdp::udp::Error::NoPacketInfo)?;
-            defmt::println!("Send!");
-            Ok(())
-        }
-    }
-
-    impl<'a, 'b> cotton_ssdp::udp::TargetedReceive for WrappedSocket<'a, 'b> {
-        fn receive_to(
-            &self,
-            _buffer: &mut [u8],
-        ) -> Result<
-            (usize, no_std_net::IpAddr, no_std_net::SocketAddr),
-            cotton_ssdp::udp::Error,
-        > {
-            defmt::println!("Receive!");
-            Err(cotton_ssdp::udp::Error::NoPacketInfo)
         }
     }
 
@@ -442,10 +248,8 @@ mod app {
 
         defmt::println!("Calling o-n-e");
         {
-            let wi = WrappedInterface(
-                core::cell::RefCell::new(&mut interface),
-                core::cell::RefCell::new(&mut dma),
-            );
+            let mut d = &mut dma;
+            let wi = WrappedInterface::new(&mut interface, &mut d, now_fn());
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
             ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);

@@ -25,7 +25,7 @@ doctest = false
 harness = false
 
 [dependencies]
-cotton-ssdp = { path = "../../cotton-ssdp", default_features = false }
+cotton-ssdp = { path = "../../cotton-ssdp", default_features = false, features = ["smoltcp"] }
 cotton-netif = { path = "../../cotton-netif", default_features = false }
 smoltcp = { version = "0.9", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], default-features = false }
 stm32-eth = { git = "https://github.com/stm32-rs/stm32-eth", rev = "a44422f", features = ["defmt", "stm32f746", "smoltcp-phy"], default-features = false }
