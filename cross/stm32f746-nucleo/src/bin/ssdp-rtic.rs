@@ -219,7 +219,13 @@ mod app {
             defmt::warn!("Failed to detect link speed.");
         }
 
-        let dhcp_socket = dhcpv4::Socket::new();
+        let mut dhcp_socket = dhcpv4::Socket::new();
+        dhcp_socket.set_retry_config(dhcpv4::RetryConfig {
+            discover_timeout: smoltcp::time::Duration::from_secs(2),
+            initial_request_timeout: smoltcp::time::Duration::from_millis(500),
+            request_retries: 10,
+            min_renew_timeout: smoltcp::time::Duration::from_secs(864000),
+        });
         let dhcp_handle = socket_set.add(dhcp_socket);
 
         let udp_rx_buffer = udp::PacketBuffer::new(

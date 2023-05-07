@@ -19,6 +19,7 @@ pub fn setup_clocks(rcc: stm32_eth::stm32::RCC) -> Clocks {
 mod app {
     use super::NetworkStorage;
     use core::hash::Hasher;
+    use fugit::ExtU64;
     use ieee802_3_miim::{phy::PhySpeed, Phy};
     use smoltcp::{
         iface::{self, Interface, SocketHandle, SocketSet},
@@ -39,6 +40,7 @@ mod app {
         interface: Interface,
         socket_set: SocketSet<'static>,
         dhcp_handle: SocketHandle,
+        nvic: stm32_eth::stm32::NVIC,
     }
 
     #[shared]
@@ -179,11 +181,19 @@ mod app {
             defmt::warn!("Failed to detect link speed.");
         }
 
-        let dhcp_socket = dhcpv4::Socket::new();
+        let mut dhcp_socket = dhcpv4::Socket::new();
+        dhcp_socket.set_retry_config(dhcpv4::RetryConfig {
+            discover_timeout: smoltcp::time::Duration::from_secs(2),
+            initial_request_timeout: smoltcp::time::Duration::from_millis(500),
+            request_retries: 10,
+            min_renew_timeout: smoltcp::time::Duration::from_secs(864000),
+        });
         let dhcp_handle = socket_set.add(dhcp_socket);
 
         interface.poll(now_fn(), &mut &mut dma, &mut socket_set);
         socket_set.get_mut::<dhcpv4::Socket>(dhcp_handle).poll();
+
+        periodic::spawn_after(2.secs()).unwrap();
 
         (
             Shared {},
@@ -192,9 +202,17 @@ mod app {
                 interface,
                 socket_set,
                 dhcp_handle,
+                nvic: core.NVIC,
             },
             init::Monotonics(mono),
         )
+    }
+
+    #[task(local = [nvic])]
+    fn periodic(cx: periodic::Context) {
+        let nvic = cx.local.nvic;
+        nvic.request(stm32_eth::stm32::Interrupt::ETH);
+        periodic::spawn_after(2.secs()).unwrap();
     }
 
     #[task(binds = ETH, local = [device, interface, socket_set, dhcp_handle], priority = 2)]
