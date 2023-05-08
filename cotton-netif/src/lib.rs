@@ -68,7 +68,7 @@ use no_std_net::IpAddr as IpAddress;
 
 /** Event when a new interface or address is detected, or when one disappears
  */
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkEvent {
     /** A new network interface is detected. */
     NewLink(InterfaceIndex, alloc::string::String, Flags),
