@@ -2,6 +2,7 @@ use core::hash::Hasher;
 use fugit::RateExtU32;
 use hal::gpio::GpioExt;
 use ieee802_3_miim::{phy::PhySpeed, Phy};
+use linked_list_allocator::LockedHeap;
 use smoltcp::{socket::dhcpv4, wire::IpCidr};
 use stm32_eth::hal::rcc::Clocks;
 use stm32_eth::hal::rcc::RccExt;
@@ -260,5 +261,26 @@ impl<'a> Stack<'a> {
                 });
             }
         }
+    }
+}
+
+extern "C" {
+    static mut __sheap: u32;
+    static mut _stack_start: u32;
+}
+
+/// Set up the heap
+///
+/// As is standard, all memory above the rodata segment and below the
+/// stack, is used as heap.
+pub fn init_heap(allocator: &LockedHeap) {
+    const STACK_SIZE: usize = 16 * 1024;
+    // SAFETY: this relies on the link map being correct, and STACK_SIZE
+    // being large enough for the entire program.
+    unsafe {
+        let heap_start = &__sheap as *const u32 as usize;
+        let heap_end = &_stack_start as *const u32 as usize;
+        let heap_size = heap_end - heap_start - STACK_SIZE;
+        allocator.lock().init(heap_start as *mut u8, heap_size);
     }
 }

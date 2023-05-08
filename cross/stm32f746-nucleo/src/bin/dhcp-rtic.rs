@@ -10,10 +10,10 @@ use stm32f7xx_hal as _;
 #[rtic::app(device = stm32_eth::stm32, dispatchers = [SPI1])]
 mod app {
     use super::NetworkStorage;
+    use cross_stm32f746_nucleo::common::*;
     use fugit::ExtU64;
     use stm32_eth::dma::EthernetDMA;
     use systick_monotonic::Systick;
-    use cross_stm32f746_nucleo::common::*;
 
     #[local]
     struct Local {
