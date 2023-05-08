@@ -8,6 +8,8 @@ use hal::gpio::GpioExt;
 use ieee802_3_miim::{phy::PhySpeed, Phy};
 use panic_probe as _;
 use smoltcp::iface::{self, SocketStorage};
+use smoltcp::{socket::dhcpv4, wire::IpCidr};
+use stm32_eth::dma::{RxRingEntry, TxRingEntry};
 use stm32_eth::hal::rcc::Clocks;
 use stm32_eth::hal::rcc::RccExt;
 use stm32f7xx_hal as hal;
@@ -63,13 +65,14 @@ type MdcPc1 =
 
 pub struct Stm32Ethernet {
     pub dma: stm32_eth::dma::EthernetDMA<'static, 'static>,
-    pub phy: ieee802_3_miim::phy::LAN8742A<
+    phy: ieee802_3_miim::phy::LAN8742A<
         stm32_eth::mac::EthernetMACWithMii<MdioPa2, MdcPc1>,
     >,
     got_link: bool,
 }
 
 impl Stm32Ethernet {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         gpioa: hal::pac::GPIOA,
         gpiob: hal::pac::GPIOB,
@@ -149,15 +152,16 @@ pub struct Stack<'a> {
 }
 
 impl<'a> Stack<'a> {
-    fn new<D: smoltcp::phy::Device>(
+    pub fn new<D: smoltcp::phy::Device>(
         device: &mut D,
         mac_address: &[u8; 6],
         sockets: &'a mut [smoltcp::iface::SocketStorage<'a>],
     ) -> Stack<'a> {
         let mut config = smoltcp::iface::Config::new();
-        // config.random_seed = mono.now();
-        config.hardware_addr =
-            Some(smoltcp::wire::EthernetAddress::from_bytes(mac_address).into());
+        config.random_seed = unique_id(b"smoltcp-config-random");
+        config.hardware_addr = Some(
+            smoltcp::wire::EthernetAddress::from_bytes(mac_address).into(),
+        );
         let interface = smoltcp::iface::Interface::new(config, device);
         let mut socket_set = smoltcp::iface::SocketSet::new(sockets);
 
@@ -170,41 +174,61 @@ impl<'a> Stack<'a> {
         });
         let dhcp_handle = socket_set.add(dhcp_socket);
 
-        Stack { interface, socket_set, dhcp_handle }
+        Stack {
+            interface,
+            socket_set,
+            dhcp_handle,
+        }
+    }
+
+    pub fn poll<D: smoltcp::phy::Device>(
+        &mut self,
+        now: smoltcp::time::Instant,
+        device: &mut D,
+    ) {
+        self.interface.poll(now, device, &mut self.socket_set);
+        self.poll_dhcp();
+    }
+
+    pub fn poll_dhcp(&mut self) {
+        let socket =
+            self.socket_set.get_mut::<dhcpv4::Socket>(self.dhcp_handle);
+        let event = socket.poll();
+        match event {
+            None => {}
+            Some(dhcpv4::Event::Configured(config)) => {
+                defmt::println!("DHCP config acquired!");
+                defmt::println!("IP address:      {}", config.address);
+
+                self.interface.update_ip_addrs(|addrs| {
+                    addrs.clear();
+                    addrs.push(IpCidr::Ipv4(config.address)).unwrap();
+                });
+
+                if let Some(router) = config.router {
+                    self.interface
+                        .routes_mut()
+                        .add_default_ipv4_route(router)
+                        .unwrap();
+                } else {
+                    self.interface.routes_mut().remove_default_ipv4_route();
+                }
+            }
+            Some(dhcpv4::Event::Deconfigured) => {
+                defmt::println!("DHCP lost config!");
+                self.interface.update_ip_addrs(|addrs| {
+                    addrs.clear();
+                });
+            }
+        }
     }
 }
-
-/* This is appealing but can't be made to work AFAICT :(
-
-impl smoltcp::phy::Device for Stm32Ethernet {
-    type RxToken<'a> = <&'static mut stm32_eth::dma::EthernetDMA<'static, 'static> as smoltcp::phy::Device>::RxToken<'a>;
-    type TxToken<'a> = <&'static mut stm32_eth::dma::EthernetDMA<'static, 'static> as smoltcp::phy::Device>::TxToken<'a>;
-
-    fn receive<'a>(
-        &'a mut self,
-        timestamp: smoltcp::time::Instant
-    ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        <&'a mut stm32_eth::dma::EthernetDMA<'static, 'static> as smoltcp::phy::Device>::receive(&mut &mut self.dma, timestamp)
-    }
-    fn transmit(&mut self, timestamp: smoltcp::time::Instant) -> Option<Self::TxToken<'_>> {
-        <&mut stm32_eth::dma::EthernetDMA<'static, 'static> as smoltcp::phy::Device>::transmit(&mut &mut self.dma, timestamp)
-    }
-    fn capabilities(&self) -> smoltcp::phy::DeviceCapabilities {
-        self.capabilities.clone()
-    }
-}
-*/
 
 #[rtic::app(device = stm32_eth::stm32, dispatchers = [SPI1])]
 mod app {
     use super::NetworkStorage;
     use fugit::ExtU64;
-    use smoltcp::{
-        iface::{self, Interface, SocketHandle, SocketSet},
-        socket::dhcpv4,
-        wire::{EthernetAddress, IpCidr},
-    };
-    use stm32_eth::dma::{EthernetDMA, RxRingEntry, TxRingEntry};
+    use stm32_eth::dma::EthernetDMA;
     use systick_monotonic::Systick;
 
     #[local]
@@ -225,11 +249,7 @@ mod app {
         smoltcp::time::Instant::from_millis(time as i64)
     }
 
-    #[init(local = [
-        rx_ring: [RxRingEntry; 2] = [RxRingEntry::new(),RxRingEntry::new()],
-        tx_ring: [TxRingEntry; 2] = [TxRingEntry::new(),TxRingEntry::new()],
-        storage: NetworkStorage = NetworkStorage::new(),
-    ])]
+    #[init(local = [ storage: NetworkStorage = NetworkStorage::new() ])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
         let core = cx.core;
@@ -248,7 +268,6 @@ mod app {
 
         let clocks = super::setup_clocks(RCC);
         let mono = Systick::new(core.SYST, clocks.hclk().raw());
-        let mac_address = super::mac_address();
 
         let mut device = super::Stm32Ethernet::new(
             GPIOA,
@@ -259,8 +278,8 @@ mod app {
             ETHERNET_MAC,
             ETHERNET_MMC,
             clocks,
-            cx.local.rx_ring,
-            cx.local.tx_ring,
+            &mut cx.local.storage.rx_ring,
+            &mut cx.local.storage.tx_ring,
         );
 
         // LAN8742A has an interrupt for link up, but Nucleo doesn't
@@ -270,19 +289,15 @@ mod app {
 
         defmt::println!("Link up.");
 
+        let mac_address = super::mac_address();
         // NB stm32-eth implements smoltcp::Device not for
         // EthernetDMA, but for "&mut EthernetDMA"
-        let mut stack = super::Stack::new(&mut &mut device.dma,
-                                          &mac_address,
-                                          &mut cx.local.storage.sockets[..]);
-
-        let mut config = smoltcp::iface::Config::new();
-        // config.random_seed = mono.now();
-        config.hardware_addr =
-            Some(EthernetAddress::from_bytes(&mac_address).into());
-
-        stack.interface.poll(now_fn(), &mut &mut device.dma, &mut stack.socket_set);
-        stack.socket_set.get_mut::<dhcpv4::Socket>(stack.dhcp_handle).poll();
+        let mut stack = super::Stack::new(
+            &mut &mut device.dma,
+            &mac_address,
+            &mut cx.local.storage.sockets[..],
+        );
+        stack.poll(now_fn(), &mut &mut device.dma);
 
         periodic::spawn_after(2.secs()).unwrap();
 
@@ -304,56 +319,27 @@ mod app {
         periodic::spawn_after(2.secs()).unwrap();
     }
 
-    fn handle_dhcp(iface: &mut Interface, socket: &mut dhcpv4::Socket) {
-        let event = socket.poll();
-        match event {
-            None => {}
-            Some(dhcpv4::Event::Configured(config)) => {
-                defmt::println!("DHCP config acquired!");
-                defmt::println!("IP address:      {}", config.address);
-
-                iface.update_ip_addrs(|addrs| {
-                    addrs.clear();
-                    addrs.push(IpCidr::Ipv4(config.address)).unwrap();
-                });
-
-                if let Some(router) = config.router {
-                    iface.routes_mut().add_default_ipv4_route(router).unwrap();
-                } else {
-                    iface.routes_mut().remove_default_ipv4_route();
-                }
-            }
-            Some(dhcpv4::Event::Deconfigured) => {
-                defmt::println!("DHCP lost config!");
-                iface.update_ip_addrs(|addrs| {
-                    addrs.clear();
-                });
-            }
-        }
-    }
-
     #[task(binds = ETH, local = [device, stack], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (device, stack) = (
-            cx.local.device,
-            cx.local.stack,
-        );
+        let (device, stack) = (cx.local.device, cx.local.stack);
 
         EthernetDMA::<'static, 'static>::interrupt_handler();
-        stack.interface.poll(now_fn(), &mut &mut device.dma, &mut stack.socket_set);
-        handle_dhcp(&mut stack.interface, stack.socket_set.get_mut::<dhcpv4::Socket>(stack.dhcp_handle));
-        stack.interface.poll(now_fn(), &mut &mut device.dma, &mut stack.socket_set);
+        stack.poll(now_fn(), &mut &mut device.dma);
     }
 }
 
 /// All storage required for networking
 pub struct NetworkStorage {
+    pub rx_ring: [RxRingEntry; 2],
+    pub tx_ring: [TxRingEntry; 2],
     pub sockets: [iface::SocketStorage<'static>; 2],
 }
 
 impl NetworkStorage {
     pub const fn new() -> Self {
         NetworkStorage {
+            rx_ring: [RxRingEntry::new(), RxRingEntry::new()],
+            tx_ring: [TxRingEntry::new(), TxRingEntry::new()],
             sockets: [SocketStorage::EMPTY; 2],
         }
     }
