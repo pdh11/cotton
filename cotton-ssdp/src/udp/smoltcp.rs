@@ -291,7 +291,7 @@ impl<'a, 'b> super::TargetedSend for WrappedSocket<'a, 'b> {
         self.0
             .borrow_mut()
             .send_with(size, GenericSocketAddr::from(*to).into(), f)
-            .map_err(|e| Error::SmoltcpUdpSend(e))?;
+            .map_err(Error::SmoltcpUdpSend)?;
         Ok(())
     }
 }

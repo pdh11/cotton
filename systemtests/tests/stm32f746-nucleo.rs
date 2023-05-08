@@ -1,7 +1,6 @@
 use assertables::*;
 use serial_test::*;
 use std::env;
-use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, ChildStderr, Command, Stdio};
 use std::thread::sleep;
@@ -51,8 +50,9 @@ impl DeviceTest {
             self.stdout.read_available_to_string(&mut s).unwrap();
             self.output.push_str(&s);
             println!("s={s}");
-            if self.output.contains(needle) {
+            if let Some((_before, after)) = self.output.split_once(needle) {
                 eprintln!("OK: {needle}");
+                self.output = after.to_string();
                 return;
             }
 
@@ -72,8 +72,9 @@ impl DeviceTest {
             self.stderr.read_available_to_string(&mut s).unwrap();
             self.errors.push_str(&s);
             println!("s={s}");
-            if self.errors.contains(needle) {
+            if let Some((_before, after)) = self.output.split_once(needle) {
                 eprintln!("OK: {needle}");
+                self.output = after.to_string();
                 return;
             }
 
