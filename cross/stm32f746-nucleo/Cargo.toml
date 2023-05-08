@@ -6,6 +6,11 @@ edition = "2021"
 version = "0.0.1"
 autotests = false
 
+[lib]
+test = false
+doctest = false
+harness = false
+
 [[bin]]
 name = "hello"
 test = false

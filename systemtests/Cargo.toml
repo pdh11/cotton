@@ -20,6 +20,7 @@ skip_feature_sets = ["arm"]
 [dependencies]
 serial_test = { version = "0.6" }
 assertables = { version = "7" }
+nonblock = { version = "0.2" }
 
 [features]
 arm = []
