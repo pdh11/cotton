@@ -1,5 +1,5 @@
 [package]
-authors = ["Peter Hartley <peter@electricimp.com>"]
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 name = "cross-rp2040"
 publish = false
 edition = "2021"
