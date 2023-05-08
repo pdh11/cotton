@@ -1,5 +1,5 @@
 [package]
-authors = ["Peter Hartley <peter@electricimp.com>"]
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 name = "cross-stm32f746-nucleo"
 publish = false
 edition = "2021"
