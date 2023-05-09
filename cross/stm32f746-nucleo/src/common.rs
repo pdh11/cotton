@@ -65,17 +65,6 @@ pub fn mac_address() -> [u8; 6] {
     mac_address.copy_from_slice(&r[0..6]);
     mac_address[0] &= 0xFE; // clear multicast bit
     mac_address[0] |= 2; // set local bit
-
-    defmt::println!(
-        "Local MAC address: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        mac_address[0],
-        mac_address[1],
-        mac_address[2],
-        mac_address[3],
-        mac_address[4],
-        mac_address[5]
-    );
-
     mac_address
 }
 
@@ -134,7 +123,6 @@ impl Stm32Ethernet {
         )
         .unwrap();
 
-        defmt::println!("Enabling interrupts");
         dma.enable_interrupt();
 
         let mut phy = ieee802_3_miim::phy::LAN8742A::new(mac, 0);
@@ -164,9 +152,6 @@ impl Stm32Ethernet {
                 PhySpeed::FullDuplexBase100Tx => Speed::FullDuplexBase100Tx,
             }) {
                 self.phy.get_miim().set_speed(speed);
-                defmt::println!("Detected link speed: {}", speed);
-            } else {
-                defmt::warn!("Failed to detect link speed.");
             }
         }
         self.got_link = got_link;

@@ -104,14 +104,13 @@ impl From<wire::IpAddress> for GenericIpAddress {
 
 impl From<GenericIpAddress> for wire::IpAddress {
     fn from(ip: GenericIpAddress) -> Self {
-        // smoltcp may or may not have been compiled with IPv6 support, and
-        // we can't tell
-        #[allow(unreachable_patterns)]
         match ip.0 {
             no_std_net::IpAddr::V4(v4) => {
                 wire::IpAddress::Ipv4(wire::Ipv4Address(v4.octets()))
             }
-            _ => wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED),
+            no_std_net::IpAddr::V6(_) => {
+                wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED)
+            }
         }
     }
 }
@@ -191,7 +190,7 @@ impl From<GenericSocketAddr> for wire::IpEndpoint {
                 wire::IpAddress::Ipv4(GenericIpv4Address(*v4.ip()).into()),
                 v4.port(),
             ),
-            _ => wire::IpEndpoint::new(
+            no_std_net::SocketAddr::V6(_) => wire::IpEndpoint::new(
                 wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED),
                 0,
             ),
@@ -219,7 +218,7 @@ pub struct WrappedInterface<'a, D: Device>(
 );
 
 impl<'a, D: Device> WrappedInterface<'a, D> {
-    /// Create a new WrappedInterface
+    /// Create a new `WrappedInterface`
     ///
     /// The interface and device are mutably borrowed, so the
     /// `WrappedInterface` should be short-lived.
@@ -268,7 +267,7 @@ pub struct WrappedSocket<'a, 'b>(
 );
 
 impl<'a, 'b> WrappedSocket<'a, 'b> {
-    /// Create a new WrappedSocket
+    /// Create a new `WrappedSocket`
     ///
     /// The socket is mutably borrowed, so the `WrappedSocket` should be
     /// short-lived.
