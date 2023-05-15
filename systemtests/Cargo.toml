@@ -18,9 +18,12 @@ publish = false
 skip_feature_sets = ["arm"]
 
 [dependencies]
+cotton-ssdp = { path = "../cotton-ssdp" }
 serial_test = { version = "0.6" }
 assertables = { version = "7" }
 nonblock = { version = "0.2" }
+mio = { version = "0.8", default_features = false, features = ["os-poll", "net"] }
+uuid = { version = "1.3", default_features = false, features = ["v4"] }
 
 [features]
 arm = []

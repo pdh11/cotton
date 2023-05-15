@@ -1,14 +1,14 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 use defmt_rtt as _; // global logger
 use linked_list_allocator::LockedHeap;
 use panic_probe as _;
 use smoltcp::iface::{self, SocketStorage};
 use stm32_eth::dma::{RxRingEntry, TxRingEntry};
 use stm32f7xx_hal as _;
-
-extern crate alloc;
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -41,10 +41,15 @@ mod app {
         fn on_notification(&self, notification: &cotton_ssdp::Notification) {
             if let cotton_ssdp::Notification::Alive {
                 ref notification_type,
+                location,
                 ..
             } = notification
             {
-                defmt::println!("SSDP! {:?}", &notification_type[..]);
+                defmt::println!(
+                    "SSDP! {} {}",
+                    &notification_type[..],
+                    &location[..]
+                );
             }
         }
     }
@@ -142,6 +147,26 @@ mod app {
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
             ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+
+            // uuid crate isn't no_std :(
+            let mut u1 = unique_id(b"upnp-uuid-1");
+            let mut u2 = unique_id(b"upnp-uuid-2");
+            // Variant 1
+            u2 |= 0x8000_0000_0000_0000_u64;
+            u2 &= !0x4000_0000_0000_0000_u64;
+            // Version 5
+            u1 &= !0xF000;
+            u1 |= 0x5000;
+
+            let uuid = alloc::format!("{:016x}{:016x}", u1, u2);
+            ssdp.advertise(
+                uuid,
+                cotton_ssdp::Advertisement {
+                    notification_type: "stm32f746-nucleo-test".to_string(),
+                    location: "http://127.0.0.1/".to_string(),
+                },
+                &ws,
+            );
         }
 
         let udp_handle = stack.socket_set.add(udp_socket);
@@ -210,7 +235,7 @@ mod app {
                 // receive, but it's simpler just to copy the data.
                 let mut buffer = [0u8; 512];
                 if let Ok((size, sender)) = socket.recv_slice(&mut buffer) {
-                    defmt::println!("{} from {}", size, sender);
+                    // defmt::println!("{} from {}", size, sender);
                     let ws = WrappedSocket::new(socket);
                     ssdp.on_data(
                         &buffer[0..size],
@@ -231,8 +256,8 @@ pub struct NetworkStorage {
     pub sockets: [iface::SocketStorage<'static>; 2],
     pub rx_metadata: [smoltcp::socket::udp::PacketMetadata; 16],
     pub rx_storage: [u8; 8192],
-    pub tx_metadata: [smoltcp::socket::udp::PacketMetadata; 4],
-    pub tx_storage: [u8; 512],
+    pub tx_metadata: [smoltcp::socket::udp::PacketMetadata; 8],
+    pub tx_storage: [u8; 2048],
 }
 
 impl NetworkStorage {
@@ -243,8 +268,8 @@ impl NetworkStorage {
             sockets: [SocketStorage::EMPTY; 2],
             rx_metadata: [smoltcp::socket::udp::PacketMetadata::EMPTY; 16],
             rx_storage: [0; 8192],
-            tx_metadata: [smoltcp::socket::udp::PacketMetadata::EMPTY; 4],
-            tx_storage: [0; 512],
+            tx_metadata: [smoltcp::socket::udp::PacketMetadata::EMPTY; 8],
+            tx_storage: [0; 2048],
         }
     }
 }

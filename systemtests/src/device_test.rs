@@ -55,7 +55,7 @@ impl DeviceTest {
             let mut s = String::new();
             self.stdout.read_available_to_string(&mut s).unwrap();
             self.output.push_str(&s);
-            println!("s={s}");
+            print!("{s}");
             if let Some((_before, after)) = self.output.split_once(needle) {
                 eprintln!("OK: {needle}");
                 self.output = after.to_string();
@@ -77,7 +77,7 @@ impl DeviceTest {
             let mut s = String::new();
             self.stderr.read_available_to_string(&mut s).unwrap();
             self.errors.push_str(&s);
-            println!("s={s}");
+            print!("{s}");
             if let Some((_before, after)) = self.output.split_once(needle) {
                 eprintln!("OK: {needle}");
                 self.output = after.to_string();
