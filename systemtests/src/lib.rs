@@ -2,4 +2,4 @@
 mod device_test;
 
 #[cfg(feature = "arm")]
-pub use device_test::{device_test, DeviceTest};
+pub use device_test::{device_test, DeviceTest, ssdp_test};
