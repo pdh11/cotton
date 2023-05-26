@@ -18,9 +18,9 @@ fn nucleo_test<F: FnOnce(DeviceTest) -> () + panic::UnwindSafe>(
 #[test]
 #[serial]
 #[cfg_attr(miri, ignore)]
-fn arm_stm32f7_hello() {
+fn arm_stm32f746_nucleo_hello() {
     nucleo_test(
-        "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/hello",
+        "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/stm32f746-nucleo-hello",
         |t| {
             t.expect("Hello STM32F746 Nucleo", Duration::from_secs(5));
         },
@@ -30,9 +30,9 @@ fn arm_stm32f7_hello() {
 #[test]
 #[serial]
 #[cfg_attr(miri, ignore)]
-fn arm_stm32f7_dhcp() {
+fn arm_stm32f746_nucleo_dhcp() {
     nucleo_test(
-        "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/dhcp-rtic",
+        "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/stm32f746-nucleo-dhcp-rtic",
         |t| {
             t.expect_stderr("(HOST) INFO  success!", Duration::from_secs(30));
             t.expect("DHCP config acquired!", Duration::from_secs(10));
@@ -43,9 +43,9 @@ fn arm_stm32f7_dhcp() {
 #[test]
 #[serial]
 #[cfg_attr(miri, ignore)]
-fn arm_stm32f7_ssdp() {
+fn arm_stm32f746_nucleo_ssdp() {
     nucleo_test(
-        "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/ssdp-rtic",
+        "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/stm32f746-nucleo-ssdp-rtic",
         |nt| {
             nt.expect_stderr("(HOST) INFO  success!", Duration::from_secs(30));
             nt.expect("DHCP config acquired!", Duration::from_secs(10));

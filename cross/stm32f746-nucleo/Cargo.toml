@@ -12,19 +12,19 @@ doctest = false
 harness = false
 
 [[bin]]
-name = "hello"
+name = "stm32f746-nucleo-hello"
 test = false
 doctest = false
 harness = false
 
 [[bin]]
-name = "dhcp-rtic"
+name = "stm32f746-nucleo-dhcp-rtic"
 test = false
 doctest = false
 harness = false
 
 [[bin]]
-name = "ssdp-rtic"
+name = "stm32f746-nucleo-ssdp-rtic"
 test = false
 doctest = false
 harness = false
