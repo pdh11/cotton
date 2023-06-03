@@ -1,3 +1,4 @@
+//! On an STM32F746-Nucleo, bring up Ethernet and TCP and obtain a DHCP address
 #![no_std]
 #![no_main]
 
@@ -10,7 +11,7 @@ use stm32f7xx_hal as _;
 #[rtic::app(device = stm32_eth::stm32, dispatchers = [SPI1])]
 mod app {
     use super::NetworkStorage;
-    use cross_stm32f746_nucleo::common::*;
+    use cotton_stm32f746_nucleo::common::*;
     use fugit::ExtU64;
     use stm32_eth::dma::EthernetDMA;
     use systick_monotonic::Systick;

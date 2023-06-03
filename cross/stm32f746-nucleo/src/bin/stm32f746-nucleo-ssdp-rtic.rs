@@ -1,3 +1,5 @@
+//! On an STM32F746-Nucleo, bring up Ethernet and TCP and obtain a DHCP address
+//! and start doing SSDP
 #![no_std]
 #![no_main]
 
@@ -21,7 +23,7 @@ mod app {
         GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
         WrappedInterface, WrappedSocket,
     };
-    use cross_stm32f746_nucleo::common::*;
+    use cotton_stm32f746_nucleo::common::*;
     use fugit::ExtU64;
     use smoltcp::{iface::SocketHandle, socket::udp, wire};
     use systick_monotonic::Systick;
