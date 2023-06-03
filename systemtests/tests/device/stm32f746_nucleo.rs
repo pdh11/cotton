@@ -16,7 +16,7 @@ fn nucleo_test<F: FnOnce(DeviceTest) -> () + panic::UnwindSafe>(
 }
 
 #[test]
-#[serial]
+#[serial(stm32f746_nucleo)]
 #[cfg_attr(miri, ignore)]
 fn arm_stm32f746_nucleo_hello() {
     nucleo_test(
@@ -28,7 +28,7 @@ fn arm_stm32f746_nucleo_hello() {
 }
 
 #[test]
-#[serial]
+#[serial(stm32f746_nucleo)]
 #[cfg_attr(miri, ignore)]
 fn arm_stm32f746_nucleo_dhcp() {
     nucleo_test(
@@ -41,7 +41,7 @@ fn arm_stm32f746_nucleo_dhcp() {
 }
 
 #[test]
-#[serial]
+#[serial(stm32f746_nucleo)]
 #[cfg_attr(miri, ignore)]
 fn arm_stm32f746_nucleo_ssdp() {
     nucleo_test(
