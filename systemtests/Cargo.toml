@@ -27,3 +27,4 @@ uuid = { version = "1.3", default_features = false, features = ["v4"] }
 [features]
 arm = []
 stm32f746-nucleo = ["arm"]
+rp2040-w5500 = ["arm"]

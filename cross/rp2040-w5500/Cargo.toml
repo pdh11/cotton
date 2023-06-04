@@ -12,6 +12,12 @@ test = false
 doctest = false
 harness = false
 
+[[bin]]
+name="rp2040-w5500-dhcp-rtic"
+test = false
+doctest = false
+harness = false
+
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default_features = false }
 cortex-m = { version = "0.7.6" }
@@ -20,4 +26,9 @@ defmt = "0.3.2"
 defmt-rtt = "0.4.0"
 #defmt-test = "0.3.0"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
-rp-pico = "0.7"
+rp-pico = "0.8"
+w5500-dhcp = { version = "0.6", default_features = false, features = ["defmt"] }
+rp2040-flash = "0.4"
+cortex-m-rtic = "1.0.0"
+rp2040-hal = { version="0.9", features=["rt"] }
+siphasher = { version = "1", default-features = false }
