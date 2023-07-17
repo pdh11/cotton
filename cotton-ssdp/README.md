@@ -32,4 +32,4 @@ a network, including in *ad hoc* settings which don't necessarily
 have expert network administrators close at hand.
 
 Library documentation is [on
-docs.rs](https://docs.rs/cotton-netif/latest/cotton_ssdp/).
+docs.rs](https://docs.rs/cotton-ssdp/latest/cotton_ssdp/).
