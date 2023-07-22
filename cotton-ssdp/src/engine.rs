@@ -109,7 +109,7 @@ impl<CB: Callback> Engine<CB> {
     ///
     #[must_use]
     pub fn new() -> Self {
-        Engine {
+        Self {
             interfaces: BTreeMap::default(),
             active_searches: SlotMap::with_key(),
             advertisements: BTreeMap::default(),
@@ -127,12 +127,10 @@ impl<CB: Callback> Engine<CB> {
 
         // If anybody is doing an ssdp:all search, then we don't need to
         // do any of the other searches.
-        if let Some(all) = self
-            .active_searches
-            .iter()
-            .find(|x| x.1.notification_type == "ssdp:all")
-        {
-            self.search_on_all(&all.1.notification_type, socket);
+        if self.active_searches.values().any(
+            |x| x.notification_type == "ssdp:all"
+        ) {
+            self.search_on_all("ssdp:all", socket);
         } else {
             for s in self.active_searches.values() {
                 self.search_on_all(&s.notification_type, socket);
@@ -298,12 +296,12 @@ impl<CB: Callback> Engine<CB> {
 
     fn send_all<SCK: udp::TargetedSend>(&self, ips: &[IpAddr], search: &SCK) {
         for ip in ips {
-            if let Some(all) = self
+            if self
                 .active_searches
-                .iter()
-                .find(|x| x.1.notification_type == "ssdp:all")
+                .values()
+                .any(|x| x.notification_type == "ssdp:all")
             {
-                Self::search_on(&all.1.notification_type, ip, search);
+                Self::search_on("ssdp:all", ip, search);
             } else {
                 for s in self.active_searches.values() {
                     Self::search_on(&s.notification_type, ip, search);

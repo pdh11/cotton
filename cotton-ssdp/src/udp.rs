@@ -32,11 +32,11 @@ pub enum Error {
 impl ::core::fmt::Display for Error {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         match self {
-            Error::NoPacketInfo => f.write_str("recvmsg: no pktinfo returned"),
-            Error::Ipv6NotImplemented => f.write_str("IPv6 not implemented"),
+            Self::NoPacketInfo => f.write_str("recvmsg: no pktinfo returned"),
+            Self::Ipv6NotImplemented => f.write_str("IPv6 not implemented"),
 
             #[cfg(feature = "std")]
-            Error::Syscall(s, _) => write!(f, "error from syscall {s:?}"),
+            Self::Syscall(s, _) => write!(f, "error from syscall {s:?}"),
         }
     }
 }
@@ -45,7 +45,7 @@ impl ::core::fmt::Display for Error {
 impl ::std::error::Error for Error {
     fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
         match self {
-            Error::Syscall(_, e) => Some(e),
+            Self::Syscall(_, e) => Some(e),
             _ => None,
         }
     }

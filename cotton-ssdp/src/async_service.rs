@@ -33,7 +33,7 @@ struct Inner {
 }
 
 impl Inner {
-    fn new(engine: Engine<AsyncCallback>) -> Result<Inner, std::io::Error> {
+    fn new(engine: Engine<AsyncCallback>) -> Result<Self, std::io::Error> {
         Self::new_inner(
             engine,
             udp::std::setup_socket,
@@ -45,12 +45,12 @@ impl Inner {
         engine: Engine<AsyncCallback>,
         setup_socket: SetupSocketFn,
         from_std: FromStdFn,
-    ) -> Result<Inner, std::io::Error> {
+    ) -> Result<Self, std::io::Error> {
         let multicast_socket = setup_socket(1900u16)?;
         let search_socket = setup_socket(0u16)?;
 
         // @todo IPv6 https://stackoverflow.com/questions/3062205/setting-the-source-ip-for-a-udp-socket
-        Ok(Inner {
+        Ok(Self {
             engine: Mutex::new(engine),
             refresh_timer: Mutex::new(RefreshTimer::default()),
             multicast_socket: from_std(multicast_socket)?,
@@ -131,7 +131,7 @@ impl AsyncService {
             }
         });
 
-        Ok(AsyncService { inner: inner2 })
+        Ok(Self { inner: inner2 })
     }
 
     /// Notify the `AsyncService` of a network interface change

@@ -113,7 +113,7 @@ impl<'a> MessageCursor<'a> {
         MessageCursor { buf, offset: 0 }
     }
 
-    pub fn position(&self) -> usize {
+    pub const fn position(&self) -> usize {
         self.offset
     }
 }

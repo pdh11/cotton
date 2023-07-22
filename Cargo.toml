@@ -3,3 +3,5 @@ members = [
     "cotton-netif",
     "cotton-ssdp",
 ]
+
+resolver = "2"

@@ -29,7 +29,7 @@ impl RefreshTimer {
     ///
     #[must_use]
     pub fn new() -> Self {
-        RefreshTimer {
+        Self {
             next_salvo: Instant::now(),
             phase: 0u8,
         }
