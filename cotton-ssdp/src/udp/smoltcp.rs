@@ -33,19 +33,19 @@ pub struct GenericIpv4Address(no_std_net::Ipv4Addr);
 
 impl From<wire::Ipv4Address> for GenericIpv4Address {
     fn from(ip: wire::Ipv4Address) -> Self {
-        GenericIpv4Address(no_std_net::Ipv4Addr::from(ip.0))
+        Self(no_std_net::Ipv4Addr::from(ip.0))
     }
 }
 
 impl From<GenericIpv4Address> for wire::Ipv4Address {
     fn from(ip: GenericIpv4Address) -> Self {
-        wire::Ipv4Address(ip.0.octets())
+        Self(ip.0.octets())
     }
 }
 
 impl From<no_std_net::Ipv4Addr> for GenericIpv4Address {
     fn from(ip: no_std_net::Ipv4Addr) -> Self {
-        GenericIpv4Address(ip)
+        Self(ip)
     }
 }
 
@@ -92,10 +92,10 @@ impl From<wire::IpAddress> for GenericIpAddress {
         // we can't tell
         #[allow(unreachable_patterns)]
         match ip {
-            wire::IpAddress::Ipv4(v4) => GenericIpAddress(
+            wire::IpAddress::Ipv4(v4) => Self(
                 no_std_net::IpAddr::V4(no_std_net::Ipv4Addr::from(v4.0)),
             ),
-            _ => GenericIpAddress(no_std_net::IpAddr::V4(
+            _ => Self(no_std_net::IpAddr::V4(
                 no_std_net::Ipv4Addr::UNSPECIFIED,
             )),
         }
@@ -106,10 +106,10 @@ impl From<GenericIpAddress> for wire::IpAddress {
     fn from(ip: GenericIpAddress) -> Self {
         match ip.0 {
             no_std_net::IpAddr::V4(v4) => {
-                wire::IpAddress::Ipv4(wire::Ipv4Address(v4.octets()))
+                Self::Ipv4(wire::Ipv4Address(v4.octets()))
             }
             no_std_net::IpAddr::V6(_) => {
-                wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED)
+                Self::Ipv4(wire::Ipv4Address::UNSPECIFIED)
             }
         }
     }
@@ -117,7 +117,7 @@ impl From<GenericIpAddress> for wire::IpAddress {
 
 impl From<no_std_net::IpAddr> for GenericIpAddress {
     fn from(ip: no_std_net::IpAddr) -> Self {
-        GenericIpAddress(ip)
+        Self(ip)
     }
 }
 
@@ -167,13 +167,13 @@ impl From<wire::IpEndpoint> for GenericSocketAddr {
         // we can't tell
         #[allow(unreachable_patterns)]
         match ep.addr {
-            wire::IpAddress::Ipv4(v4) => GenericSocketAddr(
+            wire::IpAddress::Ipv4(v4) => Self(
                 no_std_net::SocketAddr::V4(no_std_net::SocketAddrV4::new(
                     GenericIpv4Address::from(v4).into(),
                     ep.port,
                 )),
             ),
-            _ => GenericSocketAddr(no_std_net::SocketAddr::V4(
+            _ => Self(no_std_net::SocketAddr::V4(
                 no_std_net::SocketAddrV4::new(
                     no_std_net::Ipv4Addr::UNSPECIFIED,
                     ep.port,
@@ -186,11 +186,11 @@ impl From<wire::IpEndpoint> for GenericSocketAddr {
 impl From<GenericSocketAddr> for wire::IpEndpoint {
     fn from(sa: GenericSocketAddr) -> Self {
         match sa.0 {
-            no_std_net::SocketAddr::V4(v4) => wire::IpEndpoint::new(
+            no_std_net::SocketAddr::V4(v4) => Self::new(
                 wire::IpAddress::Ipv4(GenericIpv4Address(*v4.ip()).into()),
                 v4.port(),
             ),
-            no_std_net::SocketAddr::V6(_) => wire::IpEndpoint::new(
+            no_std_net::SocketAddr::V6(_) => Self::new(
                 wire::IpAddress::Ipv4(wire::Ipv4Address::UNSPECIFIED),
                 0,
             ),
@@ -200,7 +200,7 @@ impl From<GenericSocketAddr> for wire::IpEndpoint {
 
 impl From<no_std_net::SocketAddr> for GenericSocketAddr {
     fn from(ip: no_std_net::SocketAddr) -> Self {
-        GenericSocketAddr(ip)
+        Self(ip)
     }
 }
 
