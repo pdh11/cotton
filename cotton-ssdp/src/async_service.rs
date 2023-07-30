@@ -94,8 +94,6 @@ impl AsyncService {
 
         tokio::spawn(async move {
             loop {
-                println!("select");
-
                 tokio::select! {
                     _ = inner.multicast_socket.readable() => {
                         let mut buf = [0u8; 1500];
