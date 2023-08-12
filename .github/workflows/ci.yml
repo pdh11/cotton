@@ -55,6 +55,7 @@ jobs:
       - name: Generate test result and coverage report
         run: |
           cargo install grcov;
+          cargo test $CARGO_OPTIONS;
           zip -0 ccov.zip `find . \( -name "$PROJECT_NAME_UNDERSCORE*.gc*" \) -print`;
           grcov ccov.zip -s . -t lcov --llvm --ignore-not-existing --ignore "/*" --ignore "tests/*" -o lcov.info;
 #      - name: Upload test results
