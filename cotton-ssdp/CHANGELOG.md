@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+## [0.0.3] 2023-08-12
+
 ### Changed
 
 * Don't require "sockets" passed to Engine to be *both* Multicast and
