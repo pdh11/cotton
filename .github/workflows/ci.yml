@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# See https://github.com/BamPeers/rust-ci-github-actions-workflow
+
 jobs:
   build:
 
@@ -52,8 +54,7 @@ jobs:
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
       - name: Generate test result and coverage report
         run: |
-          cargo install cargo2junit grcov;
-          cargo test $CARGO_OPTIONS -- -Z unstable-options --format json | cargo2junit > results.xml;
+          cargo install grcov;
           zip -0 ccov.zip `find . \( -name "$PROJECT_NAME_UNDERSCORE*.gc*" \) -print`;
           grcov ccov.zip -s . -t lcov --llvm --ignore-not-existing --ignore "/*" --ignore "tests/*" -o lcov.info;
 #      - name: Upload test results
