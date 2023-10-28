@@ -23,7 +23,8 @@ So far:
    [![docs.rs](https://img.shields.io/docsrs/cotton-ssdp)](https://docs.rs/cotton-ssdp/latest/cotton_ssdp/): implementing
    SSDP, the Simple Service Discovery Protocol, a mechanism for
    discovering available resources (service) on a local network. Uses
-   cotton-netif, in order to do the Right Thing on multi-homed hosts.
+   cotton-netif, in order to do the Right Thing on multi-homed hosts
+   (but meaning that it is unlikely to work on Windows platforms).
 
 My long-term goals for this project as a whole:
 

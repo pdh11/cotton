@@ -31,5 +31,9 @@ for any type of device or resource that must be discoverable over
 a network, including in *ad hoc* settings which don't necessarily
 have expert network administrators close at hand.
 
+At present this crate requires the "nix" crate (except when used in
+no_std builds) and so is unlikely to work on Windows platforms. It is
+tested only on AMD64 and ARM64 Linux.
+
 Library documentation is [on
 docs.rs](https://docs.rs/cotton-ssdp/latest/cotton_ssdp/).
