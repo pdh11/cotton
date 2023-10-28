@@ -1,7 +1,5 @@
 use super::{Error, Syscall};
-use cotton_netif::InterfaceIndex;
 use std::net::{IpAddr, SocketAddr};
-use std::os::unix::io::AsRawFd;
 
 impl super::TargetedSend for tokio::net::UdpSocket {
     fn send_with<F>(
@@ -18,7 +16,7 @@ impl super::TargetedSend for tokio::net::UdpSocket {
         let actual_size = f(&mut buffer);
         self.try_io(tokio::io::Interest::WRITABLE, || {
             super::std::send_from(
-                self.as_raw_fd(),
+                self,
                 &buffer[0..actual_size],
                 to,
                 from,
@@ -34,39 +32,9 @@ impl super::TargetedReceive for tokio::net::UdpSocket {
         buffer: &mut [u8],
     ) -> Result<(usize, IpAddr, SocketAddr), Error> {
         self.try_io(tokio::io::Interest::READABLE, || {
-            super::std::receive_to(self.as_raw_fd(), buffer)
+            super::std::receive_to(self, buffer)
         })
         .map_err(|e| Error::Syscall(Syscall::Recvmsg, e))
-    }
-}
-
-impl super::Multicast for tokio::net::UdpSocket {
-    fn join_multicast_group(
-        &self,
-        address: &IpAddr,
-        interface: InterfaceIndex,
-    ) -> Result<(), Error> {
-        super::std::ipv4_multicast_operation(
-            self.as_raw_fd(),
-            libc::IP_ADD_MEMBERSHIP,
-            address,
-            interface,
-        )
-        .map_err(|e| Error::Syscall(Syscall::JoinMulticast, e))
-    }
-
-    fn leave_multicast_group(
-        &self,
-        address: &IpAddr,
-        interface: InterfaceIndex,
-    ) -> Result<(), Error> {
-        super::std::ipv4_multicast_operation(
-            self.as_raw_fd(),
-            libc::IP_DROP_MEMBERSHIP,
-            address,
-            interface,
-        )
-        .map_err(|e| Error::Syscall(Syscall::LeaveMulticast, e))
     }
 }
 
@@ -77,6 +45,8 @@ mod tests {
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::Ipv4PacketInfo;
     use std::net::Ipv4Addr;
+    use cotton_netif::InterfaceIndex;
+    use std::os::unix::io::AsRawFd;
 
     fn make_index(i: u32) -> InterfaceIndex {
         InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())

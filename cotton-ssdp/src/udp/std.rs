@@ -1,3 +1,4 @@
+use super::{Error, Syscall};
 use cotton_netif::InterfaceIndex;
 use nix::cmsg_space;
 use nix::sys::socket::setsockopt;
@@ -59,7 +60,7 @@ pub(crate) fn setup_socket(
 
 #[allow(clippy::cast_possible_truncation)] // socklen_t
 #[allow(clippy::cast_possible_wrap)] // ifindex
-pub(crate) fn ipv4_multicast_operation(
+fn ipv4_multicast_operation(
     fd: RawFd,
     op: libc::c_int,
     multicast_address: &IpAddr,
@@ -97,8 +98,38 @@ pub(crate) fn ipv4_multicast_operation(
     }
 }
 
-pub(crate) fn send_from(
-    fd: RawFd,
+impl<T: AsRawFd> super::Multicast for T {
+    fn join_multicast_group(
+        &self,
+        address: &IpAddr,
+        interface: InterfaceIndex,
+    ) -> Result<(), Error> {
+        super::std::ipv4_multicast_operation(
+            self.as_raw_fd(),
+            libc::IP_ADD_MEMBERSHIP,
+            address,
+            interface,
+        )
+        .map_err(|e| Error::Syscall(Syscall::JoinMulticast, e))
+    }
+
+    fn leave_multicast_group(
+        &self,
+        address: &IpAddr,
+        interface: InterfaceIndex,
+    ) -> Result<(), Error> {
+        super::std::ipv4_multicast_operation(
+            self.as_raw_fd(),
+            libc::IP_DROP_MEMBERSHIP,
+            address,
+            interface,
+        )
+        .map_err(|e| Error::Syscall(Syscall::LeaveMulticast, e))
+    }
+}
+
+pub(crate) fn send_from<T: AsRawFd>(
+    socket: &T,
     buffer: &[u8],
     to: &SocketAddr,
     from: &IpAddr,
@@ -119,7 +150,7 @@ pub(crate) fn send_from(
             SocketAddr::V6(ipv6) => SockaddrStorage::from(*ipv6),
         };
         let r = nix::sys::socket::sendmsg(
-            fd,
+            socket.as_raw_fd(),
             &iov,
             &[cmsg],
             MsgFlags::empty(),
@@ -189,14 +220,14 @@ fn receive_to_inner(
     Ok((bytes, rxon, SocketAddr::V4(wasfrom)))
 }
 
-pub(crate) fn receive_to(
-    fd: RawFd,
+pub(crate) fn receive_to<T: AsRawFd>(
+    socket: &T,
     buffer: &mut [u8],
 ) -> Result<(usize, IpAddr, SocketAddr), std::io::Error> {
     /* The inner function does most of the work, and is parameterised on
      * the recvmsg call purely for testing reasons.
      */
-    receive_to_inner(fd, buffer, receive_using_recvmsg)
+    receive_to_inner(socket.as_raw_fd(), buffer, receive_using_recvmsg)
 }
 
 #[cfg(test)]
@@ -206,6 +237,7 @@ mod tests {
     use nix::sys::socket::sockopt::Ipv4PacketInfo;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV6;
+    use std::os::unix::io::FromRawFd;
 
     fn my_err() -> ::std::io::Error {
         ::std::io::Error::from(::std::io::ErrorKind::Other)
@@ -359,14 +391,14 @@ mod tests {
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
-            tx.as_raw_fd(),
+            &tx,
             b"foo",
             &SocketAddr::new(localhost, rx_port),
             &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         )
         .is_ok());
         let mut buf = [0u8; 1500];
-        let r = receive_to(rx.as_raw_fd(), &mut buf);
+        let r = receive_to(&rx, &mut buf);
         let (n, wasto, wasfrom) = r.unwrap();
         assert!(n == 3);
         assert!(wasto == localhost);
@@ -385,14 +417,14 @@ mod tests {
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
-            tx.as_raw_fd(),
+            &tx,
             b"foo",
             &SocketAddr::new(ipv4, rx_port),
             &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         )
         .is_ok());
         let mut buf = [0u8; 1500];
-        let r = receive_to(rx.as_raw_fd(), &mut buf);
+        let r = receive_to(&rx, &mut buf);
         let (n, wasto, wasfrom) = r.unwrap();
         assert!(n == 3);
         assert!(wasto == ipv4);
@@ -411,14 +443,14 @@ mod tests {
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
-            tx.as_raw_fd(),
+            &tx,
             b"foo",
             &SocketAddr::new(localhost, rx_port),
             &ipv4,
         )
         .is_ok());
         let mut buf = [0u8; 1500];
-        let r = receive_to(rx.as_raw_fd(), &mut buf);
+        let r = receive_to(&rx, &mut buf);
         let (n, wasto, wasfrom) = r.unwrap();
         assert!(n == 3);
         assert!(wasto == localhost);
@@ -437,14 +469,14 @@ mod tests {
         setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
-            tx.as_raw_fd(),
+            &tx,
             b"foo",
             &SocketAddr::new(ipv4, rx_port),
             &ipv4,
         )
         .is_ok());
         let mut buf = [0u8; 1500];
-        let r = receive_to(rx.as_raw_fd(), &mut buf);
+        let r = receive_to(&rx, &mut buf);
         let (n, wasto, wasfrom) = r.unwrap();
         assert!(n == 3);
         assert!(wasto == ipv4);
@@ -457,7 +489,7 @@ mod tests {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         assert!(send_from(
-            tx.as_raw_fd(),
+            &tx,
             b"foo",
             &SocketAddr::new(localhost, 0),
             &IpAddr::V6(Ipv6Addr::LOCALHOST)
@@ -471,7 +503,7 @@ mod tests {
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         assert!(send_from(
-            tx.as_raw_fd(),
+            &tx,
             b"foo",
             &SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
             &localhost
@@ -482,8 +514,11 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn recvmsg_error_passed_on() {
-        let mut buf = [0u8; 1500];
-        assert!(receive_to(0 as RawFd, &mut buf).is_err());
+        unsafe {
+            let mut buf = [0u8; 1500];
+            let rx = std::net::UdpSocket::from_raw_fd(0 as RawFd);
+            assert!(receive_to(&rx, &mut buf).is_err());
+        }
     }
 
     #[test]
@@ -499,14 +534,14 @@ mod tests {
         //setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
-            tx.as_raw_fd(),
+            &tx,
             b"foo",
             &SocketAddr::new(localhost, rx_port),
             &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
         )
         .is_ok());
         let mut buf = [0u8; 1500];
-        let r = receive_to(rx.as_raw_fd(), &mut buf);
+        let r = receive_to(&rx, &mut buf);
         assert!(r.is_err());
     }
 
@@ -523,7 +558,7 @@ mod tests {
         tx.send_to(b"foo", SocketAddr::new(localhost, rx_port))
             .unwrap();
         let mut buf = [0u8; 1500];
-        let r = receive_to(rx.as_raw_fd(), &mut buf);
+        let r = receive_to(&rx, &mut buf);
         assert!(r.is_err());
     }
 
