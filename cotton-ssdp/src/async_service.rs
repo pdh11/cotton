@@ -120,7 +120,7 @@ impl AsyncService {
                             );
                         }
                     },
-                    _ = tokio::time::sleep(
+                    () = tokio::time::sleep(
                         inner.refresh_timer.lock().unwrap().next_refresh()
                     ) => {
                         inner.refresh_timer.lock().unwrap().update_refresh();

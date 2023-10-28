@@ -15,12 +15,7 @@ impl super::TargetedSend for mio::net::UdpSocket {
         let mut buffer = vec![0u8; size];
         let actual_size = f(&mut buffer);
         self.try_io(|| {
-            super::std::send_from(
-                self,
-                &buffer[0..actual_size],
-                to,
-                from,
-            )
+            super::std::send_from(self, &buffer[0..actual_size], to, from)
         })
         .map_err(|e| Error::Syscall(Syscall::Sendmsg, e))
     }
@@ -40,12 +35,11 @@ impl super::TargetedReceive for mio::net::UdpSocket {
 mod tests {
     use super::super::{Multicast, TargetedReceive, TargetedSend};
     use super::*;
+    use cotton_netif::InterfaceIndex;
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::Ipv4PacketInfo;
     use std::net::Ipv4Addr;
     use std::net::Ipv6Addr;
-    use cotton_netif::InterfaceIndex;
-    use std::os::unix::io::AsRawFd;
 
     fn make_index(i: u32) -> InterfaceIndex {
         InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())
@@ -60,7 +54,7 @@ mod tests {
         let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
-        setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
+        setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
 
         let tx = mio::net::UdpSocket::from_std(tx);

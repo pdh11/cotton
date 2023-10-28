@@ -40,7 +40,9 @@ fn target_match(search: &str, candidate: &str) -> bool {
 }
 
 fn rewrite_host(url: &str, ip: &IpAddr) -> String {
-    let Some(prefix) = url.find("://") else { return url.to_string(); };
+    let Some(prefix) = url.find("://") else {
+        return url.to_string();
+    };
 
     if let Some(slash) = url[prefix + 3..].find('/') {
         if let Some(colon) = url[prefix + 3..].find(':') {
@@ -127,9 +129,11 @@ impl<CB: Callback> Engine<CB> {
 
         // If anybody is doing an ssdp:all search, then we don't need to
         // do any of the other searches.
-        if self.active_searches.values().any(
-            |x| x.notification_type == "ssdp:all"
-        ) {
+        if self
+            .active_searches
+            .values()
+            .any(|x| x.notification_type == "ssdp:all")
+        {
             self.search_on_all("ssdp:all", socket);
         } else {
             for s in self.active_searches.values() {

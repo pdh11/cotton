@@ -428,6 +428,7 @@ mod tests {
     use neli::rtnl::Rtattr;
     use neli::ToBytes;
     use std::os::unix::io::FromRawFd;
+    use std::os::unix::io::AsRawFd;
 
     fn make_index(i: u32) -> InterfaceIndex {
         InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())
@@ -821,11 +822,12 @@ mod tests {
         .unwrap();
 
         let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
+                .unwrap()
         };
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &[1, 2, 3, 4, 5],
             &(),
             nix::sys::socket::MsgFlags::empty(),
@@ -850,7 +852,8 @@ mod tests {
         .unwrap();
 
         let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
+                .unwrap()
         };
 
         // First a duff message (no name)
@@ -880,7 +883,7 @@ mod tests {
         msg.to_bytes(&mut v).unwrap();
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &v.into_inner(),
             &(),
             nix::sys::socket::MsgFlags::empty(),
@@ -910,7 +913,7 @@ mod tests {
         msg.to_bytes(&mut v).unwrap();
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &v.into_inner(),
             &(),
             nix::sys::socket::MsgFlags::empty(),
@@ -935,7 +938,8 @@ mod tests {
         .unwrap();
 
         let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
+                .unwrap()
         };
 
         let mut buf = RtBuffer::new();
@@ -961,7 +965,7 @@ mod tests {
         msg.to_bytes(&mut v).unwrap();
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &v.into_inner(),
             &(),
             nix::sys::socket::MsgFlags::empty(),
@@ -988,11 +992,12 @@ mod tests {
         .unwrap();
 
         let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
+                .unwrap()
         };
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &[1, 2, 3, 4, 5],
             &(),
             nix::sys::socket::MsgFlags::empty(),
@@ -1017,7 +1022,8 @@ mod tests {
         .unwrap();
 
         let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
+                .unwrap()
         };
 
         // First a bogus message (no address, so it looks like a message
@@ -1046,7 +1052,7 @@ mod tests {
         msg.to_bytes(&mut v).unwrap();
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &v.into_inner(),
             &(),
             nix::sys::socket::MsgFlags::empty(),
@@ -1078,7 +1084,7 @@ mod tests {
         msg.to_bytes(&mut v).unwrap();
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &v.into_inner(),
             &(),
             nix::sys::socket::MsgFlags::empty(),
@@ -1103,7 +1109,8 @@ mod tests {
         .unwrap();
 
         let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd)).unwrap()
+            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
+                .unwrap()
         };
 
         let mut buf = RtBuffer::new();
@@ -1129,7 +1136,7 @@ mod tests {
         msg.to_bytes(&mut v).unwrap();
 
         nix::sys::socket::sendto(
-            infd,
+            infd.as_raw_fd(),
             &v.into_inner(),
             &(),
             nix::sys::socket::MsgFlags::empty(),

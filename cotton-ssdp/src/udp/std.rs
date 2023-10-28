@@ -54,7 +54,7 @@ pub(crate) fn setup_socket(
         socket2::Socket::set_nonblocking,
         socket2::Socket::set_reuse_address,
         |s, a| s.bind(&socket2::SockAddr::from(a)),
-        |s, b| setsockopt(s.as_raw_fd(), Ipv4PacketInfo, &b),
+        |s, b| setsockopt(s, Ipv4PacketInfo, &b),
     )
 }
 
@@ -179,10 +179,11 @@ fn receive_using_recvmsg(
         Some(&mut cmsgspace),
         MsgFlags::empty(),
     )?;
-    let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) = r.cmsgs().next() else {
+    let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) = r.cmsgs().next()
+    else {
         println!("receive: no pktinfo");
         return Err(std::io::ErrorKind::InvalidData.into());
-     };
+    };
     let rxon = Ipv4Addr::from(u32::from_be(pi.ipi_spec_dst.s_addr));
     Ok((r.bytes, IpAddr::V4(rxon), r.address))
 }
@@ -388,7 +389,7 @@ mod tests {
         let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
-        setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
+        setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
             &tx,
@@ -414,7 +415,7 @@ mod tests {
         let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
-        setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
+        setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
             &tx,
@@ -440,7 +441,7 @@ mod tests {
         let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
-        setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
+        setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
             &tx,
@@ -466,7 +467,7 @@ mod tests {
         let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
-        setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
+        setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
             &tx,
@@ -531,7 +532,7 @@ mod tests {
         let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
         // But! we forget to do the setsockopt:
-        //setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
+        //setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
             &tx,
@@ -553,7 +554,7 @@ mod tests {
         //let tx_port = tx.local_addr().unwrap().port();
         let rx = std::net::UdpSocket::bind("::0:0").unwrap();
         rx.set_nonblocking(true).unwrap();
-        //setsockopt(rx.as_raw_fd(), Ipv4PacketInfo, &true).unwrap();
+        //setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         tx.send_to(b"foo", SocketAddr::new(localhost, rx_port))
             .unwrap();
