@@ -8,7 +8,7 @@ use std::{
 
 use async_stream::stream;
 use futures_util::stream;
-use futures_util::Stream;
+use futures_util::stream::Stream;
 
 use neli::{
     consts::{
