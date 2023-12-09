@@ -427,8 +427,9 @@ mod tests {
     use futures_util::StreamExt;
     use neli::rtnl::Rtattr;
     use neli::ToBytes;
-    use std::os::unix::io::FromRawFd;
     use std::os::unix::io::AsRawFd;
+    use std::os::unix::io::FromRawFd;
+    use std::os::unix::io::IntoRawFd;
 
     fn make_index(i: u32) -> InterfaceIndex {
         InterfaceIndex(core::num::NonZeroU32::new(i).unwrap())
@@ -821,10 +822,14 @@ mod tests {
         )
         .unwrap();
 
-        let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
-                .unwrap()
-        };
+        let nlsocket = NlSocket::new({
+            let outfd = outfd.into_raw_fd();
+            unsafe {
+                // SAFETY: nlsocket becomes only owner of outfd
+                NlSocketHandle::from_raw_fd(outfd)
+            }
+        })
+        .unwrap();
 
         nix::sys::socket::sendto(
             infd.as_raw_fd(),
@@ -851,10 +856,14 @@ mod tests {
         )
         .unwrap();
 
-        let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
-                .unwrap()
-        };
+        let nlsocket = NlSocket::new({
+            let outfd = outfd.into_raw_fd();
+            unsafe {
+                // SAFETY: nlsocket becomes only owner of outfd
+                NlSocketHandle::from_raw_fd(outfd)
+            }
+        })
+        .unwrap();
 
         // First a duff message (no name)
         //
@@ -937,10 +946,14 @@ mod tests {
         )
         .unwrap();
 
-        let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
-                .unwrap()
-        };
+        let nlsocket = NlSocket::new({
+            let outfd = outfd.into_raw_fd();
+            unsafe {
+                // SAFETY: nlsocket becomes only owner of outfd
+                NlSocketHandle::from_raw_fd(outfd)
+            }
+        })
+        .unwrap();
 
         let mut buf = RtBuffer::new();
         buf.push(Rtattr::new(None, Ifla::Ifname, "eth1".to_string()).unwrap());
@@ -991,10 +1004,14 @@ mod tests {
         )
         .unwrap();
 
-        let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
-                .unwrap()
-        };
+        let nlsocket = NlSocket::new({
+            let outfd = outfd.into_raw_fd();
+            unsafe {
+                // SAFETY: nlsocket becomes only owner of outfd
+                NlSocketHandle::from_raw_fd(outfd)
+            }
+        })
+        .unwrap();
 
         nix::sys::socket::sendto(
             infd.as_raw_fd(),
@@ -1021,10 +1038,14 @@ mod tests {
         )
         .unwrap();
 
-        let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
-                .unwrap()
-        };
+        let nlsocket = NlSocket::new({
+            let outfd = outfd.into_raw_fd();
+            unsafe {
+                // SAFETY: nlsocket becomes only owner of outfd
+                NlSocketHandle::from_raw_fd(outfd)
+            }
+        })
+        .unwrap();
 
         // First a bogus message (no address, so it looks like a message
         // but fails translate_addr_message).
@@ -1108,10 +1129,14 @@ mod tests {
         )
         .unwrap();
 
-        let nlsocket = unsafe {
-            NlSocket::new(NlSocketHandle::from_raw_fd(outfd.as_raw_fd()))
-                .unwrap()
-        };
+        let nlsocket = NlSocket::new({
+            let outfd = outfd.into_raw_fd();
+            unsafe {
+                // SAFETY: nlsocket becomes only owner of outfd
+                NlSocketHandle::from_raw_fd(outfd)
+            }
+        })
+        .unwrap();
 
         let mut buf = RtBuffer::new();
         buf.push(Rtattr::new(None, Ifa::Address, 65535u32).unwrap());
