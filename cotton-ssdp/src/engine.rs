@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn target_match_ssdp_all() {
         assert!(target_match("ssdp:all", "upnp::rootdevice"));
-        assert!(!target_match("upnp::rootdevice", "ssdp:all"));
+        assert_eq!(false, target_match("upnp::rootdevice", "ssdp:all"));
     }
 
     #[test]
@@ -615,30 +615,39 @@ mod tests {
             "upnp::ContentDirectory:1",
             "upnp::ContentDirectory:2"
         ));
-        assert!(!target_match(
-            "upnp::ContentDirectory:2",
-            "upnp::ContentDirectory:1"
-        ));
+        assert_eq!(
+            false,
+            target_match(
+                "upnp::ContentDirectory:2",
+                "upnp::ContentDirectory:1"
+            )
+        );
 
         // Various noncanonical forms
-        assert!(!target_match(
-            "upnp::ContentDirectory",
-            "upnp::ContentDirectory:1"
-        ));
-        assert!(!target_match(
-            "upnp::ContentDirectory:1",
-            "upnp::ContentDirectory"
-        ));
-        assert!(!target_match("fnord", "upnp::ContentDirectory:1"));
-        assert!(!target_match("upnp::ContentDirectory:1", "fnord"));
-        assert!(!target_match(
-            "upnp::ContentDirectory:1",
-            "upnp::ContentDirectory:X"
-        ));
-        assert!(!target_match(
-            "upnp::ContentDirectory:X",
-            "upnp::ContentDirectory:1"
-        ));
+        assert_eq!(
+            false,
+            target_match("upnp::ContentDirectory", "upnp::ContentDirectory:1")
+        );
+        assert_eq!(
+            false,
+            target_match("upnp::ContentDirectory:1", "upnp::ContentDirectory")
+        );
+        assert_eq!(false, target_match("fnord", "upnp::ContentDirectory:1"));
+        assert_eq!(false, target_match("upnp::ContentDirectory:1", "fnord"));
+        assert_eq!(
+            false,
+            target_match(
+                "upnp::ContentDirectory:1",
+                "upnp::ContentDirectory:X"
+            )
+        );
+        assert_eq!(
+            false,
+            target_match(
+                "upnp::ContentDirectory:X",
+                "upnp::ContentDirectory:1"
+            )
+        );
     }
 
     #[derive(Default)]
@@ -1140,7 +1149,7 @@ mod tests {
         let n = FakeSocket::build_notify("upnp::Renderer:3");
         f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
-        assert!(!f.c.contains_byebye("upnp::Renderer:3"));
+        assert_eq!(false, f.c.contains_byebye("upnp::Renderer:3"));
         assert!(f.c.contains_notify("upnp::Renderer:3"));
     }
 
@@ -1358,7 +1367,7 @@ mod tests {
         let n = FakeSocket::build_byebye("upnp::Renderer:3");
         f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
 
-        assert!(!f.c.contains_notify("upnp::Renderer:3"));
+        assert_eq!(false, f.c.contains_notify("upnp::Renderer:3"));
         assert!(f.c.contains_byebye("upnp::Renderer:3"));
     }
 
