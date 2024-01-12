@@ -72,7 +72,7 @@ for name in get_interfaces()?
 
 # Errors
 
-Returns Err if the underlying getifaddrs() system call fails, see
+Returns Err if the underlying `getifaddrs()` system call fails, see
 getifaddrs(3).
 
  */
