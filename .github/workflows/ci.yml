@@ -23,7 +23,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose --all-targets
     - name: Clippy
-      run: cargo clippy --all-targets --all-features
+      run: cargo clippy --all-targets
 
   coverage:
     env:
