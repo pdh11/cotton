@@ -2,6 +2,11 @@
 members = [
     "cotton-netif",
     "cotton-ssdp",
+    "systemtests",
+]
+
+exclude = [
+    "cross",
 ]
 
 resolver = "2"
