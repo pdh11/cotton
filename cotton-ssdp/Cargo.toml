@@ -29,7 +29,7 @@ socket2 = { version = "0.5", default_features = false, optional = true }
 rand = { version = "0.8", default_features = false, features = ["std", "std_rng"], optional = true }
 mock_instant = { version = "0.3", default_features = false, optional = true }
 mio = { version = "0.8.4", default_features = false, features = ["os-poll", "net"], optional = true }
-smoltcp = { version = "0.9", default-features = false, features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], optional = true }
+smoltcp = { version = "0.10", default-features = false, features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], optional = true }
 
 [features]
 default = ["std", "async", "sync", "smoltcp"]

@@ -177,13 +177,11 @@ impl<'a> Stack<'a> {
         device: &mut D,
         mac_address: &[u8; 6],
         sockets: &'a mut [smoltcp::iface::SocketStorage<'a>],
+        now: smoltcp::time::Instant,
     ) -> Stack<'a> {
-        let mut config = smoltcp::iface::Config::new();
+        let mut config = smoltcp::iface::Config::new(smoltcp::wire::EthernetAddress::from_bytes(mac_address).into());
         config.random_seed = unique_id(b"smoltcp-config-random");
-        config.hardware_addr = Some(
-            smoltcp::wire::EthernetAddress::from_bytes(mac_address).into(),
-        );
-        let interface = smoltcp::iface::Interface::new(config, device);
+        let interface = smoltcp::iface::Interface::new(config, device, now);
         let mut socket_set = smoltcp::iface::SocketSet::new(sockets);
 
         let mut dhcp_socket = smoltcp::socket::dhcpv4::Socket::new();

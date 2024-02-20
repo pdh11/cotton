@@ -116,6 +116,7 @@ mod app {
             &mut &mut device.dma,
             &mac_address,
             &mut cx.local.storage.sockets[..],
+            now_fn(),
         );
 
         let udp_rx_buffer = udp::PacketBuffer::new(
@@ -243,7 +244,7 @@ mod app {
                         &buffer[0..size],
                         &ws,
                         GenericIpAddress::from(wasto).into(),
-                        GenericSocketAddr::from(sender).into(),
+                        GenericSocketAddr::from(sender.endpoint).into(),
                     );
                 }
             }

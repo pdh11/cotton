@@ -81,6 +81,7 @@ mod app {
             &mut &mut device.dma,
             &mac_address,
             &mut cx.local.storage.sockets[..],
+            now_fn(),
         );
         stack.poll(now_fn(), &mut &mut device.dma);
 

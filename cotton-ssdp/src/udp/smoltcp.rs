@@ -287,9 +287,10 @@ impl<'a, 'b> super::TargetedSend for WrappedSocket<'a, 'b> {
     where
         F: FnOnce(&mut [u8]) -> usize,
     {
+        let ep: wire::IpEndpoint = GenericSocketAddr::from(*to).into();
         self.0
             .borrow_mut()
-            .send_with(size, GenericSocketAddr::from(*to).into(), f)
+            .send_with(size, ep, f)
             .map_err(Error::SmoltcpUdpSend)?;
         Ok(())
     }
@@ -392,13 +393,16 @@ mod tests {
     fn join_multicast_succeeds() {
         let mut device =
             smoltcp::phy::Loopback::new(smoltcp::phy::Medium::Ethernet);
-        let mut config = smoltcp::iface::Config::new();
         let mac_address = [0, 1, 2, 3, 4, 5];
-        config.hardware_addr = Some(
+        let config = smoltcp::iface::Config::new(
             smoltcp::wire::EthernetAddress::from_bytes(&mac_address[..])
                 .into(),
         );
-        let mut iface = smoltcp::iface::Interface::new(config, &mut device);
+        let mut iface = smoltcp::iface::Interface::new(
+            config,
+            &mut device,
+            smoltcp::time::Instant::ZERO,
+        );
         let wi = WrappedInterface::new(
             &mut iface,
             &mut device,
@@ -421,13 +425,16 @@ mod tests {
     fn join_multicast_fails() {
         let mut device =
             smoltcp::phy::Loopback::new(smoltcp::phy::Medium::Ethernet);
-        let mut config = smoltcp::iface::Config::new();
         let mac_address = [0, 1, 2, 3, 4, 5];
-        config.hardware_addr = Some(
+        let config = smoltcp::iface::Config::new(
             smoltcp::wire::EthernetAddress::from_bytes(&mac_address[..])
                 .into(),
         );
-        let mut iface = smoltcp::iface::Interface::new(config, &mut device);
+        let mut iface = smoltcp::iface::Interface::new(
+            config,
+            &mut device,
+            smoltcp::time::Instant::ZERO,
+        );
         let wi = WrappedInterface::new(
             &mut iface,
             &mut device,
@@ -466,13 +473,16 @@ mod tests {
     fn leave_multicast_fails() {
         let mut device =
             smoltcp::phy::Loopback::new(smoltcp::phy::Medium::Ethernet);
-        let mut config = smoltcp::iface::Config::new();
         let mac_address = [0, 1, 2, 3, 4, 5];
-        config.hardware_addr = Some(
+        let config = smoltcp::iface::Config::new(
             smoltcp::wire::EthernetAddress::from_bytes(&mac_address[..])
                 .into(),
         );
-        let mut iface = smoltcp::iface::Interface::new(config, &mut device);
+        let mut iface = smoltcp::iface::Interface::new(
+            config,
+            &mut device,
+            smoltcp::time::Instant::ZERO,
+        );
         iface.update_ip_addrs(|a| {
             a.push(smoltcp::wire::IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
                 smoltcp::wire::Ipv4Address::new(10, 0, 0, 1),
@@ -508,13 +518,16 @@ mod tests {
     fn send_succeeds() {
         let mut device =
             smoltcp::phy::Loopback::new(smoltcp::phy::Medium::Ethernet);
-        let mut config = smoltcp::iface::Config::new();
         let mac_address = [0, 1, 2, 3, 4, 5];
-        config.hardware_addr = Some(
+        let config = smoltcp::iface::Config::new(
             smoltcp::wire::EthernetAddress::from_bytes(&mac_address[..])
                 .into(),
         );
-        let mut iface = smoltcp::iface::Interface::new(config, &mut device);
+        let mut iface = smoltcp::iface::Interface::new(
+            config,
+            &mut device,
+            smoltcp::time::Instant::ZERO,
+        );
         iface.update_ip_addrs(|a| {
             a.push(smoltcp::wire::IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
                 smoltcp::wire::Ipv4Address::new(10, 0, 0, 1),
@@ -559,13 +572,16 @@ mod tests {
     fn send_fails() {
         let mut device =
             smoltcp::phy::Loopback::new(smoltcp::phy::Medium::Ethernet);
-        let mut config = smoltcp::iface::Config::new();
         let mac_address = [0, 1, 2, 3, 4, 5];
-        config.hardware_addr = Some(
+        let config = smoltcp::iface::Config::new(
             smoltcp::wire::EthernetAddress::from_bytes(&mac_address[..])
                 .into(),
         );
-        let mut iface = smoltcp::iface::Interface::new(config, &mut device);
+        let mut iface = smoltcp::iface::Interface::new(
+            config,
+            &mut device,
+            smoltcp::time::Instant::ZERO,
+        );
         iface.update_ip_addrs(|a| {
             a.push(smoltcp::wire::IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
                 smoltcp::wire::Ipv4Address::new(10, 0, 0, 1),
