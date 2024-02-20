@@ -1,7 +1,8 @@
+use crate::device_test::{device_test, DeviceTest};
+use crate::ssdp_test::ssdp_test;
 use serial_test::*;
 use std::panic;
 use std::time::Duration;
-use systemtests::{device_test, ssdp_test, DeviceTest};
 
 fn nucleo_test<F: FnOnce(DeviceTest) -> () + panic::UnwindSafe>(
     firmware: &str,

@@ -92,12 +92,12 @@ impl From<wire::IpAddress> for GenericIpAddress {
         // we can't tell
         #[allow(unreachable_patterns)]
         match ip {
-            wire::IpAddress::Ipv4(v4) => Self(
-                no_std_net::IpAddr::V4(no_std_net::Ipv4Addr::from(v4.0)),
-            ),
-            _ => Self(no_std_net::IpAddr::V4(
-                no_std_net::Ipv4Addr::UNSPECIFIED,
-            )),
+            wire::IpAddress::Ipv4(v4) => {
+                Self(no_std_net::IpAddr::V4(no_std_net::Ipv4Addr::from(v4.0)))
+            }
+            _ => {
+                Self(no_std_net::IpAddr::V4(no_std_net::Ipv4Addr::UNSPECIFIED))
+            }
         }
     }
 }
@@ -167,12 +167,12 @@ impl From<wire::IpEndpoint> for GenericSocketAddr {
         // we can't tell
         #[allow(unreachable_patterns)]
         match ep.addr {
-            wire::IpAddress::Ipv4(v4) => Self(
-                no_std_net::SocketAddr::V4(no_std_net::SocketAddrV4::new(
+            wire::IpAddress::Ipv4(v4) => Self(no_std_net::SocketAddr::V4(
+                no_std_net::SocketAddrV4::new(
                     GenericIpv4Address::from(v4).into(),
                     ep.port,
-                )),
-            ),
+                ),
+            )),
             _ => Self(no_std_net::SocketAddr::V4(
                 no_std_net::SocketAddrV4::new(
                     no_std_net::Ipv4Addr::UNSPECIFIED,
