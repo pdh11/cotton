@@ -16,7 +16,7 @@ publish = false
 [package.metadata.cargo-all-features]
 skip_feature_sets = ["arm"]
 
-[dependencies]
+[dev-dependencies]
 cotton-ssdp = { path = "../cotton-ssdp" }
 serial_test = { version = "0.6" }
 assertables = { version = "7" }
