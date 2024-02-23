@@ -1,5 +1,6 @@
 extern crate alloc;
 use alloc::collections::BTreeMap;
+#[cfg(not(feature = "std"))]
 use alloc::string::String;
 use core::fmt::Write;
 

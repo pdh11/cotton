@@ -62,6 +62,7 @@
 #![cfg_attr(nightly, doc(cfg_hide(doc)))]
 
 extern crate alloc;
+#[cfg(not(feature = "std"))]
 use alloc::string::String;
 
 /// Incoming SSDP notification, obtained from [`Service::subscribe`]

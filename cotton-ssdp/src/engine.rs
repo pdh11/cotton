@@ -3,9 +3,8 @@ use crate::message::Message;
 use crate::udp;
 use crate::{Advertisement, Notification};
 use alloc::collections::BTreeMap;
-use alloc::string::String;
-use alloc::string::ToString;
-use alloc::vec::Vec;
+#[cfg(not(feature = "std"))]
+use alloc::{string::String, string::ToString, vec::Vec};
 use cotton_netif::{InterfaceIndex, NetworkEvent};
 use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use slotmap::SlotMap;
