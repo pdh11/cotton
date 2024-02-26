@@ -11,15 +11,15 @@ use stm32f7xx_hal as _;
 #[rtic::app(device = stm32_eth::stm32, dispatchers = [SPI1])]
 mod app {
     use super::NetworkStorage;
-    use cotton_stm32f746_nucleo::common::*;
+    use cotton_stm32f746_nucleo::common;
     use fugit::ExtU64;
     use stm32_eth::dma::EthernetDMA;
     use systick_monotonic::Systick;
 
     #[local]
     struct Local {
-        device: Stm32Ethernet,
-        stack: Stack<'static>,
+        device: common::Stm32Ethernet,
+        stack: common::Stack<'static>,
         nvic: stm32_eth::stm32::NVIC,
     }
 
@@ -38,30 +38,12 @@ mod app {
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
         let core = cx.core;
-
-        let stm32_eth::stm32::Peripherals {
-            GPIOA,
-            GPIOB,
-            GPIOC,
-            GPIOG,
-            ETHERNET_DMA,
-            ETHERNET_MAC,
-            ETHERNET_MMC,
-            RCC,
-            ..
-        } = cx.device;
-
-        let clocks = setup_clocks(RCC);
+        let (ethernet_peripherals, rcc) = common::split_peripherals(cx.device);
+        let clocks = common::setup_clocks(rcc);
         let mono = Systick::new(core.SYST, clocks.hclk().raw());
 
-        let mut device = Stm32Ethernet::new(
-            GPIOA,
-            GPIOB,
-            GPIOC,
-            GPIOG,
-            ETHERNET_DMA,
-            ETHERNET_MAC,
-            ETHERNET_MMC,
+        let mut device = common::Stm32Ethernet::new(
+            ethernet_peripherals,
             clocks,
             &mut cx.local.storage.rx_ring,
             &mut cx.local.storage.tx_ring,
@@ -74,10 +56,10 @@ mod app {
 
         defmt::println!("Link up.");
 
-        let mac_address = mac_address();
+        let mac_address = common::mac_address();
         // NB stm32-eth implements smoltcp::Device not for
         // EthernetDMA, but for "&mut EthernetDMA"
-        let mut stack = Stack::new(
+        let mut stack = common::Stack::new(
             &mut &mut device.dma,
             &mac_address,
             &mut cx.local.storage.sockets[..],

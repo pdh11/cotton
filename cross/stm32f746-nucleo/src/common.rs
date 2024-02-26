@@ -74,6 +74,55 @@ type MdioPa2 =
 type MdcPc1 =
     hal::gpio::Pin<'C', 1, hal::gpio::Alternate<11, hal::gpio::PushPull>>;
 
+/// The STM32 peripherals needed for Ethernet
+///
+/// The Ethernet itself, and the GPIO blocks whose pinmux needs setting.
+pub struct Stm32EthernetPeripherals {
+    gpioa: hal::pac::GPIOA,
+    gpiob: hal::pac::GPIOB,
+    gpioc: hal::pac::GPIOC,
+    gpiog: hal::pac::GPIOG,
+    ethernet_dma: hal::pac::ETHERNET_DMA,
+    ethernet_mac: hal::pac::ETHERNET_MAC,
+    ethernet_mmc: hal::pac::ETHERNET_MMC,
+}
+
+/// Split off the STM32 peripherals Ethernet needs
+///
+/// This is needed because everything passes the peripherals around by
+/// value, i.e. taking ownership.
+///
+/// This plan won't suffice if any other part of the application needs
+/// to share these peripherals (e.g. GPIOA), but none of our tests do so.
+pub fn split_peripherals(
+    device: stm32_eth::stm32::Peripherals,
+) -> (Stm32EthernetPeripherals, hal::pac::RCC) {
+    let stm32_eth::stm32::Peripherals {
+        GPIOA,
+        GPIOB,
+        GPIOC,
+        GPIOG,
+        ETHERNET_DMA,
+        ETHERNET_MAC,
+        ETHERNET_MMC,
+        RCC,
+        ..
+    } = device;
+
+    (
+        Stm32EthernetPeripherals {
+            gpioa: GPIOA,
+            gpiob: GPIOB,
+            gpioc: GPIOC,
+            gpiog: GPIOG,
+            ethernet_dma: ETHERNET_DMA,
+            ethernet_mac: ETHERNET_MAC,
+            ethernet_mmc: ETHERNET_MMC,
+        },
+        RCC,
+    )
+}
+
 /// Encapsulate the stm32-eth Ethernet and PHY drivers
 pub struct Stm32Ethernet {
     /// The actual driver struct (from `stm32-eth` crate)
@@ -86,26 +135,23 @@ pub struct Stm32Ethernet {
 
 impl Stm32Ethernet {
     /// Construct an STM32 Ethernet (and PHY) driver from raw peripherals
-    #[allow(clippy::too_many_arguments, clippy::similar_names)]
     pub fn new(
-        gpioa: hal::pac::GPIOA,
-        gpiob: hal::pac::GPIOB,
-        gpioc: hal::pac::GPIOC,
-        gpiog: hal::pac::GPIOG,
-        dma: hal::pac::ETHERNET_DMA,
-        mac: hal::pac::ETHERNET_MAC,
-        mmc: hal::pac::ETHERNET_MMC,
+        peripherals: Stm32EthernetPeripherals,
         clocks: Clocks,
         rx_ring: &'static mut [stm32_eth::dma::RxRingEntry; 2],
         tx_ring: &'static mut [stm32_eth::dma::TxRingEntry; 2],
     ) -> Self {
-        let gpioa = gpioa.split();
-        let gpiob = gpiob.split();
-        let gpioc = gpioc.split();
-        let gpiog = gpiog.split();
+        let gpioa = peripherals.gpioa.split();
+        let gpiob = peripherals.gpiob.split();
+        let gpioc = peripherals.gpioc.split();
+        let gpiog = peripherals.gpiog.split();
 
         let stm32_eth::Parts { dma, mac } = stm32_eth::new_with_mii(
-            stm32_eth::PartsIn { mac, mmc, dma },
+            stm32_eth::PartsIn {
+                mac: peripherals.ethernet_mac,
+                mmc: peripherals.ethernet_mmc,
+                dma: peripherals.ethernet_dma,
+            },
             rx_ring,
             tx_ring,
             clocks,
@@ -179,7 +225,9 @@ impl<'a> Stack<'a> {
         sockets: &'a mut [smoltcp::iface::SocketStorage<'a>],
         now: smoltcp::time::Instant,
     ) -> Stack<'a> {
-        let mut config = smoltcp::iface::Config::new(smoltcp::wire::EthernetAddress::from_bytes(mac_address).into());
+        let mut config = smoltcp::iface::Config::new(
+            smoltcp::wire::EthernetAddress::from_bytes(mac_address).into(),
+        );
         config.random_seed = unique_id(b"smoltcp-config-random");
         let interface = smoltcp::iface::Interface::new(config, device, now);
         let mut socket_set = smoltcp::iface::SocketSet::new(sockets);
