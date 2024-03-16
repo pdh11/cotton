@@ -17,7 +17,7 @@ fn main() {
         let child = Command::new("cargo")
             .arg("build")
             .arg("-vv")
-            .arg("--all-targets")
+            .arg("--bins")
             .arg("--target")
             .arg("thumbv7em-none-eabi")
             .current_dir("../cross/stm32f746-nucleo")

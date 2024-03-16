@@ -29,12 +29,14 @@ socket2 = { version = "0.5", default_features = false, optional = true }
 rand = { version = "0.8", default_features = false, features = ["std", "std_rng"], optional = true }
 mock_instant = { version = "0.3", default_features = false, optional = true }
 mio = { version = "0.8.4", default_features = false, features = ["os-poll", "net"], optional = true }
+smoltcp = { version = "0.10", default-features = false, features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], optional = true }
 
 [features]
-default = ["std", "async", "sync"]
-std = ["cotton-netif/sync", "no-std-net/std", "dep:libc", "dep:nix", "dep:socket2", "dep:mock_instant", "dep:rand", "dep:uuid"]
+default = ["std", "async", "sync", "smoltcp"]
+std = ["cotton-netif/sync", "no-std-net/std", "dep:libc", "dep:nix", "dep:socket2", "dep:mock_instant", "dep:rand", "dep:uuid", "smoltcp/alloc"]
 sync = ["std", "cotton-netif/sync", "dep:mio"]
 async = ["std", "cotton-netif/async", "dep:futures", "dep:futures-util", "dep:tokio", "dep:tokio-stream"]
+smoltcp = ["dep:smoltcp"]
 
 [[test]]
 name = "async_service"

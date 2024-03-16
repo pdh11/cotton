@@ -8,7 +8,6 @@ categories = ["network-programming"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
-autotests = false
 publish = false
 
 # We don't want cargo test-all-features to require the existence of
@@ -17,15 +16,14 @@ publish = false
 [package.metadata.cargo-all-features]
 skip_feature_sets = ["arm"]
 
-[dependencies]
-serial_test = { version = "0.6" }
+[dev-dependencies]
+cotton-ssdp = { path = "../cotton-ssdp" }
+serial_test = { version = "1" }
 assertables = { version = "7" }
+nonblock = { version = "0.2" }
+mio = { version = "0.8", default_features = false, features = ["os-poll", "net"] }
+uuid = { version = "1.3", default_features = false, features = ["v4"] }
 
 [features]
 arm = []
 stm32f746-nucleo = ["arm"]
-
-[[test]]
-name = "stm32f746-nucleo"
-path = "tests/stm32f746-nucleo.rs"
-required-features = ["stm32f746-nucleo"]
