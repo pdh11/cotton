@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+* Flags is now a plain struct, not a "bitfield!"
+
 ## [0.0.4] 2023-04-23
 
 ### Changed

@@ -31,36 +31,59 @@
 
 extern crate alloc;
 
-use bitflags::bitflags;
+use core::ops::{BitOr, BitOrAssign};
 
 /** Kernel network interface index (1-based)
  */
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InterfaceIndex(pub core::num::NonZeroU32);
 
-bitflags! {
-    /// Flags describing a network interface's features and state
-    ///
-    /// Corresponds to Linux's SIOCGIFFLAGS
-    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-    pub struct Flags: u32 {
-        #[doc = "Interface is enabled"]
-        const UP = 0x1;
+/// Flags describing a network interface's features and state
+///
+/// Corresponds to Linux's SIOCGIFFLAGS
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Flags(u32);
 
-        #[doc = "Interface is broadcast-capable"]
-        const BROADCAST = 0x2;
+impl Flags {
+    #[doc = "Interface is enabled"]
+    pub const UP: Self = Self(0x1);
 
-        #[doc = "Interface is loopback-only"]
-        const LOOPBACK = 0x4;
+    #[doc = "Interface is broadcast-capable"]
+    pub const BROADCAST: Self = Self(0x2);
 
-        #[doc = "Interface is point-to-point (e.g. PPP)"]
-        const POINTTOPOINT = 0x8; // not preserving Posix misspelling
+    #[doc = "Interface is loopback-only"]
+    pub const LOOPBACK: Self = Self(0x4);
 
-        #[doc = "Interface is operational"]
-        const RUNNING = 0x40;
+    #[doc = "Interface is point-to-point (e.g. PPP) -- not preserving Posix misspelling"]
+    pub const POINTTOPOINT: Self = Self(0x8);
 
-        #[doc = "Interface is multicast-capable"]
-        const MULTICAST = 0x1000;
+    #[doc = "Interface is operational"]
+    pub const RUNNING: Self = Self(0x40);
+
+    #[doc = "Interface is multicast-capable"]
+    pub const MULTICAST: Self = Self(0x1000);
+
+    #[doc = "An empty set of flags"]
+    pub fn empty() -> Self {
+        Self(0)
+    }
+
+    #[doc = "Check whether a subset of flags are set"]
+    pub fn contains(&self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+}
+
+impl BitOr for Flags {
+    type Output = Self;
+    fn bitor(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl BitOrAssign for Flags {
+    fn bitor_assign(&mut self, other: Self) {
+        self.0 |= other.0;
     }
 }
 
@@ -217,6 +240,6 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_flags_debug() {
         let s = format!("{:?}", Flags::MULTICAST);
-        assert_eq!(s, "Flags(MULTICAST)");
+        assert_eq!(s, "Flags(4096)");
     }
 }
