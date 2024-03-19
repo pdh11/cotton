@@ -113,3 +113,10 @@
       path: /boot/firmware/config.txt
       regexp: '^dtparam=sd_poll_once'
       line: 'dtparam=sd_poll_once'
+  - name: mark wifi optional
+    copy:
+      dest: /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf
+      content: |
+        [Service]
+        ExecStart=
+        ExecStart=/lib/systemd/systemd-networkd-wait-online --any
