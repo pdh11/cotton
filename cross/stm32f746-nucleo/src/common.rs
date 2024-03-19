@@ -233,12 +233,12 @@ impl<'a> Stack<'a> {
         let mut socket_set = smoltcp::iface::SocketSet::new(sockets);
 
         let mut dhcp_socket = smoltcp::socket::dhcpv4::Socket::new();
-        dhcp_socket.set_retry_config(smoltcp::socket::dhcpv4::RetryConfig {
-            discover_timeout: smoltcp::time::Duration::from_secs(2),
-            initial_request_timeout: smoltcp::time::Duration::from_millis(500),
-            request_retries: 10,
-            min_renew_timeout: smoltcp::time::Duration::from_secs(864_000),
-        });
+        let mut retry_config = smoltcp::socket::dhcpv4::RetryConfig::default();
+        retry_config.discover_timeout = smoltcp::time::Duration::from_secs(2);
+        retry_config.initial_request_timeout =
+            smoltcp::time::Duration::from_millis(500);
+        retry_config.request_retries = 10;
+        dhcp_socket.set_retry_config(retry_config);
         let dhcp_handle = socket_set.add(dhcp_socket);
 
         Stack {
