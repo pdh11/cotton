@@ -31,8 +31,8 @@ harness = false
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default_features = false, features = ["smoltcp"] }
 cotton-netif = { path = "../../cotton-netif", default_features = false }
-smoltcp = { version = "0.10", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], default-features = false }
-stm32-eth = { version = "0.5.2", features = ["defmt", "stm32f746", "smoltcp-phy"], default-features = false }
+smoltcp = { version = "0.11", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], default-features = false }
+stm32-eth = { version = "0.6", features = ["defmt", "stm32f746", "smoltcp-phy"], default-features = false }
 ieee802_3_miim = "0.8"
 stm32f7xx-hal = { version = "0.7.0" }
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"]}

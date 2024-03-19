@@ -128,9 +128,11 @@ impl<CB: Callback> Engine<CB> {
 
         // If anybody is doing an ssdp:all search, then we don't need to
         // do any of the other searches.
-        if self.active_searches.values().any(
-            |x| x.notification_type == "ssdp:all"
-        ) {
+        if self
+            .active_searches
+            .values()
+            .any(|x| x.notification_type == "ssdp:all")
+        {
             self.search_on_all("ssdp:all", socket);
         } else {
             for s in self.active_searches.values() {
