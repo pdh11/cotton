@@ -80,7 +80,7 @@
       validate: /usr/sbin/sshd -t -f %s
 
 - name: laminar user
-  hosts: all
+  hosts: testrunners
   become: yes
   tasks:
   - name: create laminar group
@@ -113,7 +113,7 @@
         SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", GROUP="laminar", MODE="0660"
 
 - name: rust infrastructure
-  hosts: all
+  hosts: testrunners
   become: yes
   become_user: laminar
   vars:
@@ -121,7 +121,7 @@
     ansible_shell_allow_world_readable_temp: true
   tasks:
   - name: check if cargo is installed
-    shell: stat /home/laminar/.cargo/bin/cargo
+    shell: test -f /home/laminar/.cargo/bin/cargo
     register: cargo_exists
     ignore_errors: yes
   - name: Download Installer
@@ -142,7 +142,7 @@
     command: /home/laminar/.cargo/bin/cargo install probe-rs --features cli creates=/home/laminar/.cargo/bin/probe-rs
 
 - name: pi hardware setup
-  hosts: all
+  hosts: raspberrypis
   become: yes
   tasks:
   - name: disable SD polling
@@ -157,3 +157,57 @@
         [Service]
         ExecStart=
         ExecStart=/lib/systemd/systemd-networkd-wait-online --any
+
+- name: test runner setup
+  hosts: testrunners
+  become: yes
+  tasks:
+  - name: rename eth1
+    copy:
+      # The "11" means it comes after the 10-raspi rule that sets eth0,
+      # but before the 73-usb rule that creates the enxXXXXXXXXXXXX name
+      dest: /etc/systemd/network/11-eth1.link
+      content: |
+        [Match]
+        MACAddress={{ eth1_address }}
+        [Link]
+        Name=eth1
+  - name: set static IP for eth1
+    copy:
+      dest: /etc/netplan/99-local.yaml
+      content: |
+        network:
+          version: 2
+          ethernets:
+            eth1:
+              addresses:
+                - 192.168.3.1/24
+    register: configured_ip
+  - name: restart networking
+    command: netplan apply
+    when: configured_ip is changed
+  - name: set dhcpd interface
+    copy:
+      dest: /etc/default/isc-dhcp-server
+      content: |
+        INTERFACESv4="eth1"
+  - name: install dhcpd
+    apt:
+      pkg:
+      - isc-dhcp-server
+  - name: configure dhcpd
+    copy:
+      dest: /etc/dhcp/dhcpd.conf
+      content: |
+        default-lease-time 86400;
+        max-lease-time 864000;
+        subnet 192.168.3.0 netmask 255.255.255.0 {
+          range 192.168.3.100 192.168.3.254;
+          option routers 192.168.3.1;
+        }
+    register: configured_dhcpd
+  - name: restart dhcpd
+    service:
+      name: isc-dhcp-server
+      state: restarted
+    when: configured_dhcpd is changed

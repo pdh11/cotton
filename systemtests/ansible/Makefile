@@ -1,2 +1,2 @@
 all:
-	ansible-playbook -i scotch, -b -K main.yml
+	ansible-playbook -i inventory-scotch.yml -b -K main.yml

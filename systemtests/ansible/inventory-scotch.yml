@@ -1,0 +1,8 @@
+testrunners:
+  hosts:
+    scotch:
+
+raspberrypis:
+  hosts:
+    scotch:
+      eth1_address: A0:CE:C8:81:A4:43
