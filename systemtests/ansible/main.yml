@@ -8,6 +8,8 @@
       pkg:
       - emacs
       - yaml-mode
+      - pkg-config
+      - libudev-dev
 
 - name: sshd lockdown
   hosts: all
@@ -88,9 +90,10 @@
   - name: create laminar user
     ansible.builtin.user:
       name: 'laminar'
-      password: '!'
+      password: '*'
       create_home: true
       group: 'laminar'
+      groups: ssh
       shell: '/bin/bash'
   - name: 'create ~laminar/.ssh'
     file:
@@ -103,8 +106,42 @@
     authorized_key:
       user: laminar
       key: "{{ lookup('file', 'laminar-ssh.pub') }}"
+  - name: give laminar permission over ST-Links
+    copy:
+      dest: /etc/udev/rules.d/99-laminar.rules
+      content: |
+        SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", GROUP="laminar", MODE="0660"
 
-- name: pi setup
+- name: rust infrastructure
+  hosts: all
+  become: yes
+  become_user: laminar
+  vars:
+    ansible_common_remote_group: ssh
+    ansible_shell_allow_world_readable_temp: true
+  tasks:
+  - name: check if cargo is installed
+    shell: stat /home/laminar/.cargo/bin/cargo
+    register: cargo_exists
+    ignore_errors: yes
+  - name: Download Installer
+    when: cargo_exists is failed
+    get_url:
+      url: https://sh.rustup.rs
+      dest: /tmp/sh.rustup.rs
+      mode: '0755'
+      force: 'yes'
+    tags:
+      - rust
+  - name: install rust/cargo
+    when: cargo_exists is failed
+    shell: /tmp/sh.rustup.rs -y
+    tags:
+      - rust
+  - name: install probe-rs
+    command: /home/laminar/.cargo/bin/cargo install probe-rs --features cli creates=/home/laminar/.cargo/bin/probe-rs
+
+- name: pi hardware setup
   hosts: all
   become: yes
   tasks:
