@@ -25,9 +25,12 @@ impl DeviceTest {
         environment_variable: &str,
         firmware: &str,
     ) -> (Child, Self) {
-        let elf = Path::new(env!("CARGO_MANIFEST_DIR")).join(firmware);
+        let root_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let elf = Path::new(&root_dir).join(firmware);
 
-        let mut cmd = Command::new("probe-run");
+        let mut cmd = Command::new("probe-rs");
+        cmd.arg("run");
+
         if let Ok(serial) = env::var(environment_variable) {
             cmd.arg("--probe");
             cmd.arg(serial);
@@ -39,7 +42,7 @@ impl DeviceTest {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to execute probe-run");
+            .expect("failed to execute probe-rs");
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         (
