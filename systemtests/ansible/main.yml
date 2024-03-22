@@ -83,6 +83,10 @@
   hosts: testrunners
   become: yes
   tasks:
+  - name: create gpio group
+    ansible.builtin.group:
+      name: 'gpio'
+      state: present
   - name: create laminar group
     ansible.builtin.group:
       name: 'laminar'
@@ -93,7 +97,7 @@
       password: '*'
       create_home: true
       group: 'laminar'
-      groups: ssh
+      groups: ssh,gpio
       shell: '/bin/bash'
   - name: 'create ~laminar/.ssh'
     file:
@@ -211,3 +215,21 @@
       name: isc-dhcp-server
       state: restarted
     when: configured_dhcpd is changed
+  - name: install gpio (wiringpi)
+    apt:
+      pkg:
+      - wiringpi
+  - name: create gpio init script
+    copy:
+      dest: /usr/local/bin/init-gpios
+      mode: 0755
+      content: |
+        #!/bin/bash
+        gpio export 13 out
+        chgrp gpio /sys/class/gpio/gpio13/*
+        chmod g+w /sys/class/gpio/gpio13/value
+  - name: init gpios on startup
+    cron:
+      name: init-gpios
+      special_time: reboot
+      job: /usr/local/bin/init-gpios
