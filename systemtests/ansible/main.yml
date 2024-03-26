@@ -16,6 +16,8 @@
       - yaml-mode
       - pkg-config
       - libudev-dev
+      - wireshark
+      - xauth
 
 
 
