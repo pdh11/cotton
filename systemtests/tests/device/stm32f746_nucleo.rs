@@ -35,7 +35,7 @@ fn arm_stm32f746_nucleo_dhcp() {
     nucleo_test(
         "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/stm32f746-nucleo-dhcp-rtic",
         |t| {
-            t.expect_stderr("(HOST) INFO  success!", Duration::from_secs(30));
+            t.expect_stderr("Finished in", Duration::from_secs(30));
             t.expect("DHCP config acquired!", Duration::from_secs(10));
         },
     );
@@ -48,7 +48,7 @@ fn arm_stm32f746_nucleo_ssdp() {
     nucleo_test(
         "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/stm32f746-nucleo-ssdp-rtic",
         |nt| {
-            nt.expect_stderr("(HOST) INFO  success!", Duration::from_secs(30));
+            nt.expect_stderr("Finished in", Duration::from_secs(30));
             nt.expect("DHCP config acquired!", Duration::from_secs(10));
             ssdp_test(
                 Some("cotton-test-server-stm32f746".to_string()),

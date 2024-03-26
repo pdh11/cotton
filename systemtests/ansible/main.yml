@@ -1,0 +1,363 @@
+---
+########
+# Install development packages that all hosts need.
+#
+# pkg-config and libudev-dev are needed by probe-rs.
+# emacs is needed by me.
+#
+- name: dev packages
+  hosts: all
+  become: yes
+  tasks:
+  - name: apt
+    apt:
+      pkg:
+      - emacs
+      - yaml-mode
+      - pkg-config
+      - libudev-dev
+
+
+
+########
+# Enforce the most secure SSH settings
+#
+- name: sshd lockdown
+  hosts: all
+  become: yes
+  tasks:
+
+  # Allow public-key authentication
+  - name: PubkeyAuthentication yes
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^PubkeyAuthentication'
+      line: 'PubkeyAuthentication yes'
+
+  # Disallow password prompts
+  - name: PasswordAuthentication no
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^PasswordAuthentication'
+      line: 'PasswordAuthentication no'
+
+  # Disallow whatever this is
+  - name: ChallengeResponseAuthentication no
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^ChallengeResponseAuthentication'
+      line: 'ChallengeResponseAuthentication no'
+
+  # Disallow this huge attack surface
+  - name: UsePAM no
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^UsePAM'
+      line: 'UsePAM no'
+
+  # Disallow these obsolete key types
+  - name: No DSA key
+    file:
+      path: /etc/ssh/ssh_host_dsa_key
+      state: absent
+  - name: No DSA key
+    file:
+      path: /etc/ssh/ssh_host_dsa_key.pub
+      state: absent
+  - name: No ECDSA key
+    file:
+      path: /etc/ssh/ssh_host_ecdsa_key
+      state: absent
+  - name: No ECDSA key
+    file:
+      path: /etc/ssh/ssh_host_ecdsa_key.pub
+      state: absent
+
+  # Restrict the choice of ciphers
+  - name: Good ciphers
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      create: yes
+      regexp: '^Ciphers'
+      line: 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr'
+
+  # Restrict the choice of authentication hashes
+  - name: Good MACs
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^MACs'
+      line: 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-512,hmac-sha2-256,umac-128@openssh.com'
+
+  # Restrict the choice of key-exchange algorithms
+  - name: Good KexAlgorithms
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^KexAlgorithms'
+      line: 'KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256'
+
+  # Just no.
+  - name: PermitRootLogin no
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^PermitRootLogin'
+      line: 'PermitRootLogin no'
+      validate: /usr/sbin/sshd -t -f %s
+
+
+
+########
+# Set up the "laminar" user that will run the tests
+#
+- name: laminar user
+  hosts: testrunners
+  become: yes
+  tasks:
+
+  # The tests will need to control RPi GPIO pins: set up a group for this
+  - name: create gpio group
+    ansible.builtin.group:
+      name: 'gpio'
+      state: present
+
+  # And a group for the laminar user
+  - name: create laminar group
+    ansible.builtin.group:
+      name: 'laminar'
+      state: present
+
+  # Create the laminar user itself
+  #
+  # NB "*" means no password-based login; that's different from "!" which
+  # means account *completely* disabled including no SSH'ing.
+  - name: create laminar user
+    ansible.builtin.user:
+      name: 'laminar'
+      password: '*'
+      create_home: true
+      group: 'laminar'
+      groups: ssh,gpio
+      shell: '/bin/bash'
+
+  # Create the laminar user's .ssh directory
+  - name: 'create ~laminar/.ssh'
+    file:
+      path: /home/laminar/.ssh
+      state: directory
+      owner: laminar
+      group: laminar
+      mode: 0700
+
+  # Add (my) public key as an authorised login for the laminar user
+  #
+  # Don't blithely run this on your own systems unless you want *me* to be
+  # able to log in!
+  - name: 'authorise laminar key'
+    authorized_key:
+      user: laminar
+      key: "{{ lookup('file', 'laminar-ssh.pub') }}"
+
+  # Set permissions on USB ST-Link devices to let the laminar user
+  # program them
+  - name: give laminar permission over ST-Links
+    copy:
+      dest: /etc/udev/rules.d/99-laminar.rules
+      content: |
+        SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", GROUP="laminar", MODE="0660"
+
+
+
+########
+# Install rust and cargo for the laminar user
+#
+# Needed because we use probe-rs. (Which at time of writing doesn't have
+# binary releases for arm64-linux.)
+#
+# Note we "become" laminar instead of root; this is so that Rust's per-user
+# installation process works correctly.
+#
+- name: rust infrastructure
+  hosts: testrunners
+  become: yes
+  become_user: laminar
+  vars:
+    ansible_common_remote_group: ssh
+    ansible_shell_allow_world_readable_temp: true
+  tasks:
+
+  # We only want to go through the install rigmarole if not already installed
+  - name: check if cargo is installed
+    shell: test -f /home/laminar/.cargo/bin/cargo
+    register: cargo_exists
+    ignore_errors: yes
+
+  # If Cargo isn't already present, download the installer
+  - name: Download Installer
+    when: cargo_exists is failed
+    get_url:
+      url: https://sh.rustup.rs
+      dest: /tmp/sh.rustup.rs
+      mode: '0755'
+      force: 'yes'
+    tags:
+      - rust
+
+  # If Cargo isn't already present, run the installer we downloaded
+  - name: install rust/cargo
+    when: cargo_exists is failed
+    shell: /tmp/sh.rustup.rs -y
+    tags:
+      - rust
+
+  # Install probe-rs
+  #
+  # This process installs from source, as there is currently no binary
+  # release for arm64-linux. Building takes a while -- over an hour on
+  # a Raspberry Pi 3!
+  - name: install probe-rs
+    command: /home/laminar/.cargo/bin/cargo install probe-rs --features cli creates=/home/laminar/.cargo/bin/probe-rs
+
+
+
+########
+# Raspberry Pi specific setup
+#
+- name: pi hardware setup
+  hosts: raspberrypis
+  become: yes
+  tasks:
+
+  # There's only one SD card. I'll never take it out. It's only accessed
+  # during boot (and kernel upgrade). Don't keep flashing the green light
+  # looking for it!
+  - name: disable SD polling
+    lineinfile:
+      path: /boot/firmware/config.txt
+      regexp: '^dtparam=sd_poll_once'
+      line: 'dtparam=sd_poll_once'
+
+  # By default, Ubuntu Server (but not Ubuntu Desktop) will pause for up
+  # to 3 minutes during boot, waiting for ALL network interfaces to come
+  # up. It does this even for Wifi interfaces which have no configured
+  # network and so are never going to come up. Change this behaviour so
+  # that boot proceeds if any ONE network interface is up.
+  - name: mark wifi optional
+    copy:
+      dest: /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf
+      content: |
+        [Service]
+        ExecStart=
+        ExecStart=/lib/systemd/systemd-networkd-wait-online --any
+
+
+
+########
+# Setup the specific system-test runner configuration
+#
+- name: test runner setup
+  hosts: testrunners
+  become: yes
+  tasks:
+
+  # We want the USB Ethernet adaptor to be eth1 (the Raspberry Pi's
+  # built-in Ethernet is eth0). By default, Ubuntu gives USB Ethernet
+  # adaptors lengthy names based on their MAC addresses; override this
+  # in the case of our specific adaptor.
+  #
+  # In fact the Raspberry Pi 3's "built-in" Ethernet is *also* on USB,
+  # and the standard install contains a very similar rule that rewrites
+  # its lengthy name to "eth0".
+  - name: rename eth1
+    copy:
+      # The "11" means it comes after the 10-raspi rule that sets eth0,
+      # but before the 73-usb rule that creates the enxXXXXXXXXXXXX name
+      dest: /etc/systemd/network/11-eth1.link
+      content: |
+        [Match]
+        MACAddress={{ eth1_address }}
+        [Link]
+        Name=eth1
+
+  # Set a static IP for eth1
+  #
+  # It is set to *be* the DHCP server on its network, so it can't very
+  # well *get* its address from a DHCP server.
+  - name: set static IP for eth1
+    copy:
+      dest: /etc/netplan/99-local.yaml
+      content: |
+        network:
+          version: 2
+          ethernets:
+            eth1:
+              addresses:
+                - 192.168.3.1/24
+    register: configured_ip
+
+  # Enact the settings of the previous rule, if anything has changed.
+  - name: restart networking
+    command: netplan apply
+    when: configured_ip is changed
+
+  # Configure the interface that the DHCP server is to use.
+  - name: set dhcpd interface
+    copy:
+      dest: /etc/default/isc-dhcp-server
+      content: |
+        INTERFACESv4="eth1"
+
+  # Actually install the DHCP server.
+  - name: install dhcpd
+    apt:
+      pkg:
+      - isc-dhcp-server
+
+  # Rewrite the DHCP server's configuration file (it's a very simple
+  # setup, so we just replace the entire file).
+  - name: configure dhcpd
+    copy:
+      dest: /etc/dhcp/dhcpd.conf
+      content: |
+        default-lease-time 86400;
+        max-lease-time 864000;
+        subnet 192.168.3.0 netmask 255.255.255.0 {
+          range 192.168.3.100 192.168.3.254;
+          option routers 192.168.3.1;
+        }
+    register: configured_dhcpd
+
+  # Restart the DHCP server if we changed the configuration
+  - name: restart dhcpd
+    service:
+      name: isc-dhcp-server
+      state: restarted
+    when: configured_dhcpd is changed
+
+  # Install the command-line GPIO access software (it's not in the
+  # default install).
+  - name: install gpio (wiringpi)
+    apt:
+      pkg:
+      - wiringpi
+
+  # By default, only root can access GPIO pins, which is fair enough.
+  # But root can delegate individual pins to unprivileged processes by
+  # "exporting" them (making them visible in /sys/class/gpio) and then
+  # changing their permissions. This needs to happen afresh on each
+  # boot, so we make a script and run it from cron using cron's
+  # "@reboot" feature.
+  - name: create gpio init script
+    copy:
+      dest: /usr/local/bin/init-gpios
+      mode: 0755
+      content: |
+        #!/bin/bash
+        gpio export 13 out
+        chgrp gpio /sys/class/gpio/gpio13/*
+        chmod g+w /sys/class/gpio/gpio13/value
+
+  # Set up cron to run our GPIO setup script during every boot
+  - name: init gpios on startup
+    cron:
+      name: init-gpios
+      special_time: reboot
+      job: /usr/local/bin/init-gpios
