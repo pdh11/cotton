@@ -7,15 +7,33 @@ use defmt_rtt as _;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 
+/*
+struct BlockingSpi<T: embedded_hal_nb::spi::FullDuplex + embedded_hal_nb::spi::ErrorType>(T);
+
+impl<T: embedded_hal_nb::spi::FullDuplex + embedded_hal_nb::spi::ErrorType> embedded_hal::spi::ErrorType for BlockingSpi<T> {
+    type Error = T::Error;
+}
+
+impl<T: embedded_hal_nb::spi::FullDuplex + embedded_hal_nb::spi::ErrorType> embedded_hal::spi::SpiDevice for BlockingSpi<T> {
+    fn transaction(&mut self, _: &mut [embedded_hal::spi::Operation<'_, u8>]) -> Result<(), <Self as embedded_hal::spi::ErrorType>::Error> {
+        todo!()
+    }
+}*/
+
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true)]
 mod app {
     use crate::app::hal::timer::Alarm;
     use core::fmt::Write;
     use core::hash::Hasher;
-    use rp_pico::hal;
     use rp_pico::pac;
     use rp_pico::XOSC_CRYSTAL_FREQ;
+    use rp2040_hal as hal;
+    use rp2040_hal::Clock;
+    use embedded_hal::spi::SpiDevice;
+    use rp2040_hal::fugit::RateExtU32;
+    use w5500_ll::eh1::vdm::W5500;
 
+    /*
     struct UniqueId(u64, u64);
 
     fn rp2040_unique_id() -> UniqueId {
@@ -44,6 +62,7 @@ mod app {
         mac_address[0] |= 2; // set local bit
         mac_address
     }
+    */
 
     #[shared]
     struct Shared {
@@ -58,9 +77,9 @@ mod app {
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
 
-        let rp2040_id = rp2040_unique_id();
-        let mac = mac_address(&rp2040_id);
-        defmt::println!("MAC address: {}", mac);
+//        let rp2040_id = rp2040_unique_id();
+//        let mac = mac_address(&rp2040_id);
+//        defmt::println!("MAC address: {}", mac);
         //*******
         // Initialization of the system clock.
 
@@ -105,12 +124,46 @@ mod app {
         //        let counter = Counter::new();
         defmt::println!("Hello RP2040 rtic");
 
+        // W5500-EVB-Pico:
+        //   W5500 SPI on SPI0
+        //         nCS = GPIO17
+        //         TX = GPIO19
+        //         RX = GPIO16
+        //         SCK = GPIO18
+        //   W5500 INTn on GPIO21
+        //   W5500 RSTn on GPIO20
+        //   Green LED on GPIO25
+
         // todo: see
         // https://github.com/rp-rs/rp-hal/blob/main/rp2040-hal/examples/gpio_irq_example.rs
         // https://docs.rs/w5500-dhcp/latest/w5500_dhcp/struct.Client.html
         //
         // and especially:
         // https://github.com/newAM/ambientsensor-rs/blob/main/src/main.rs
+
+        // These are implicitly used by the spi driver if they are in the correct mode
+        let mut pac = pac::Peripherals::take().unwrap();
+        let spi_mosi = pins.gpio7.into_function::<hal::gpio::FunctionSpi>();
+        let spi_miso = pins.gpio4.into_function::<hal::gpio::FunctionSpi>();
+        let spi_sclk = pins.gpio6.into_function::<hal::gpio::FunctionSpi>();
+        let spi = hal::spi::Spi::<_, _, _, 8>::new(pac.SPI0, (spi_mosi, spi_miso, spi_sclk));
+
+        // Exchange the uninitialised SPI driver for an initialised one
+        let mut spi = spi.init(
+            &mut pac.RESETS,
+            clocks.peripheral_clock.freq(),
+            16u32.MHz(),
+            hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
+        );
+
+        //        let mut spi = crate::BlockingSpi(spi);
+
+        let spi_ncs = pins.gpio17.into_push_pull_output();
+        let mut spi = embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi,
+                                                                           spi_ncs);
+
+        let mut w5500 = W5500::new(spi);
+
         (Shared { timer, alarm }, Local {}, init::Monotonics())
     }
 
