@@ -28,7 +28,7 @@ defmt-rtt = "0.4.0"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
 # We need a rp-pico (in the rp-hal-boards repo) with rp2040-hal 0.10 in it
 rp-pico = { git="https://github.com/rp-rs/rp-hal-boards.git", rev = "3fdd613", version = "0.8" }
-w5500-dhcp = { version = "0.6", default_features = false, features = ["defmt"] }
+w5500-dhcp = { git="https://github.com/newAM/w5500-rs", rev = "5384cec", version = "0.6", default_features = false, features = ["defmt"] }
 # rp2040-flash = "0.4"
 cortex-m-rtic = "1"
 rp2040-hal = { version="0.10", features=["rt"] }

@@ -7,19 +7,6 @@ use defmt_rtt as _;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 
-/*
-struct BlockingSpi<T: embedded_hal_nb::spi::FullDuplex + embedded_hal_nb::spi::ErrorType>(T);
-
-impl<T: embedded_hal_nb::spi::FullDuplex + embedded_hal_nb::spi::ErrorType> embedded_hal::spi::ErrorType for BlockingSpi<T> {
-    type Error = T::Error;
-}
-
-impl<T: embedded_hal_nb::spi::FullDuplex + embedded_hal_nb::spi::ErrorType> embedded_hal::spi::SpiDevice for BlockingSpi<T> {
-    fn transaction(&mut self, _: &mut [embedded_hal::spi::Operation<'_, u8>]) -> Result<(), <Self as embedded_hal::spi::ErrorType>::Error> {
-        todo!()
-    }
-}*/
-
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true)]
 mod app {
     use crate::app::hal::timer::Alarm;
@@ -27,8 +14,19 @@ mod app {
     use core::hash::Hasher;
     use embedded_hal::delay::DelayNs;
     use embedded_hal::spi::SpiDevice;
+    use embedded_hal_bus::spi::ExclusiveDevice;
+    use embedded_hal_bus::spi::NoDelay;
     use rp2040_hal as hal;
     use rp2040_hal::fugit::RateExtU32;
+    use rp2040_hal::gpio::bank0::Gpio16;
+    use rp2040_hal::gpio::bank0::Gpio17;
+    use rp2040_hal::gpio::bank0::Gpio18;
+    use rp2040_hal::gpio::bank0::Gpio19;
+    use rp2040_hal::gpio::FunctionSio;
+    use rp2040_hal::gpio::FunctionSpi;
+    use rp2040_hal::gpio::PullDown;
+    use rp2040_hal::gpio::SioOutput;
+    use rp2040_hal::pac::SPI0;
     use rp2040_hal::Clock;
     use rp_pico::pac;
     use rp_pico::XOSC_CRYSTAL_FREQ;
@@ -38,6 +36,10 @@ mod app {
         net::{Eui48Addr, Ipv4Addr, SocketAddrV4},
         LinkStatus, OperationMode, PhyCfg, Registers, Sn,
     };
+
+    const DHCP_SN: Sn = Sn::Sn0;
+    const NAME: &str = "rp2040-w5500";
+    const HOSTNAME: Hostname<'static> = Hostname::new_unwrapped(NAME);
 
     /*
     struct UniqueId(u64, u64);
@@ -72,6 +74,26 @@ mod app {
 
     #[shared]
     struct Shared {
+        w5500: W5500<
+            ExclusiveDevice<
+                rp2040_hal::Spi<
+                    rp2040_hal::spi::Enabled,
+                    SPI0,
+                    (
+                        rp2040_hal::gpio::Pin<Gpio19, FunctionSpi, PullDown>,
+                        rp2040_hal::gpio::Pin<Gpio16, FunctionSpi, PullDown>,
+                        rp2040_hal::gpio::Pin<Gpio18, FunctionSpi, PullDown>,
+                    ),
+                >,
+                rp2040_hal::gpio::Pin<
+                    Gpio17,
+                    FunctionSio<SioOutput>,
+                    PullDown,
+                >,
+                NoDelay,
+            >,
+        >,
+        dhcp: DhcpClient<'static>,
         timer: hal::Timer,
         alarm: hal::timer::Alarm0,
     }
@@ -216,7 +238,23 @@ mod app {
         };
         defmt::println!("Done link up");
 
-        (Shared { timer, alarm }, Local {}, init::Monotonics())
+
+        let seed: u64 = u64::from(cortex_m::peripheral::SYST::get_current()) << 32
+            | u64::from(cortex_m::peripheral::SYST::get_current());
+
+        let dhcp = DhcpClient::new(DHCP_SN, seed, mac, HOSTNAME);
+        dhcp.setup_socket(&mut w5500).unwrap();
+
+        (
+            Shared {
+                w5500,
+                dhcp,
+                timer,
+                alarm,
+            },
+            Local {},
+            init::Monotonics(),
+        )
     }
 
     /*
