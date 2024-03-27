@@ -9,6 +9,87 @@ use defmt_rtt as _;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 
+struct Buffer {
+    in_use: bool,
+    bytes: [u8; 1536],
+}
+
+struct RawDevice<Spi: w5500::bus::Bus> {
+    w5500: w5500::raw_device::RawDevice<Spi>,
+    rx: Buffer,
+    tx: Buffer,
+}
+
+struct EthTxToken<'a> {
+    buffer: &'a mut Buffer,
+}
+
+struct EthRxToken<'a> {
+    count: usize,
+    buffer: &'a mut Buffer,
+}
+
+impl<Spi: w5500::bus::Bus> smoltcp::phy::Device for RawDevice<Spi> {
+    type RxToken<'token> = EthRxToken<'token> where Self: 'token;
+    type TxToken<'token> = EthTxToken<'token> where Self: 'token;
+
+    fn receive(&mut self, _timestamp: smoltcp::time::Instant) -> Option<(Self::RxToken<'_>,
+                                                          Self::TxToken<'_>)> {
+        if !self.tx.in_use && !self.rx.in_use {
+            if let Ok(n) = self.w5500.read_frame(&mut self.rx.bytes) {
+                if n > 0 {
+                    self.rx.in_use = true;
+                    self.tx.in_use = true;
+                    return Some((EthRxToken { count: n, buffer: &mut self.rx },
+                          EthTxToken { buffer: &mut self.tx }));
+                }
+            }
+        }
+        None
+    }
+
+    fn transmit(&mut self, _timestamp: smoltcp::time::Instant) -> Option<Self::TxToken<'_>> {
+        if !self.tx.in_use {
+            self.tx.in_use = true;
+            Some(EthTxToken { buffer: &mut self.tx })
+        } else {
+            None
+        }
+    }
+
+    fn capabilities(&self) -> smoltcp::phy::DeviceCapabilities {
+        let mut caps = smoltcp::phy::DeviceCapabilities::default();
+        caps.max_transmission_unit = 1536;
+        caps.medium = smoltcp::phy::Medium::Ethernet;
+        caps.max_burst_size = Some(1);
+        caps.checksum = smoltcp::phy::ChecksumCapabilities::ignored();
+        caps
+    }
+}
+
+impl<'a> smoltcp::phy::RxToken for EthRxToken<'a> {
+    fn consume<R, F>(self, f: F) -> R
+    where
+        F: FnOnce(&mut [u8]) -> R,
+    {
+        let result = f(&mut self.buffer.bytes[0..self.count]);
+        self.buffer.in_use = false;
+        result
+    }
+}
+
+impl<'a> smoltcp::phy::TxToken for EthTxToken<'a> {
+    fn consume<R, F>(self, len: usize, f: F) -> R
+    where
+        F: FnOnce(&mut [u8]) -> R,
+    {
+        let result = f(&mut self.buffer.bytes[0..len]);
+//        self.
+        self.buffer.in_use = false;
+        result
+    }
+}
+
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
     use embedded_hal::delay::DelayNs;
@@ -34,13 +115,6 @@ mod app {
     use rp_pico::pac;
     use rp_pico::XOSC_CRYSTAL_FREQ;
     use systick_monotonic::Systick;
-    use w5500_dhcp::{hl::Hostname, Client as DhcpClient};
-    use w5500_ll::eh1::vdm::W5500;
-    use w5500_ll::{LinkStatus, OperationMode, PhyCfg, Registers, Sn};
-
-    const DHCP_SN: Sn = Sn::Sn0;
-    const NAME: &str = "rp2040-w5500";
-    const HOSTNAME: Hostname<'static> = Hostname::new_unwrapped(NAME);
 
     /*
      * Getting a real MAC address depends on the rp2040-flash crate, which
@@ -98,10 +172,10 @@ mod app {
     #[local]
     struct Local {
         nvic: cortex_m::peripheral::NVIC,
-        w5500: W5500<ExclusiveDevice<MySpi0, MySpiChipSelect, NoDelay>>,
+//        w5500: W5500<ExclusiveDevice<MySpi0, MySpiChipSelect, NoDelay>>,
         w5500_irq:
             rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullNone>,
-        dhcp: DhcpClient<'static>,
+//        dhcp: DhcpClient<'static>,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -115,7 +189,7 @@ mod app {
         //        let mac = mac_address(&rp2040_id);
         //        defmt::println!("MAC address: {}", mac);
 
-        let mac = w5500_ll::net::Eui48Addr {
+        let mac = w5500::net::MacAddress {
             octets: [2u8, 1u8, 2u8, 3u8, 4u8, 5u8],
         };
 
@@ -180,6 +254,21 @@ mod app {
             hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
         );
 
+        let bus = w5500::bus::FourWire::new(spi, spi_ncs);
+        let w5500 = w5500::UninitializedDevice::new(bus);
+
+        // NB w5500's macraw mode turns ON MAC filtering, which has the
+        // effect of disabling multicast. Fix this by just using the bus
+        // read and writes directly.
+        let w5500 = w5500.initialize_macraw(mac).unwrap();
+
+        let w5500_irq = pins.gpio21.into_floating_input();
+        w5500_irq.set_interrupt_enabled(EdgeLow, true);
+
+        unsafe {
+            pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
+        }
+
         // W5500 wants a `SpiDevice`, but the HAL provides a `SpiBus`.
         // This is as designed, as this way the W5500 doesn't have to
         // know whether the bus is shared (common TX/RX, different nCS
@@ -187,6 +276,7 @@ mod app {
         // W5500-EVB-Pico where there really *is* just one nCS and one
         // target, `ExclusiveDevice` takes a `SpiBus` and trivially
         // implements `SpiDevice`.
+        /*
         let spi =
             embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi, spi_ncs);
         let mut w5500 = W5500::new(spi);
@@ -226,13 +316,6 @@ mod app {
         };
         defmt::println!("Done link up");
 
-        let w5500_irq = pins.gpio21.into_floating_input();
-        w5500_irq.set_interrupt_enabled(EdgeLow, true);
-
-        unsafe {
-            pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
-        }
-
         let seed: u64 = u64::from(cortex_m::peripheral::SYST::get_current())
             << 32
             | u64::from(cortex_m::peripheral::SYST::get_current());
@@ -241,14 +324,14 @@ mod app {
         dhcp.setup_socket(&mut w5500).unwrap();
 
         periodic::spawn_after(1.secs()).unwrap();
-
+*/
         (
             Shared {},
             Local {
                 nvic: c.core.NVIC,
-                w5500,
+//                w5500,
                 w5500_irq,
-                dhcp,
+//                dhcp,
             },
             init::Monotonics(mono),
         )
@@ -260,9 +343,11 @@ mod app {
         periodic::spawn_after(1.secs()).unwrap();
     }
 
-    #[task(binds = IO_IRQ_BANK0, local = [w5500, w5500_irq, dhcp], priority = 2)]
+    #[task(binds = IO_IRQ_BANK0, local = [w5500_irq], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
         defmt::println!("ETH IRQ");
+        let w5500_irq = cx.local.w5500_irq;
+        /*
         let (w5500, w5500_irq, dhcp) =
             (cx.local.w5500, cx.local.w5500_irq, cx.local.dhcp);
         let had_lease = dhcp.has_lease();
@@ -276,7 +361,7 @@ mod app {
         if dhcp.has_lease() && !had_lease {
             defmt::println!("DHCP succeeded! {}", dhcp.leased_ip())
         }
-
+         */
         w5500_irq.clear_interrupt(EdgeLow);
     }
 }

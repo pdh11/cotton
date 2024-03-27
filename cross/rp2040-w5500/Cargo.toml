@@ -18,6 +18,12 @@ test = false
 doctest = false
 harness = false
 
+[[bin]]
+name="rp2040-w5500macraw-dhcp-rtic"
+test = false
+doctest = false
+harness = false
+
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default_features = false }
 cortex-m = { version = "0.7.7" }
@@ -42,3 +48,6 @@ embedded-hal-nb = "1"
 embedded-hal-bus = "0.1"
 fugit = "0.3"
 systick-monotonic = "1.0"
+
+w5500 = "0.4.1"
+smoltcp = { version = "0.11", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], default-features = false }
