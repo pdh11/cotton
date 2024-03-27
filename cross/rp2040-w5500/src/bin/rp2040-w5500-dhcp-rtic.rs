@@ -25,13 +25,19 @@ mod app {
     use crate::app::hal::timer::Alarm;
     use core::fmt::Write;
     use core::hash::Hasher;
+    use embedded_hal::delay::DelayNs;
+    use embedded_hal::spi::SpiDevice;
+    use rp2040_hal as hal;
+    use rp2040_hal::fugit::RateExtU32;
+    use rp2040_hal::Clock;
     use rp_pico::pac;
     use rp_pico::XOSC_CRYSTAL_FREQ;
-    use rp2040_hal as hal;
-    use rp2040_hal::Clock;
-    use embedded_hal::spi::SpiDevice;
-    use rp2040_hal::fugit::RateExtU32;
+    use w5500_dhcp::{hl::Hostname, Client as DhcpClient};
     use w5500_ll::eh1::vdm::W5500;
+    use w5500_ll::{
+        net::{Eui48Addr, Ipv4Addr, SocketAddrV4},
+        LinkStatus, OperationMode, PhyCfg, Registers, Sn,
+    };
 
     /*
     struct UniqueId(u64, u64);
@@ -74,12 +80,17 @@ mod app {
     struct Local {}
 
     #[init(local = [usb_bus: Option<u32> = None])]
-    fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
+    fn init(mut c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
 
-//        let rp2040_id = rp2040_unique_id();
-//        let mac = mac_address(&rp2040_id);
-//        defmt::println!("MAC address: {}", mac);
+        //        let rp2040_id = rp2040_unique_id();
+        //        let mac = mac_address(&rp2040_id);
+        //        defmt::println!("MAC address: {}", mac);
+
+        let mac = w5500_ll::net::Eui48Addr {
+            octets: [2u8, 1u8, 2u8, 3u8, 4u8, 5u8],
+        };
+
         //*******
         // Initialization of the system clock.
 
@@ -127,8 +138,8 @@ mod app {
         // W5500-EVB-Pico:
         //   W5500 SPI on SPI0
         //         nCS = GPIO17
-        //         TX = GPIO19
-        //         RX = GPIO16
+        //         TX (MOSI) = GPIO19
+        //         RX (MISO) = GPIO16
         //         SCK = GPIO18
         //   W5500 INTn on GPIO21
         //   W5500 RSTn on GPIO20
@@ -142,27 +153,68 @@ mod app {
         // https://github.com/newAM/ambientsensor-rs/blob/main/src/main.rs
 
         // These are implicitly used by the spi driver if they are in the correct mode
-        let mut pac = pac::Peripherals::take().unwrap();
-        let spi_mosi = pins.gpio7.into_function::<hal::gpio::FunctionSpi>();
-        let spi_miso = pins.gpio4.into_function::<hal::gpio::FunctionSpi>();
-        let spi_sclk = pins.gpio6.into_function::<hal::gpio::FunctionSpi>();
-        let spi = hal::spi::Spi::<_, _, _, 8>::new(pac.SPI0, (spi_mosi, spi_miso, spi_sclk));
+        //        let mut pac = pac::Peripherals::steal();
+        let spi_mosi = pins.gpio19.into_function::<hal::gpio::FunctionSpi>();
+        let spi_miso = pins.gpio16.into_function::<hal::gpio::FunctionSpi>();
+        let spi_sclk = pins.gpio18.into_function::<hal::gpio::FunctionSpi>();
+        let spi = hal::spi::Spi::<_, _, _, 8>::new(
+            c.device.SPI0,
+            (spi_mosi, spi_miso, spi_sclk),
+        );
 
         // Exchange the uninitialised SPI driver for an initialised one
         let mut spi = spi.init(
-            &mut pac.RESETS,
+            &mut resets,
             clocks.peripheral_clock.freq(),
             16u32.MHz(),
             hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
         );
 
-        //        let mut spi = crate::BlockingSpi(spi);
-
         let spi_ncs = pins.gpio17.into_push_pull_output();
-        let mut spi = embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi,
-                                                                           spi_ncs);
+        let mut spi =
+            embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi, spi_ncs);
 
         let mut w5500 = W5500::new(spi);
+
+        let _phy_cfg: PhyCfg = 'outer: loop {
+            // sanity check W5500 communications
+            assert_eq!(w5500.version().unwrap(), w5500_dhcp::ll::VERSION);
+
+            // load the MAC address we got from EEPROM
+            w5500.set_shar(&mac).unwrap();
+            debug_assert_eq!(w5500.shar().unwrap(), mac);
+
+            // wait for the PHY to indicate the Ethernet link is up
+            let mut attempts: u32 = 0;
+            defmt::println!("Polling for link up");
+            const PHY_CFG: PhyCfg =
+                PhyCfg::DEFAULT.set_opmdc(OperationMode::FullDuplex10bt);
+            w5500.set_phycfgr(PHY_CFG).unwrap();
+
+            const LINK_UP_POLL_PERIOD_MILLIS: u32 = 100;
+            const LINK_UP_POLL_ATTEMPTS: u32 = 50;
+            loop {
+                let phy_cfg: PhyCfg = w5500.phycfgr().unwrap();
+                if phy_cfg.lnk() == LinkStatus::Up {
+                    break 'outer phy_cfg;
+                }
+                if attempts >= LINK_UP_POLL_ATTEMPTS {
+                    defmt::println!(
+                        "Failed to link up in {} ms",
+                        attempts * LINK_UP_POLL_PERIOD_MILLIS,
+                    );
+                    break;
+                }
+                timer.delay_ms(LINK_UP_POLL_PERIOD_MILLIS);
+                attempts += 1;
+            }
+
+            //            w5500_rst.set_low().unwrap();
+            //            delay_ms(1);
+            //            w5500_rst.set_high().unwrap();
+            //            delay_ms(3);
+        };
+        defmt::println!("Done link up");
 
         (Shared { timer, alarm }, Local {}, init::Monotonics())
     }
