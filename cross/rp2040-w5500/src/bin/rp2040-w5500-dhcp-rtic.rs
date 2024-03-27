@@ -7,7 +7,7 @@ use defmt_rtt as _;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 
-#[rtic::app(device = rp_pico::hal::pac, peripherals = true)]
+#[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
     use crate::app::hal::timer::Alarm;
     use core::fmt::Write;
@@ -16,20 +16,26 @@ mod app {
     use embedded_hal::spi::SpiDevice;
     use embedded_hal_bus::spi::ExclusiveDevice;
     use embedded_hal_bus::spi::NoDelay;
+    use fugit::ExtU64;
     use rp2040_hal as hal;
     use rp2040_hal::fugit::RateExtU32;
     use rp2040_hal::gpio::bank0::Gpio16;
     use rp2040_hal::gpio::bank0::Gpio17;
     use rp2040_hal::gpio::bank0::Gpio18;
     use rp2040_hal::gpio::bank0::Gpio19;
+    use rp2040_hal::gpio::bank0::Gpio21;
     use rp2040_hal::gpio::FunctionSio;
     use rp2040_hal::gpio::FunctionSpi;
+    use rp2040_hal::gpio::Interrupt::EdgeLow;
     use rp2040_hal::gpio::PullDown;
+    use rp2040_hal::gpio::PullNone;
+    use rp2040_hal::gpio::SioInput;
     use rp2040_hal::gpio::SioOutput;
     use rp2040_hal::pac::SPI0;
     use rp2040_hal::Clock;
     use rp_pico::pac;
     use rp_pico::XOSC_CRYSTAL_FREQ;
+    use systick_monotonic::Systick;
     use w5500_dhcp::{hl::Hostname, Client as DhcpClient};
     use w5500_ll::eh1::vdm::W5500;
     use w5500_ll::{
@@ -69,11 +75,17 @@ mod app {
         mac_address[0] &= 0xFE; // clear multicast bit
         mac_address[0] |= 2; // set local bit
         mac_address
-    }
-    */
+    }*/
 
     #[shared]
     struct Shared {
+        timer: hal::Timer,
+        alarm: hal::timer::Alarm0,
+    }
+
+    #[local]
+    struct Local {
+        nvic: cortex_m::peripheral::NVIC,
         w5500: W5500<
             ExclusiveDevice<
                 rp2040_hal::Spi<
@@ -93,13 +105,13 @@ mod app {
                 NoDelay,
             >,
         >,
+        w5500_irq:
+            rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullNone>,
         dhcp: DhcpClient<'static>,
-        timer: hal::Timer,
-        alarm: hal::timer::Alarm0,
     }
 
-    #[local]
-    struct Local {}
+    #[monotonic(binds = SysTick, default = true)]
+    type Monotonic = Systick<1000>;
 
     #[init(local = [usb_bus: Option<u32> = None])]
     fn init(mut c: init::Context) -> (Shared, Local, init::Monotonics) {
@@ -131,6 +143,8 @@ mod app {
         )
         .ok()
         .unwrap();
+
+        let mono = Systick::new(c.core.SYST, clocks.system_clock.freq().raw());
 
         //*******
         // Initialization of the LED GPIO and the timer.
@@ -230,45 +244,60 @@ mod app {
                 timer.delay_ms(LINK_UP_POLL_PERIOD_MILLIS);
                 attempts += 1;
             }
-
-            //            w5500_rst.set_low().unwrap();
-            //            delay_ms(1);
-            //            w5500_rst.set_high().unwrap();
-            //            delay_ms(3);
         };
         defmt::println!("Done link up");
 
+        let w5500_irq = pins.gpio21.into_floating_input();
+        w5500_irq.set_interrupt_enabled(EdgeLow, true);
 
-        let seed: u64 = u64::from(cortex_m::peripheral::SYST::get_current()) << 32
+        unsafe {
+            pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
+        }
+
+        let seed: u64 = u64::from(cortex_m::peripheral::SYST::get_current())
+            << 32
             | u64::from(cortex_m::peripheral::SYST::get_current());
 
         let dhcp = DhcpClient::new(DHCP_SN, seed, mac, HOSTNAME);
         dhcp.setup_socket(&mut w5500).unwrap();
 
+        periodic::spawn_after(2.secs()).unwrap();
+
         (
-            Shared {
+            Shared { timer, alarm },
+            Local {
+                nvic: c.core.NVIC,
                 w5500,
+                w5500_irq,
                 dhcp,
-                timer,
-                alarm,
             },
-            Local {},
-            init::Monotonics(),
+            init::Monotonics(mono),
         )
     }
 
-    /*
-    // Task with least priority that only runs when nothing else is running.
-    #[idle(local = [x: u32 = 0])]
-    fn idle(_cx: idle::Context) -> ! {
-        // Locals in idle have lifetime 'static
-        // let _x: &'static mut u32 = cx.local.x;
-
-        //hprintln!("idle").unwrap();
-
-        loop {
-            cortex_m::asm::nop();
-        }
+    #[task(local = [nvic])]
+    fn periodic(cx: periodic::Context) {
+        cortex_m::peripheral::NVIC::pend(pac::Interrupt::IO_IRQ_BANK0);
+        periodic::spawn_after(2.secs()).unwrap();
     }
-    */
+
+    #[task(binds = IO_IRQ_BANK0, local = [w5500, w5500_irq, dhcp], priority = 2)]
+    fn eth_interrupt(cx: eth_interrupt::Context) {
+        defmt::println!("ETH IRQ");
+        let (w5500, w5500_irq, dhcp) =
+            (cx.local.w5500, cx.local.w5500_irq, cx.local.dhcp);
+        let had_lease = dhcp.has_lease();
+        let now: u32 = monotonics::now()
+            .duration_since_epoch()
+            .to_secs()
+            .try_into()
+            .unwrap();
+        let _spawn_after_secs: u32 = dhcp.process(w5500, now).unwrap();
+
+        if dhcp.has_lease() && !had_lease {
+            defmt::println!("DHCP succeeded! {}", dhcp.leased_ip())
+        }
+
+        w5500_irq.clear_interrupt(EdgeLow);
+    }
 }

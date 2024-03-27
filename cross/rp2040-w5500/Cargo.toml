@@ -40,3 +40,5 @@ w5500-ll = { git="https://github.com/newAM/w5500-rs", rev = "5384cec", features 
 embedded-hal = "1"
 embedded-hal-nb = "1"
 embedded-hal-bus = "0.1"
+fugit = "0.3"
+systick-monotonic = "1.0"
