@@ -17,6 +17,7 @@ pub enum Message {
     },
     Search {
         search_target: String,
+        #[allow(dead_code)] // this field not (yet) used
         maximum_wait_sec: u8,
     },
     Response {
