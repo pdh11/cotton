@@ -1,10 +1,15 @@
 [package]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
-name = "cross-rp2040"
+name = "cross-rp2040-w5500"
 publish = false
 edition = "2021"
 version = "0.0.1"
 autotests = false
+
+[lib]
+test = false
+doctest = false
+harness = false
 
 [[bin]]
 name="hello"
@@ -32,10 +37,10 @@ defmt = "0.3.2"
 defmt-rtt = "0.4.0"
 #defmt-test = "0.3.0"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
-# We need a rp-pico (in the rp-hal-boards repo) with rp2040-hal 0.10 in it
-rp-pico = { git="https://github.com/rp-rs/rp-hal-boards.git", rev = "3fdd613", version = "0.8" }
+rp-pico = "0.9"
 w5500-dhcp = { git="https://github.com/newAM/w5500-rs", rev = "5384cec", version = "0.6", default_features = false, features = ["defmt"] }
-# rp2040-flash = "0.4"
+# We need a rp2040-flash with rp2040-hal 0.10 in it
+rp2040-flash = { git="https://github.com/pdh11/rp2040-flash", rev = "2bf31c9", version = "0.4" }
 cortex-m-rtic = "1"
 rp2040-hal = { version="0.10", features=["rt"] }
 siphasher = { version = "1", default-features = false }
