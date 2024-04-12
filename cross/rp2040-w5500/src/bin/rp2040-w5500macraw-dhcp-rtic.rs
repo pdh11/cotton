@@ -244,8 +244,6 @@ mod app {
             &mut resets,
         );
 
-        defmt::println!("Hello RP2040 rtic");
-
         // W5500-EVB-Pico:
         //   W5500 SPI on SPI0
         //         nCS = GPIO17

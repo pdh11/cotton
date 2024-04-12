@@ -19,7 +19,10 @@
 //! MAC address.
 //!
 //! So the thing to do, is to hash the unique ID along with a key, or
-//! salt, which indicates what we're using it for.
+//! salt, which indicates what we're using it for. The result is thus
+//! deterministic and consistent on any one device for a particular
+//! salt, but varies from one device to another (and from one salt to
+//! another).
 //!
 //! For instance, the cotton-ssdp device tests obtain a MAC address by
 //! hashing the STM32 unique ID with the salt string "stm32-eth", and

@@ -37,47 +37,11 @@ mod app {
     use w5500_dhcp::{hl::Hostname, Client as DhcpClient};
     use w5500_ll::eh1::vdm::W5500;
     use w5500_ll::{LinkStatus, OperationMode, PhyCfg, Registers, Sn};
+    use cross_rp2040_w5500::unique;
 
     const DHCP_SN: Sn = Sn::Sn0;
     const NAME: &str = "rp2040-w5500";
     const HOSTNAME: Hostname<'static> = Hostname::new_unwrapped(NAME);
-
-    /*
-     * Getting a real MAC address depends on the rp2040-flash crate, which
-     * at time of writing still uses rp2040-hal 0.9 (everything else uses
-     * 0.10). We can't just link both versions, because they both think
-     * they're in charge of CPU startup, so linking fails with a ton of
-     * duplicate symbols. Fix once rp2040-flash is updated.
-     *
-
-    struct UniqueId(u64, u64);
-
-    fn rp2040_unique_id() -> UniqueId {
-        let mut unique_id = [0u8; 16];
-        unsafe { rp2040_flash::flash::flash_unique_id(&mut unique_id, true) };
-
-        defmt::println!("Unique id {}", unique_id[0..8]);
-        UniqueId(
-            u64::from_le_bytes(unique_id[0..8].try_into().unwrap()),
-            u64::from_le_bytes(unique_id[8..16].try_into().unwrap()),
-        )
-    }
-
-    fn unique_id(rp2040_id: &UniqueId, salt: &[u8]) -> u64 {
-        let mut h =
-            siphasher::sip::SipHasher::new_with_keys(rp2040_id.0, rp2040_id.1);
-        h.write(salt);
-        h.finish()
-    }
-
-    fn mac_address(rp2040_id: &UniqueId) -> [u8; 6] {
-        let mut mac_address = [0u8; 6];
-        let r = unique_id(rp2040_id, b"w5500-mac").to_ne_bytes();
-        mac_address.copy_from_slice(&r[0..6]);
-        mac_address[0] &= 0xFE; // clear multicast bit
-        mac_address[0] |= 2; // set local bit
-        mac_address
-    }*/
 
     #[shared]
     struct Shared {}
@@ -110,13 +74,10 @@ mod app {
     #[init(local = [usb_bus: Option<u32> = None])]
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
-
-        //        let rp2040_id = rp2040_unique_id();
-        //        let mac = mac_address(&rp2040_id);
-        //        defmt::println!("MAC address: {}", mac);
-
+        let unique_id = unsafe { unique::unique_flash_id() };
+        let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
         let mac = w5500_ll::net::Eui48Addr {
-            octets: [2u8, 1u8, 2u8, 3u8, 4u8, 5u8],
+            octets: mac.clone(),
         };
 
         //*******
@@ -151,8 +112,6 @@ mod app {
             sio.gpio_bank0,
             &mut resets,
         );
-
-        defmt::println!("Hello RP2040 rtic");
 
         // W5500-EVB-Pico:
         //   W5500 SPI on SPI0
