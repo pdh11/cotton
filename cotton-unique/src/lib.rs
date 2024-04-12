@@ -72,7 +72,7 @@ impl UniqueId {
     ///
     /// This is very similar to `id` but takes two `salt` values, a string
     /// and a u32. This is intended to be helpful when creating identifiers
-    /// larger than u64.
+    /// larger than u64; see the implementation of `uuid()` for an example.
     pub fn id2(&self, salt: &[u8], salt2: u32) -> u64 {
         let mut h =
             siphasher::sip::SipHasher::new_with_keys(self.id[0], self.id[1]);
@@ -97,9 +97,28 @@ pub fn mac_address(unique: &UniqueId, salt: &[u8]) -> [u8; 6] {
     mac_address
 }
 
+/// Return a statistically-unique but consistent UUID
+///
+/// The recommendation is that the `salt` string encodes the purpose of
+/// the UUID somehow.
+pub fn uuid(unique: &UniqueId, salt: &[u8]) -> u128 {
+    // uuid crate isn't no_std :(
+    let mut u1 = unique.id2(salt, 0);
+    let mut u2 = unique.id2(salt, 1);
+    // Variant 1
+    u2 |= 0x8000_0000_0000_0000_u64;
+    u2 &= !0x4000_0000_0000_0000_u64;
+    // Version 5
+    u1 &= !0xF000;
+    u1 |= 0x5000;
+
+    ((u1 as u128) << 64) | (u2 as u128)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
 
     #[test]
     fn test_id() {
@@ -135,5 +154,27 @@ mod tests {
         let id1 = unique.id2(b"need-longer-id", 0);
         let id2 = unique.id2(b"need-longer-id", 1);
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_mac() {
+        let raw_id = [0u8; 16];
+        let unique = UniqueId::new(&raw_id);
+        let mac = mac_address(&unique, b"eth0");
+        assert_eq!(0x62, mac[0]);
+        assert_eq!(0x67, mac[1]);
+        assert_eq!(0x0B, mac[2]);
+        assert_eq!(0xE3, mac[3]);
+        assert_eq!(0xD9, mac[4]);
+        assert_eq!(0xBD, mac[5]);
+    }
+
+    #[test]
+    fn test_uuid() {
+        let raw_id = [0u8; 16];
+        let unique = UniqueId::new(&raw_id);
+        let uuid = alloc::format!("{:032x}",
+                                  uuid(&unique, b"upnp-media-renderer:0"));
+        assert_eq!("2505b7b1dfa35c2d8f029e3409457472", uuid);
     }
 }

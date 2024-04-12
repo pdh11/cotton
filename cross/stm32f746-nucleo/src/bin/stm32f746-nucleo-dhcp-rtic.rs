@@ -37,6 +37,7 @@ mod app {
     #[init(local = [ storage: NetworkStorage = NetworkStorage::new() ])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
+        let unique_id = unsafe { common::stm32_unique_id() };
         let core = cx.core;
         let (ethernet_peripherals, rcc) = common::split_peripherals(cx.device);
         let clocks = common::setup_clocks(rcc);
@@ -56,11 +57,12 @@ mod app {
 
         defmt::println!("Link up.");
 
-        let mac_address = common::mac_address();
+        let mac_address = cotton_unique::mac_address(&unique_id, b"stm32-eth");
         // NB stm32-eth implements smoltcp::Device not for
         // EthernetDMA, but for "&mut EthernetDMA"
         let mut stack = common::Stack::new(
             &mut &mut device.dma,
+            &unique_id,
             &mac_address,
             &mut cx.local.storage.sockets[..],
             now_fn(),

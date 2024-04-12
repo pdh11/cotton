@@ -11,6 +11,7 @@ use rp_pico as _; // includes boot2
 
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
+    use cross_rp2040_w5500::unique;
     use embedded_hal::delay::DelayNs;
     use embedded_hal_bus::spi::ExclusiveDevice;
     use embedded_hal_bus::spi::NoDelay;
@@ -37,7 +38,6 @@ mod app {
     use w5500_dhcp::{hl::Hostname, Client as DhcpClient};
     use w5500_ll::eh1::vdm::W5500;
     use w5500_ll::{LinkStatus, OperationMode, PhyCfg, Registers, Sn};
-    use cross_rp2040_w5500::unique;
 
     const DHCP_SN: Sn = Sn::Sn0;
     const NAME: &str = "rp2040-w5500";

@@ -1,5 +1,5 @@
-use core::hash::Hasher;
 use core::ptr;
+use cotton_unique::UniqueId;
 use fugit::RateExtU32;
 use hal::gpio::GpioExt;
 use ieee802_3_miim::{phy::PhySpeed, Phy};
@@ -30,43 +30,10 @@ pub fn setup_clocks(rcc: stm32_eth::stm32::RCC) -> Clocks {
 /// This function is not safe on non-STM32 platforms, as it reads from
 /// a fixed physical memory location.
 #[must_use]
-pub fn stm32_unique_id() -> &'static [u32; 3] {
-    unsafe {
-        let ptr = 0x1ff0_f420 as *const [u32; 3];
-        &*ptr
-    }
-}
-
-/// Returns a salted unique ID based on the chip ID
-///
-/// Chip IDs are unique, but predictable. This function calculates a
-/// new unique ID with a particular salt value. The result is
-/// deterministic and consistent on any one STM32 device for a
-/// particular salt, but varies from one device to another (and from
-/// one salt to another).
-///
-/// For instance, this is used by `mac_address()`.
-#[must_use]
-pub fn unique_id(salt: &[u8]) -> u64 {
-    let id = stm32_unique_id();
-    let key1 = (u64::from(id[0]) << 32) + u64::from(id[1]);
-    let key2 = u64::from(id[2]);
-    let mut h = siphasher::sip::SipHasher::new_with_keys(key1, key2);
-    h.write(salt);
-    h.finish()
-}
-
-/// Return a (statistically) unique Ethernet MAC address for this device
-///
-/// Statistical uniqueness comes from a salted hash of the unique chip ID.
-#[must_use]
-pub fn mac_address() -> [u8; 6] {
-    let mut mac_address = [0u8; 6];
-    let r = unique_id(b"stm32-eth-mac").to_ne_bytes();
-    mac_address.copy_from_slice(&r[0..6]);
-    mac_address[0] &= 0xFE; // clear multicast bit
-    mac_address[0] |= 2; // set local bit
-    mac_address
+pub unsafe fn stm32_unique_id() -> UniqueId {
+    let mut unique_bytes = [0u8; 16];
+    ptr::copy(0x1ff0_f420 as *const u8, unique_bytes.as_mut_ptr(), 12);
+    UniqueId::new(&unique_bytes)
 }
 
 type MdioPa2 =
@@ -222,6 +189,7 @@ impl<'a> Stack<'a> {
     /// socket metadata.
     pub fn new<D: smoltcp::phy::Device>(
         device: &mut D,
+        unique: &UniqueId,
         mac_address: &[u8; 6],
         sockets: &'a mut [smoltcp::iface::SocketStorage<'a>],
         now: smoltcp::time::Instant,
@@ -229,7 +197,7 @@ impl<'a> Stack<'a> {
         let mut config = smoltcp::iface::Config::new(
             smoltcp::wire::EthernetAddress::from_bytes(mac_address).into(),
         );
-        config.random_seed = unique_id(b"smoltcp-config-random");
+        config.random_seed = unique.id(b"smoltcp-config-random");
         let interface = smoltcp::iface::Interface::new(config, device, now);
         let mut socket_set = smoltcp::iface::SocketSet::new(sockets);
 
