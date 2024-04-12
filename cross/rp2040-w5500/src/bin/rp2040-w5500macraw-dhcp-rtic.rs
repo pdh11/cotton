@@ -204,8 +204,8 @@ mod app {
     #[init(local = [ storage: NetworkStorage = NetworkStorage::new() ])]
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
-        let unique_id = unsafe { unique::UniqueFlashId::new() };
-        let mac = unique::mac_address(&unique_id, b"w5500-spi0");
+        let unique_id = unsafe { unique::unique_flash_id() };
+        let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
         defmt::println!("MAC address: {:x}", mac);
 
         let w5500_mac = w5500::net::MacAddress {

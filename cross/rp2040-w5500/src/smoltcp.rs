@@ -1,4 +1,4 @@
-use crate::unique;
+use cotton_unique::UniqueId;
 use smoltcp::{socket::dhcpv4, wire::IpCidr};
 
 /// A helper container for a TCP/IP stack and some of its metadata
@@ -15,9 +15,9 @@ impl Stack {
     ///
     /// From an interface, a MAC address, and some storage for the
     /// socket metadata.
-    pub fn new<D: smoltcp::phy::Device, U: unique::UniqueId>(
+    pub fn new<D: smoltcp::phy::Device>(
         device: &mut D,
-        unique: &U,
+        unique: &UniqueId,
         mac_address: &[u8; 6],
         sockets: &'static mut [smoltcp::iface::SocketStorage<'static>],
         now: smoltcp::time::Instant,
