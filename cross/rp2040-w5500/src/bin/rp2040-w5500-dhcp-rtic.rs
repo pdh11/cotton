@@ -76,9 +76,7 @@ mod app {
         defmt::println!("Pre-init");
         let unique_id = unsafe { unique::unique_flash_id() };
         let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
-        let mac = w5500_ll::net::Eui48Addr {
-            octets: mac,
-        };
+        let mac = w5500_ll::net::Eui48Addr { octets: mac };
 
         //*******
         // Initialization of the system clock.

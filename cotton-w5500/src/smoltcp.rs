@@ -39,6 +39,16 @@ impl<Spi: w5500::bus::Bus> Device<Spi> {
             tx: Buffer::new(),
         }
     }
+
+    /// Enable chip-level interrupts on pin INTn
+    pub fn enable_interrupt(&mut self) {
+        let _ = self.w5500.enable_interrupts(4); // RX interrupt
+    }
+
+    /// Clear pending interrupts
+    pub fn clear_interrupt(&mut self) {
+        let _ = self.w5500.clear_interrupts();
+    }
 }
 
 /// An `EthTxToken` represents permission to send one packet
@@ -177,18 +187,24 @@ mod tests {
         }
     }
 
+    const SETUP_CALLS: usize = 20;
+
     #[test]
     fn test_instantiate() {
         let mut bus = MockBus::new();
         // We don't test the setup calls, that's the w5500 crate's business
-        bus.expect_write_frame().times(20).return_const(Ok(()));
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
         let _device = super::Device::new(bus, &[0x88u8; 6]);
     }
 
     #[test]
     fn test_capabilities() {
         let mut bus = MockBus::new();
-        bus.expect_write_frame().times(20).return_const(Ok(()));
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
         let device = super::Device::new(bus, &[0x88u8; 6]);
         let c = device.capabilities();
         assert_eq!(smoltcp::phy::Medium::Ethernet, c.medium);
@@ -199,7 +215,9 @@ mod tests {
     #[test]
     fn test_transmit() {
         let mut bus = MockBus::new();
-        bus.expect_write_frame().times(20).return_const(Ok(())); // i.e. no 21st time in transmit
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(())); // i.e. no 21st time in transmit
         let mut device = super::Device::new(bus, &[0x88u8; 6]);
 
         let res = device.transmit(smoltcp::time::Instant::ZERO);
@@ -209,7 +227,9 @@ mod tests {
     #[test]
     fn test_transmit_consume() {
         let mut bus = MockBus::new();
-        bus.expect_write_frame().times(20).return_const(Ok(()));
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
         // It reads the free size
         bus.expect_read_frame()
             .withf(|block, addr, _data| *block == 1 && *addr == 0x20)
@@ -251,10 +271,12 @@ mod tests {
     #[test]
     fn test_receive_not_ready() {
         let mut bus = MockBus::new();
-        bus.expect_write_frame().times(20).return_const(Ok(()));
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
         // It reads the RX cursor
         bus.expect_read_frame()
-            .withf(|block, addr, _data| *block == 1 && *addr == 0x26)
+            .withf(|block, _addr, _data| *block == 1)
             .returning(|_block, _addr, data| {
                 data[0] = 0;
                 data[1] = 0;
@@ -269,7 +291,9 @@ mod tests {
     #[test]
     fn test_receive() {
         let mut bus = MockBus::new();
-        bus.expect_write_frame().times(20).return_const(Ok(()));
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
         // It reads the RX-in-use (2 bytes size + 2 bytes frame)
         bus.expect_read_frame()
             .withf(|block, addr, _data| *block == 1 && *addr == 0x26)
@@ -317,7 +341,9 @@ mod tests {
     #[test]
     fn test_receive_propagates_error() {
         let mut bus = MockBus::new();
-        bus.expect_write_frame().times(20).return_const(Ok(()));
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
 
         // It reads the RX-in-use (2 bytes size + 2 bytes frame)
         bus.expect_read_frame().returning(|_, _, _| Err(1u32));
@@ -325,5 +351,45 @@ mod tests {
 
         let res = device.receive(smoltcp::time::Instant::ZERO);
         assert!(res.is_none());
+    }
+
+    #[test]
+    fn test_enable_interrupt() {
+        let mut bus = MockBus::new();
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
+
+        // S0_IMR
+        bus.expect_write_frame()
+            .withf(|block, addr, data| {
+                *block == 1 && *addr == 0x2C && data[0] == 4
+            })
+            .return_const(Ok(()));
+        // SIMR
+        bus.expect_write_frame()
+            .withf(|block, addr, data| {
+                *block == 0 && *addr == 0x18 && data[0] == 1
+            })
+            .return_const(Ok(()));
+        let mut device = super::Device::new(bus, &[0x88u8; 6]);
+        device.enable_interrupt();
+    }
+
+    #[test]
+    fn test_clear_interrupt() {
+        let mut bus = MockBus::new();
+        bus.expect_write_frame()
+            .times(SETUP_CALLS)
+            .return_const(Ok(()));
+
+        // S0_IR
+        bus.expect_write_frame()
+            .withf(|block, addr, data| {
+                *block == 1 && *addr == 2 && data[0] == 0xFF
+            })
+            .return_const(Ok(()));
+        let mut device = super::Device::new(bus, &[0x88u8; 6]);
+        device.clear_interrupt();
     }
 }
