@@ -258,3 +258,9 @@ impl NetworkStorage {
         }
     }
 }
+
+impl Default for NetworkStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}

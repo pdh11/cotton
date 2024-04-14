@@ -99,18 +99,24 @@ mod app {
 }
 
 /// All storage required for networking
-pub struct NetworkStorage {
-    pub rx_ring: [RxRingEntry; 2],
-    pub tx_ring: [TxRingEntry; 2],
-    pub sockets: [iface::SocketStorage<'static>; 2],
+struct NetworkStorage {
+    rx_ring: [RxRingEntry; 2],
+    tx_ring: [TxRingEntry; 2],
+    sockets: [iface::SocketStorage<'static>; 2],
 }
 
 impl NetworkStorage {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         NetworkStorage {
             rx_ring: [RxRingEntry::new(), RxRingEntry::new()],
             tx_ring: [TxRingEntry::new(), TxRingEntry::new()],
             sockets: [SocketStorage::EMPTY; 2],
         }
+    }
+}
+
+impl Default for NetworkStorage {
+    fn default() -> Self {
+        Self::new()
     }
 }

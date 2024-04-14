@@ -32,6 +32,7 @@ harness = false
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default_features = false }
 cotton-unique = { path = "../../cotton-unique" }
+cotton-w5500 = { path = "../../cotton-w5500", default_features = false, features = ["smoltcp", "w5500-evb-pico"] }
 cortex-m = { version = "0.7.7" }
 cortex-m-rt = "0.7"
 defmt = "0.3.2"

@@ -11,6 +11,8 @@ use cotton_unique::UniqueId;
 /// needed.
 pub unsafe fn unique_flash_id() -> UniqueId {
     let mut unique_bytes = [0u8; 16];
-    rp2040_flash::flash::flash_unique_id(&mut unique_bytes, true);
+    cortex_m::interrupt::free(|_cs| {
+        rp2040_flash::flash::flash_unique_id(&mut unique_bytes, true)
+    });
     UniqueId::new(&unique_bytes)
 }

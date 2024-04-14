@@ -67,7 +67,6 @@ impl UniqueId {
         h.finish()
     }
 
-
     /// Return a (statistically) unique identifier for a specific purpose
     ///
     /// This is very similar to `id` but takes two `salt` values, a string
@@ -173,8 +172,8 @@ mod tests {
     fn test_uuid() {
         let raw_id = [0u8; 16];
         let unique = UniqueId::new(&raw_id);
-        let uuid = alloc::format!("{:032x}",
-                                  uuid(&unique, b"upnp-media-renderer:0"));
+        let uuid =
+            alloc::format!("{:032x}", uuid(&unique, b"upnp-media-renderer:0"));
         assert_eq!("2505b7b1dfa35c2d8f029e3409457472", uuid);
     }
 }

@@ -27,6 +27,8 @@ pub fn setup_clocks(rcc: stm32_eth::stm32::RCC) -> Clocks {
 ///
 /// See RM0385 rev5 s41.1.
 ///
+/// # Safety
+///
 /// This function is not safe on non-STM32 platforms, as it reads from
 /// a fixed physical memory location.
 #[must_use]
