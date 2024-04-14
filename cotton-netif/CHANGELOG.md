@@ -6,6 +6,8 @@
 
 * Flags is now a plain struct, not a "bitfield!"
 
+* Update MSRV from 1.65 to 1.75.
+
 ## [0.0.4] 2023-04-23
 
 ### Changed

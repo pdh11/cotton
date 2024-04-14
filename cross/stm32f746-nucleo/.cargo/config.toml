@@ -4,3 +4,6 @@ rustflags = [
   "-C", "link-arg=-Tlink.x",
   "-C", "link-arg=-Tdefmt.x",
 ]
+
+[build]
+target = "thumbv7em-none-eabi"

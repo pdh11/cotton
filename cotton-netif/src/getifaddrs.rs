@@ -2,7 +2,7 @@ use super::{Flags, InterfaceIndex, NetworkEvent};
 use nix::ifaddrs;
 use nix::net::if_::InterfaceFlags;
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 
 /// The type of `nix::ifaddrs::getifaddrs`
 type GetIfAddrsFn = fn() -> nix::Result<ifaddrs::InterfaceAddressIterator>;
@@ -120,12 +120,17 @@ fn get_interfaces_inner2(
                     (ifaddr.address, ifaddr.netmask)
                 {
                     if let Some(ipv4) = addr.as_sockaddr_in() {
-                        let ip = IpAddr::from(Ipv4Addr::from(ipv4.ip()));
+                        let ip = IpAddr::from(ipv4.ip());
                         if let Some(netmask) = mask.as_sockaddr_in() {
                             msgs.push(NetworkEvent::NewAddr(
                                 InterfaceIndex(index),
                                 ip,
-                                (netmask.ip().leading_ones() & 0xFF) as u8,
+                                (u32::from_be(
+                                    netmask.as_ref().sin_addr.s_addr,
+                                )
+                                .leading_ones()
+                                    & 0xFF)
+                                    as u8,
                             ));
                         }
                     } else if let Some(ipv6) = addr.as_sockaddr_in6() {
@@ -172,6 +177,7 @@ mod tests {
     use nix::sys::socket::SockaddrLike;
     use nix::sys::socket::SockaddrStorage;
     use nix::sys::socket::UnixAddr;
+    use std::net::Ipv4Addr;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV4;
     use std::net::SocketAddrV6;

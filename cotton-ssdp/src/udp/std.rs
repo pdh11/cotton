@@ -208,7 +208,7 @@ fn receive_to_inner(
     let wasfrom = {
         if let Some(ss) = address {
             if let Some(sin) = ss.as_sockaddr_in() {
-                SocketAddrV4::new(Ipv4Addr::from(sin.ip()), sin.port())
+                SocketAddrV4::new(sin.ip(), sin.port())
             } else {
                 //println!("receive: wasfrom not ipv4 {:?}", ss);
                 return Err(std::io::ErrorKind::InvalidData.into());

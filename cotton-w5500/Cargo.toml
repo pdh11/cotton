@@ -6,7 +6,7 @@ repository = "https://github.com/pdh11/cotton"
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
-rust-version = "1.65"
+rust-version = "1.75"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -18,9 +18,6 @@ defmt = "0.3.2"
 smoltcp = { version = "0.11", default-features = false, features = [ "medium-ethernet", "proto-ipv4", "socket-raw"], optional = true }
 rp2040-hal = { version = "0.10", optional = true }
 mockall = { version = "0.12.1", optional = true }
-# We don't use predicates, but mockall does. 3.0.4 increases MSRV to
-# 1.69; 3.0.3 includes an anstyle with MSRV 1.70; so pin to 3.0.2.
-predicates = { version = "=3.0.2" }
 
 [features]
 default = ["smoltcp", "std"]

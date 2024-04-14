@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+* Update MSRV from 1.65 to 1.75.
+
 ## [0.0.3] 2023-08-12
 
 ### Changed

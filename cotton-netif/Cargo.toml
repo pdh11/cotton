@@ -8,7 +8,7 @@ categories = ["network-programming"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
-rust-version = "1.65"
+rust-version = "1.75"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -30,9 +30,8 @@ tokio = { version = "1.24", default_features = false, features = ["macros", "syn
 tokio-test = { version = "0.4", default_features = false, optional = true }
 futures-util = { version = "0.3", default_features = false, features = ["async-await", "async-await-macro"], optional = true }
 async-stream = { version = "0.3.1", default_features = false, optional = true }
-# nix 0.28 requires rust 1.69
-nix = { version = "0.27", default_features = false, features = ["net"], optional = true }
-libc = { version = "0.2.149", default_features = false, optional = true }
+nix = { version = "0.28", default_features = false, features = ["net"], optional = true }
+libc = { version = "0.2.153", default_features = false, optional = true }
 
 [features]
 default = ["std", "async", "sync"]
