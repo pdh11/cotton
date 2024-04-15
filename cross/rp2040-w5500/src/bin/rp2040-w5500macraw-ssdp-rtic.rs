@@ -78,6 +78,7 @@ mod app {
         rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullUp>,
         timer_handle: Option<periodic::SpawnHandle>,
         refresh_timer: RefreshTimer,
+        uuid: u128,
     }
 
     impl cotton_ssdp::engine::Callback for Listener {
@@ -225,7 +226,6 @@ mod app {
                 | cotton_netif::Flags::RUNNING
                 | cotton_netif::Flags::MULTICAST,
         );
-
         {
             let wi = WrappedInterface::new(
                 &mut stack.interface,
@@ -234,22 +234,8 @@ mod app {
             );
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
-            ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
-
-            let uuid = alloc::format!(
-                "{:032x}",
-                cotton_unique::uuid(&unique_id, b"upnp")
-            );
-            ssdp.advertise(
-                uuid,
-                cotton_ssdp::Advertisement {
-                    notification_type: "rp2040-w5500-test".to_string(),
-                    location: "http://127.0.0.1/".to_string(),
-                },
-                &ws,
-            );
         }
-
+        let uuid = cotton_unique::uuid(&unique_id, b"upnp");
         let udp_handle = stack.socket_set.add(udp_socket);
 
         let timer_handle = Some(periodic::spawn_after(2.secs()).unwrap());
@@ -265,6 +251,7 @@ mod app {
                 w5500_irq,
                 timer_handle,
                 refresh_timer: RefreshTimer::new(now_fn()),
+                uuid,
             },
             init::Monotonics(mono),
         )
@@ -275,11 +262,11 @@ mod app {
         cortex_m::peripheral::NVIC::pend(pac::Interrupt::IO_IRQ_BANK0);
     }
 
-    #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle, refresh_timer], priority = 2)]
+    #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle, refresh_timer, uuid], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (stack, udp_handle, ssdp, refresh_timer) =
+        let (stack, udp_handle, ssdp, refresh_timer, uuid) =
             (cx.local.stack, cx.local.udp_handle, cx.local.ssdp,
-            cx.local.refresh_timer);
+            cx.local.refresh_timer, cx.local.uuid);
         cx.local.w5500_irq.clear_interrupt(EdgeLow);
         cx.local.device.clear_interrupt();
         defmt::println!("ETH IRQ");
@@ -302,7 +289,6 @@ mod app {
         }
 
         let next_wake = next_wake.total_millis();
-        defmt::println!("Next poll in {}ms", next_wake);
         let next_wake = next_wake.millis();
         let _ = periodic::spawn_after(next_wake);
 
@@ -317,10 +303,18 @@ mod app {
                 &no_std_net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
                 &ws,
             );
-            do_refresh = true;
-        }
 
-        if do_refresh {
+            ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+
+            ssdp.advertise(
+                alloc::format!("{:032x}", uuid),
+                cotton_ssdp::Advertisement {
+                    notification_type: "rp2040-w5500-test".to_string(),
+                    location: "http://127.0.0.1/".to_string(),
+                },
+                &ws,
+            );
+        } else if do_refresh {
             defmt::println!("Refreshing!");
             ssdp.refresh(&ws);
         }
