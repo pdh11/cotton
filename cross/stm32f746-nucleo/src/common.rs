@@ -1,4 +1,5 @@
 use core::hash::Hasher;
+use core::ptr;
 use fugit::RateExtU32;
 use hal::gpio::GpioExt;
 use ieee802_3_miim::{phy::PhySpeed, Phy};
@@ -309,8 +310,8 @@ pub fn init_heap(allocator: &LockedHeap) {
     // SAFETY: this relies on the link map being correct, and STACK_SIZE
     // being large enough for the entire program.
     unsafe {
-        let heap_start = &__sheap as *const u32 as usize;
-        let heap_end = &_stack_start as *const u32 as usize;
+        let heap_start = ptr::addr_of!(__sheap) as usize;
+        let heap_end = ptr::addr_of!(_stack_start) as usize;
         let heap_size = heap_end - heap_start - STACK_SIZE;
         allocator.lock().init(heap_start as *mut u8, heap_size);
     }
