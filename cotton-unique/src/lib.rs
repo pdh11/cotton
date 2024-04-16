@@ -100,18 +100,13 @@ pub fn mac_address(unique: &UniqueId, salt: &[u8]) -> [u8; 6] {
 ///
 /// The recommendation is that the `salt` string encodes the purpose of
 /// the UUID somehow.
-pub fn uuid(unique: &UniqueId, salt: &[u8]) -> u128 {
-    // uuid crate isn't no_std :(
-    let mut u1 = unique.id2(salt, 0);
-    let mut u2 = unique.id2(salt, 1);
-    // Variant 1
-    u2 |= 0x8000_0000_0000_0000_u64;
-    u2 &= !0x4000_0000_0000_0000_u64;
-    // Version 5
-    u1 &= !0xF000;
-    u1 |= 0x5000;
-
-    ((u1 as u128) << 64) | (u2 as u128)
+pub fn uuid(unique: &UniqueId, salt: &[u8]) -> uuid::Uuid {
+    let mut bytes = [0u8; 16];
+    let u1 = unique.id2(salt, 0).to_be_bytes();
+    bytes[0..8].copy_from_slice(&u1);
+    let u2 = unique.id2(salt, 1).to_be_bytes();
+    bytes[8..16].copy_from_slice(&u2);
+    uuid::Uuid::new_v8(bytes)
 }
 
 #[cfg(test)]
@@ -173,7 +168,7 @@ mod tests {
         let raw_id = [0u8; 16];
         let unique = UniqueId::new(&raw_id);
         let uuid =
-            alloc::format!("{:032x}", uuid(&unique, b"upnp-media-renderer:0"));
-        assert_eq!("2505b7b1dfa35c2d8f029e3409457472", uuid);
+            alloc::format!("{}", uuid(&unique, b"upnp-media-renderer:0"));
+        assert_eq!("2505b7b1-dfa3-8c2d-8f02-9e3409457472", uuid);
     }
 }

@@ -78,10 +78,10 @@ mod app {
         ssdp: cotton_ssdp::engine::Engine<Listener>,
         nvic: cortex_m::peripheral::NVIC,
         w5500_irq:
-        rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullUp>,
+            rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullUp>,
         timer_handle: Option<periodic::SpawnHandle>,
         refresh_timer: RefreshTimer,
-        uuid: u128,
+        uuid: uuid::Uuid,
     }
 
     impl cotton_ssdp::engine::Callback for Listener {

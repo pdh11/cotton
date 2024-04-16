@@ -59,3 +59,4 @@ w5500 = { git="https://github.com/kellerkindt/w5500", rev = "74ef8391", version 
 smoltcp = { version = "0.11", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], default-features = false }
 embedded-alloc = "0.5"
 no-std-net = { version = "0.6", default_features = false }
+uuid = { version = "1.8", default_features = false, features = ["v8"] }

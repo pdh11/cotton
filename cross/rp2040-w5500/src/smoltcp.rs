@@ -1,5 +1,5 @@
 use cotton_unique::UniqueId;
-use smoltcp::{socket::dhcpv4, wire::IpCidr, time::Instant};
+use smoltcp::{socket::dhcpv4, time::Instant, wire::IpCidr};
 
 /// A helper container for a TCP/IP stack and some of its metadata
 pub struct Stack {
