@@ -1,6 +1,7 @@
 [package]
 name = "cotton-unique"
 version = "0.1.0"
+description = "Deterministic per-device unique IDs for embedded systems"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
