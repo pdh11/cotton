@@ -45,13 +45,16 @@ mod app {
         GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
         WrappedInterface, WrappedSocket,
     };
-    use cross_rp2040_w5500::{smoltcp::Stack, smoltcp::RefreshTimer, unique};
+    use cross_rp2040_w5500::{smoltcp::RefreshTimer, smoltcp::Stack, unique};
+    use embedded_hal::delay::DelayNs;
+    use embedded_hal::digital::OutputPin;
     use fugit::ExtU64;
     use rp2040_hal as hal;
     use rp2040_hal::fugit::RateExtU32;
     use rp2040_hal::gpio::bank0::Gpio21;
     use rp2040_hal::gpio::FunctionSio;
     use rp2040_hal::gpio::Interrupt::EdgeLow;
+    use rp2040_hal::gpio::PinState;
     use rp2040_hal::gpio::PullDown;
     use rp2040_hal::gpio::PullNone;
     use rp2040_hal::gpio::PullUp;
@@ -133,6 +136,7 @@ mod app {
         .ok()
         .unwrap();
 
+        let mut timer = hal::Timer::new(c.device.TIMER, &mut resets, &clocks);
         let mono = Systick::new(c.core.SYST, clocks.system_clock.freq().raw());
 
         let sio = hal::Sio::new(c.device.SIO);
@@ -152,6 +156,14 @@ mod app {
         //   W5500 INTn on GPIO21
         //   W5500 RSTn on GPIO20
         //   Green LED on GPIO25
+
+        let mut w5500_rst = pins
+            .gpio20
+            .into_pull_type::<PullNone>()
+            .into_push_pull_output_in_state(PinState::Low);
+        timer.delay_ms(2);
+        let _ = w5500_rst.set_high();
+        timer.delay_ms(2);
 
         let spi_ncs = pins
             .gpio17
@@ -264,11 +276,15 @@ mod app {
 
     #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle, refresh_timer, uuid], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (stack, udp_handle, ssdp, refresh_timer, uuid) =
-            (cx.local.stack, cx.local.udp_handle, cx.local.ssdp,
-            cx.local.refresh_timer, cx.local.uuid);
-        cx.local.w5500_irq.clear_interrupt(EdgeLow);
+        let (stack, udp_handle, ssdp, refresh_timer, uuid) = (
+            cx.local.stack,
+            cx.local.udp_handle,
+            cx.local.ssdp,
+            cx.local.refresh_timer,
+            cx.local.uuid,
+        );
         cx.local.device.clear_interrupt();
+        cx.local.w5500_irq.clear_interrupt(EdgeLow);
         defmt::println!("ETH IRQ");
 
         let now = now_fn();

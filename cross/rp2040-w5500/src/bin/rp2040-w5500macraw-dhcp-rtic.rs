@@ -14,12 +14,15 @@ use smoltcp::iface::{self, SocketStorage};
 mod app {
     use crate::NetworkStorage;
     use cross_rp2040_w5500::{smoltcp::Stack, unique};
+    use embedded_hal::delay::DelayNs;
+    use embedded_hal::digital::OutputPin;
     use fugit::ExtU64;
     use rp2040_hal as hal;
     use rp2040_hal::fugit::RateExtU32;
     use rp2040_hal::gpio::bank0::Gpio21;
     use rp2040_hal::gpio::FunctionSio;
     use rp2040_hal::gpio::Interrupt::EdgeLow;
+    use rp2040_hal::gpio::PinState;
     use rp2040_hal::gpio::PullDown;
     use rp2040_hal::gpio::PullNone;
     use rp2040_hal::gpio::PullUp;
@@ -75,6 +78,7 @@ mod app {
         .ok()
         .unwrap();
 
+        let mut timer = hal::Timer::new(c.device.TIMER, &mut resets, &clocks);
         let mono = Systick::new(c.core.SYST, clocks.system_clock.freq().raw());
 
         let sio = hal::Sio::new(c.device.SIO);
@@ -94,6 +98,14 @@ mod app {
         //   W5500 INTn on GPIO21
         //   W5500 RSTn on GPIO20
         //   Green LED on GPIO25
+
+        let mut w5500_rst = pins
+            .gpio20
+            .into_pull_type::<PullNone>()
+            .into_push_pull_output_in_state(PinState::Low);
+        timer.delay_ms(2);
+        let _ = w5500_rst.set_high();
+        timer.delay_ms(2);
 
         let spi_ncs = pins
             .gpio17
@@ -134,6 +146,8 @@ mod app {
 
         let mut device = cotton_w5500::smoltcp::Device::new(bus, &mac);
 
+        device.enable_interrupt();
+
         let mut stack = Stack::new(
             &mut device,
             &unique_id,
@@ -166,8 +180,8 @@ mod app {
     #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
         let w5500_irq = cx.local.w5500_irq;
+        cx.local.device.clear_interrupt();
         w5500_irq.clear_interrupt(EdgeLow);
-        defmt::println!("ETH IRQ");
         cx.local.stack.poll(now_fn(), cx.local.device);
     }
 }

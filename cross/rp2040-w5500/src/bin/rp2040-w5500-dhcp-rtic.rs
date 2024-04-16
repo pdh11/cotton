@@ -13,6 +13,7 @@ use rp_pico as _; // includes boot2
 mod app {
     use cross_rp2040_w5500::unique;
     use embedded_hal::delay::DelayNs;
+    use embedded_hal::digital::OutputPin;
     use embedded_hal_bus::spi::ExclusiveDevice;
     use embedded_hal_bus::spi::NoDelay;
     use fugit::ExtU64;
@@ -26,6 +27,7 @@ mod app {
     use rp2040_hal::gpio::FunctionSio;
     use rp2040_hal::gpio::FunctionSpi;
     use rp2040_hal::gpio::Interrupt::EdgeLow;
+    use rp2040_hal::gpio::PinState;
     use rp2040_hal::gpio::PullDown;
     use rp2040_hal::gpio::PullNone;
     use rp2040_hal::gpio::SioInput;
@@ -121,6 +123,14 @@ mod app {
         //   W5500 RSTn on GPIO20
         //   Green LED on GPIO25
 
+        let mut w5500_rst = pins
+            .gpio20
+            .into_pull_type::<PullNone>()
+            .into_push_pull_output_in_state(PinState::Low);
+        timer.delay_ms(2);
+        let _ = w5500_rst.set_high();
+        timer.delay_ms(2);
+
         let spi_ncs = pins.gpio17.into_push_pull_output();
         let spi_mosi = pins.gpio19.into_function::<hal::gpio::FunctionSpi>();
         let spi_miso = pins.gpio16.into_function::<hal::gpio::FunctionSpi>();
@@ -183,8 +193,10 @@ mod app {
         };
         defmt::println!("Done link up");
 
+        // Interrupts not enabled for non-MACRAW mode
+        //
         let w5500_irq = pins.gpio21.into_floating_input();
-        w5500_irq.set_interrupt_enabled(EdgeLow, true);
+        // w5500_irq.set_interrupt_enabled(EdgeLow, true);
 
         unsafe {
             pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
