@@ -37,6 +37,7 @@ mod app {
     #[init(local = [ storage: NetworkStorage = NetworkStorage::new() ])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
+        let unique_id = unsafe { common::stm32_unique_id() };
         let core = cx.core;
         let (ethernet_peripherals, rcc) = common::split_peripherals(cx.device);
         let clocks = common::setup_clocks(rcc);
@@ -56,11 +57,12 @@ mod app {
 
         defmt::println!("Link up.");
 
-        let mac_address = common::mac_address();
+        let mac_address = cotton_unique::mac_address(&unique_id, b"stm32-eth");
         // NB stm32-eth implements smoltcp::Device not for
         // EthernetDMA, but for "&mut EthernetDMA"
         let mut stack = common::Stack::new(
             &mut &mut device.dma,
+            &unique_id,
             &mac_address,
             &mut cx.local.storage.sockets[..],
             now_fn(),
@@ -97,18 +99,24 @@ mod app {
 }
 
 /// All storage required for networking
-pub struct NetworkStorage {
-    pub rx_ring: [RxRingEntry; 2],
-    pub tx_ring: [TxRingEntry; 2],
-    pub sockets: [iface::SocketStorage<'static>; 2],
+struct NetworkStorage {
+    rx_ring: [RxRingEntry; 2],
+    tx_ring: [TxRingEntry; 2],
+    sockets: [iface::SocketStorage<'static>; 2],
 }
 
 impl NetworkStorage {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         NetworkStorage {
             rx_ring: [RxRingEntry::new(), RxRingEntry::new()],
             tx_ring: [TxRingEntry::new(), TxRingEntry::new()],
             sockets: [SocketStorage::EMPTY; 2],
         }
+    }
+}
+
+impl Default for NetworkStorage {
+    fn default() -> Self {
+        Self::new()
     }
 }

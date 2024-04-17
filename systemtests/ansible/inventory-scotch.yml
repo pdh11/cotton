@@ -6,3 +6,6 @@ raspberrypis:
   hosts:
     scotch:
       eth1_address: A0:CE:C8:81:A4:43
+      probes:
+        COTTON_PROBE_RP2040_W5500: 2e8a:000c:E662588817198D2E
+        COTTON_PROBE_STM32F746_NUCLEO: 0483:374b:066EFF485550755187064112

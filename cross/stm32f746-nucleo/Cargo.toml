@@ -1,6 +1,7 @@
 [package]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 name = "cotton-stm32f746-nucleo"
+publish = false
 edition = "2021"
 version = "0.0.1"
 autotests = false
@@ -31,6 +32,7 @@ harness = false
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default_features = false, features = ["smoltcp"] }
 cotton-netif = { path = "../../cotton-netif", default_features = false }
+cotton-unique = { path = "../../cotton-unique" }
 smoltcp = { version = "0.11", features = [ "medium-ethernet", "proto-ipv4", "socket-udp", "socket-tcp", "defmt", "proto-dhcpv4", "socket-dhcpv4", "proto-igmp"], default-features = false }
 stm32-eth = { version = "0.6", features = ["defmt", "stm32f746", "smoltcp-phy"], default-features = false }
 ieee802_3_miim = "0.8"

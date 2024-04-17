@@ -1,0 +1,28 @@
+[package]
+name = "cotton-w5500"
+version = "0.1.0"
+description = "smoltcp driver for Wiznet W5500 SPI-to-Ethernet chip in MACRAW mode"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = ["network-programming", "embedded"]
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+edition = "2021"
+license = "CC0-1.0"
+rust-version = "1.75"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "nightly"]
+
+[dependencies]
+w5500 = { git="https://github.com/kellerkindt/w5500", rev = "74ef8391", version = "0.4.1" }
+defmt = "0.3.2"
+smoltcp = { version = "0.11", default-features = false, features = [ "medium-ethernet", "proto-ipv4", "socket-raw"], optional = true }
+rp2040-hal = { version = "0.10", optional = true }
+mockall = { version = "0.12.1", optional = true }
+
+[features]
+default = ["smoltcp", "std"]
+std = ["dep:mockall"]
+smoltcp = ["dep:smoltcp"]
+w5500-evb-pico = ["dep:rp2040-hal"]

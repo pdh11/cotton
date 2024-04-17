@@ -1,0 +1,18 @@
+[package]
+name = "cotton-unique"
+version = "0.1.0"
+description = "Deterministic per-device unique IDs for embedded systems"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+edition = "2021"
+license = "CC0-1.0"
+rust-version = "1.75"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "nightly"]
+
+[dependencies]
+siphasher = { version = "1", default-features = false }
+uuid = { version = "1.8", default-features = false, features = ["v8"] }

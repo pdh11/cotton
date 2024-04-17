@@ -1,9 +1,9 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-runner = "probe-rs run --chip STM32F746ZGTx"
+runner = "probe-rs run --chip RP2040"
 rustflags = [
   "-C", "link-arg=-Tlink.x",
   "-C", "link-arg=-Tdefmt.x",
 ]
 
 [build]
-target = "thumbv7em-none-eabi"
+target = "thumbv6m-none-eabi"

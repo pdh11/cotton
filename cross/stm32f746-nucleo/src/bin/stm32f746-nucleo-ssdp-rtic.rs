@@ -62,20 +62,6 @@ mod app {
     #[monotonic(binds = SysTick, default = true)]
     type Monotonic = Systick<1000>;
 
-    fn upnp_uuid() -> alloc::string::String {
-        // uuid crate isn't no_std :(
-        let mut u1 = common::unique_id(b"upnp-uuid-1");
-        let mut u2 = common::unique_id(b"upnp-uuid-2");
-        // Variant 1
-        u2 |= 0x8000_0000_0000_0000_u64;
-        u2 &= !0x4000_0000_0000_0000_u64;
-        // Version 5
-        u1 &= !0xF000;
-        u1 |= 0x5000;
-
-        alloc::format!("{:016x}{:016x}", u1, u2)
-    }
-
     fn now_fn() -> smoltcp::time::Instant {
         let time = monotonics::now().duration_since_epoch().ticks();
         smoltcp::time::Instant::from_millis(time as i64)
@@ -87,6 +73,7 @@ mod app {
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
         common::init_heap(&super::ALLOCATOR);
+        let unique_id = unsafe { common::stm32_unique_id() };
         let core = cx.core;
 
         let (ethernet_peripherals, rcc) = common::split_peripherals(cx.device);
@@ -107,11 +94,12 @@ mod app {
 
         defmt::println!("Link up.");
 
-        let mac_address = common::mac_address();
+        let mac_address = cotton_unique::mac_address(&unique_id, b"stm32-eth");
         // NB stm32-eth implements smoltcp::Device not for
         // EthernetDMA, but for "&mut EthernetDMA"
         let mut stack = common::Stack::new(
             &mut &mut device.dma,
+            &unique_id,
             &mac_address,
             &mut cx.local.storage.sockets[..],
             now_fn(),
@@ -152,7 +140,10 @@ mod app {
             _ = ssdp.on_network_event(&ev, &wi, &ws);
             ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
 
-            let uuid = upnp_uuid();
+            let uuid = alloc::format!(
+                "{:032x}",
+                cotton_unique::uuid(&unique_id, b"upnp")
+            );
             ssdp.advertise(
                 uuid,
                 cotton_ssdp::Advertisement {
@@ -265,5 +256,11 @@ impl NetworkStorage {
             tx_metadata: [smoltcp::socket::udp::PacketMetadata::EMPTY; 8],
             tx_storage: [0; 2048],
         }
+    }
+}
+
+impl Default for NetworkStorage {
+    fn default() -> Self {
+        Self::new()
     }
 }

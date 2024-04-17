@@ -2,6 +2,8 @@
 members = [
     "cotton-netif",
     "cotton-ssdp",
+    "cotton-unique",
+    "cotton-w5500",
     "systemtests",
 ]
 
