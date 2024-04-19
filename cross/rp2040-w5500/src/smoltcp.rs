@@ -140,4 +140,9 @@ impl RefreshTimer {
         self.next_salvo += smoltcp::time::Duration::from_secs(period_sec);
         self.phase = (self.phase + 1) % 4;
     }
+
+    /// Reset the refresh timer (e.g. if network has gone away and come back)
+    pub fn reset(&mut self, now: Instant) {
+        *self = Self::new(now)
+    }
 }

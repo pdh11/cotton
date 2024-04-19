@@ -226,27 +226,8 @@ mod app {
         );
         let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let mut ssdp = cotton_ssdp::engine::Engine::new();
+        let ssdp = cotton_ssdp::engine::Engine::new();
 
-        let ix = cotton_netif::InterfaceIndex(
-            core::num::NonZeroU32::new(1).unwrap(),
-        );
-        let ev = cotton_netif::NetworkEvent::NewLink(
-            ix,
-            "".to_string(),
-            cotton_netif::Flags::UP
-                | cotton_netif::Flags::RUNNING
-                | cotton_netif::Flags::MULTICAST,
-        );
-        {
-            let wi = WrappedInterface::new(
-                &mut stack.interface,
-                &mut device,
-                now_fn(),
-            );
-            let ws = WrappedSocket::new(&mut udp_socket);
-            _ = ssdp.on_network_event(&ev, &wi, &ws);
-        }
         let uuid = cotton_unique::uuid(&unique_id, b"upnp");
         let udp_handle = stack.socket_set.add(udp_socket);
 
@@ -295,11 +276,12 @@ mod app {
         let mut do_refresh = false;
         let mut next_wake = refresh_timer.next_refresh(now);
         if next_wake == smoltcp::time::Duration::ZERO {
-            do_refresh = true;
+            if old_ip.is_some() {
+                do_refresh = true;
+            }
             refresh_timer.update_refresh(now);
             next_wake = refresh_timer.next_refresh(now);
         }
-
         if let Some(duration) = next {
             next_wake = next_wake.min(duration);
         }
@@ -312,16 +294,33 @@ mod app {
         let ws = WrappedSocket::new(socket);
 
         if let (None, Some(ip)) = (old_ip, new_ip) {
+            let ix = cotton_netif::InterfaceIndex(
+                core::num::NonZeroU32::new(1).unwrap(),
+            );
+            let ev = cotton_netif::NetworkEvent::NewLink(
+                ix,
+                "".to_string(),
+                cotton_netif::Flags::UP
+                    | cotton_netif::Flags::RUNNING
+                    | cotton_netif::Flags::MULTICAST,
+            );
+
+            let wi = WrappedInterface::new(
+                &mut stack.interface,
+                cx.local.device,
+                now,
+            );
+            _ = ssdp.on_network_event(&ev, &wi, &ws);
+
             ssdp.on_new_addr_event(
-                &cotton_netif::InterfaceIndex(
-                    core::num::NonZeroU32::new(1).unwrap(),
-                ),
+                &ix,
                 &no_std_net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
                 &ws,
             );
 
             ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
 
+            defmt::println!("Advertising!");
             ssdp.advertise(
                 alloc::format!("{:032x}", uuid),
                 cotton_ssdp::Advertisement {
@@ -330,6 +329,7 @@ mod app {
                 },
                 &ws,
             );
+            refresh_timer.reset(now);
         } else if do_refresh {
             defmt::println!("Refreshing!");
             ssdp.refresh(&ws);
