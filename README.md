@@ -26,6 +26,66 @@ So far:
    cotton-netif, in order to do the Right Thing on multi-homed hosts
    (but meaning that it is unlikely to work on Windows platforms).
 
+ - cotton-unique: creating deterministic but per-device unique
+   identifiers such as MAC addresses. Not yet on crates.io as it
+   depends on a small unmerged PR to the rp2040-flash crate, but
+   released here in case anyone needs example code.
+
+ - cotton-w5500: smoltcp driver for the Wiznet W5500 Ethernet
+   controller in MACRAW mode, including interrupt-driven mode. Not yet
+   on crates.io as it depends on a git prerelease of the w5500 crate,
+   but released here in case anyone needs example code.
+
+These crates are `no_std`-compatible, meaning that they can be used on
+embedded systems. In fact, all pushes to my local (not Github)
+continuous-integration server are *automatically* tested on both STM32
+and RP2040 platforms. You can read about how that is set up on my
+blog: *[Part
+one](https://pdh11.blogspot.com/2024/02/system-testing-embedded-code-in-rust.html),
+[Part two](https://pdh11.blogspot.com/2024/03/system-tests-2.html),
+[Part three](https://pdh11.blogspot.com/2024/04/blog-post.html)*.
+
+These system-tests also serve as example code combining the Cotton
+crates with the wider ecosystem, including examples where the
+combining of the wider ecosystem components needed a little research
+in its own right even before involving Cotton, so perhaps that in
+itself will be useful to others:
+
+  - [stm32f746-nucleo-hello](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo/src/bin/stm32f746-nucleo-hello.rs):
+    basic test that an attached STM32F746-Nucleo development board is
+    working correctly;
+
+  - [stm32f746-nucleo-dhcp-rtic](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo/src/bin/stm32f746-nucleo-dhcp-rtic.rs):
+    combining [RTIC (1.x)](https://rtic.rs/1/book/en/) +
+    [stm32-eth](https://crates.io/crates/stm32-eth/) +
+    [smoltcp](https://crates.io/crates/smoltcp) +
+    cotton-unique (a.k.a. how *not* to have a hardcoded,
+    made-up MAC address!);
+
+  - [stm32f746-nucleo-ssdp-rtic](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo/src/bin/stm32f746-nucleo-dhcp-rtic.rs):
+    combining RTIC + stm32-eth + smoltcp + cotton-unique + cotton-ssdp;
+    
+  - [rp2040-w5500-hello](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/hello.rs):
+    basic test that an attached W5500-Pico-EVB development board (or
+    anything that equivalently wires together an RP2040 and a W5500)
+    is working correctly;
+    
+  - [rp2040-w5500-dhcp-rtic](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/rp2040-w5500-dhcp-rtic.rs):
+    combining 
+    [rp2040-hal](https://crates.io/crates/rp2040-hal) + RTIC + 
+    [w5500-hl](https://crates.io/crates/w5500-hl) + 
+    [w5500-dhcp](https://crates.io/crates/w5500-dhcp) + cotton-unique;
+    
+  - [rp2040-w5500macraw-dhcp-rtic](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/rp2040-w5500macraw-dhcp-rtic.rs):
+    combining rp2040-hal + RTIC +
+    [w5500](https://crates.io/crates/w5500) (MACRAW mode with
+    interrupts) + smoltcp + cotton-unique (note that's a *different* W5500
+    crate);
+    
+  - [rp2040-w5500macraw-ssdp-rtic](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/rp2040-w5500macraw-ssdp-rtic.rs):
+    combining rp2040-hal + RTIC + w5500 (MACRAW mode with
+    interrupts) + smoltcp + cotton-unique + cotton-ssdp;
+
 My long-term goals for this project as a whole:
 
  - provide useful, solid, well-tested components to folks needing Rust
