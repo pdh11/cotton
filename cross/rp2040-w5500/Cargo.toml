@@ -32,7 +32,7 @@ harness = false
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default_features = false, features = ["smoltcp"] }
 cotton-netif = { path = "../../cotton-netif", default_features = false }
-cotton-unique = { path = "../../cotton-unique" }
+cotton-unique = { path = "../../cotton-unique", features = ["rp2040"] }
 cotton-w5500 = { path = "../../cotton-w5500", default_features = false, features = ["smoltcp", "w5500-evb-pico"] }
 cortex-m = { version = "0.7.7", features = ["critical-section"] }
 cortex-m-rt = "0.7"
