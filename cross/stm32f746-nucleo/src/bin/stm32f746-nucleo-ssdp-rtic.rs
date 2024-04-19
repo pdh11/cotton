@@ -73,7 +73,9 @@ mod app {
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
         common::init_heap(&super::ALLOCATOR);
-        let unique_id = unsafe { common::stm32_unique_id() };
+        let unique_id = cotton_unique::stm32::unique_chip_id(
+            stm32_device_signature::device_id(),
+        );
         let core = cx.core;
 
         let (ethernet_peripherals, rcc) = common::split_peripherals(cx.device);

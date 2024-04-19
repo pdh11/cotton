@@ -13,7 +13,7 @@ use smoltcp::iface::{self, SocketStorage};
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
     use crate::NetworkStorage;
-    use cross_rp2040_w5500::{smoltcp::Stack, unique};
+    use cross_rp2040_w5500::smoltcp::Stack;
     use embedded_hal::delay::DelayNs;
     use embedded_hal::digital::OutputPin;
     use fugit::ExtU64;
@@ -55,7 +55,7 @@ mod app {
     #[init(local = [ storage: NetworkStorage = NetworkStorage::new() ])]
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
-        let unique_id = unsafe { unique::unique_flash_id() };
+        let unique_id = unsafe { cotton_unique::rp2040::unique_flash_id() };
         let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
         defmt::println!("MAC address: {:x}", mac);
 

@@ -23,21 +23,6 @@ pub fn setup_clocks(rcc: stm32_eth::stm32::RCC) -> Clocks {
     rcc.cfgr.sysclk(100.MHz()).hclk(100.MHz()).freeze()
 }
 
-/// Returns the unique chip ID of this particular STM32
-///
-/// See RM0385 rev5 s41.1.
-///
-/// # Safety
-///
-/// This function is not safe on non-STM32 platforms, as it reads from
-/// a fixed physical memory location.
-#[must_use]
-pub unsafe fn stm32_unique_id() -> UniqueId {
-    let mut unique_bytes = [0u8; 16];
-    ptr::copy(0x1ff0_f420 as *const u8, unique_bytes.as_mut_ptr(), 12);
-    UniqueId::new(&unique_bytes)
-}
-
 type MdioPa2 =
     hal::gpio::Pin<'A', 2, hal::gpio::Alternate<11, hal::gpio::PushPull>>;
 

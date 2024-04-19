@@ -36,7 +36,7 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 use core::hash::Hasher;
 
-/// An object from qhich unique identifers can be obtained
+/// An object from which unique identifers can be obtained
 pub struct UniqueId {
     id: [u64; 2],
 }
@@ -107,6 +107,55 @@ pub fn uuid(unique: &UniqueId, salt: &[u8]) -> uuid::Uuid {
     let u2 = unique.id2(salt, 1).to_be_bytes();
     bytes[8..16].copy_from_slice(&u2);
     uuid::Uuid::new_v8(bytes)
+}
+
+#[cfg(feature = "rp2040")]
+/// Obtaining a UniqueID on RP2040 platforms
+pub mod rp2040 {
+    /// Construct a UniqueId for RP2040 from the SPI flash unique ID
+    ///
+    /// The RP2040 itself does not contain a unique chip identifier.
+    /// But RP2040-based designs typically incorporate a SPI flash
+    /// chip which *does* contain a unique chip identifier, which is
+    /// what is used here.
+    ///
+    /// Note that not all SPI flash chips have this feature. The
+    /// Winbond parts commonly seen on RP2040 devboards
+    /// (JEDEC=0xEF7015) support an 8-byte unique ID;
+    /// https://forums.raspberrypi.com/viewtopic.php?t=331949 suggests
+    /// that LCSC (Zetta) parts have a 16-byte unique ID (which is
+    /// *not* unique in just its first 8 bytes), JEDEC=0xBA6015.
+    /// Macronix and Spansion parts do not have a unique ID.
+    ///
+    /// # Safety
+    ///
+    /// Must be run on RP2040 as it calls a RP2040-specific function in
+    /// rp2040-flash. Also, no other flash access can be happening
+    /// concurrently (e.g. in other threads); it is recommended to call
+    /// this once during early startup and then pass the result around as
+    /// needed.
+    pub unsafe fn unique_flash_id() -> super::UniqueId {
+        let mut unique_bytes = [0u8; 16];
+        rp2040_flash::flash::flash_unique_id(&mut unique_bytes, true);
+        super::UniqueId::new(&unique_bytes)
+    }
+}
+
+#[cfg(feature = "stm32")]
+/// Obtaining a UniqueId on STM32 platforms
+pub mod stm32 {
+    /// Construct a UniqueId for STM32 from the chip unique ID
+    ///
+    /// Also known as "device signature", see for example RM0385 rev5 s41.1.
+    /// All STM32s have a unique ID, but different generations of STM32 have
+    /// it at different fixed locations. The `stm32_device_signature` crate
+    /// can be used to abstract away these differences and return the raw
+    /// 12-byte identifier.
+    pub fn unique_chip_id(id: &'static [u8; 12]) -> super::UniqueId {
+        let mut unique_bytes = [0u8; 16];
+        unique_bytes[0..12].copy_from_slice(id);
+        super::UniqueId::new(&unique_bytes)
+    }
 }
 
 #[cfg(test)]
