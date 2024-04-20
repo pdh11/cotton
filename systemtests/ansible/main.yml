@@ -18,7 +18,8 @@
       - libudev-dev
       - wireshark
       - xauth
-
+      - net-tools
+      - prometheus-node-exporter
 
 
 ########
