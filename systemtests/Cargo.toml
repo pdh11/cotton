@@ -21,11 +21,11 @@ cotton-ssdp = { path = "../cotton-ssdp" }
 serial_test = { version = "3" }
 assertables = { version = "7" }
 nonblock = { version = "0.2" }
-mio = { version = "0.8.11", default_features = false, features = [
+mio = { version = "0.8.11", default-features = false, features = [
   "os-poll",
   "net",
 ] }
-uuid = { version = "1.8", default_features = false, features = ["v4"] }
+uuid = { version = "1.8", default-features = false, features = ["v4"] }
 
 [features]
 arm = []

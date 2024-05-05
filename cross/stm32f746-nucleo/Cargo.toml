@@ -30,10 +30,10 @@ doctest = false
 harness = false
 
 [dependencies]
-cotton-ssdp = { path = "../../cotton-ssdp", default_features = false, features = [
+cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features = [
   "smoltcp",
 ] }
-cotton-netif = { path = "../../cotton-netif", default_features = false }
+cotton-netif = { path = "../../cotton-netif", default-features = false }
 cotton-unique = { path = "../../cotton-unique", features = ["stm32"] }
 smoltcp = { version = "0.11", features = [
   "medium-ethernet",
@@ -62,9 +62,9 @@ systick-monotonic = "1.0"
 rtic = { package = "cortex-m-rtic", version = "1.0" }
 fugit = "0.3"
 siphasher = { version = "1", default-features = false }
-linked_list_allocator = { version = "0.10", default_features = false, features = [
+linked_list_allocator = { version = "0.10", default-features = false, features = [
   "use_spin_nightly",
 ] }
-no-std-net = { version = "0.6", default_features = false }
+no-std-net = { version = "0.6", default-features = false }
 # Ours is a F74x but the location is the same
 stm32-device-signature = { version = "0.3.3", features = ["stm32f76x"] }
