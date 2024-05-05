@@ -1,14 +1,12 @@
 [workspace]
 members = [
-    "cotton-netif",
-    "cotton-ssdp",
-    "cotton-unique",
-    "cotton-w5500",
-    "systemtests",
+  "cotton-netif",
+  "cotton-ssdp",
+  "cotton-unique",
+  "cotton-w5500",
+  "systemtests",
 ]
 
-exclude = [
-    "cross",
-]
+exclude = ["cross"]
 
 resolver = "2"
