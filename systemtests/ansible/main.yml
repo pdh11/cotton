@@ -20,6 +20,7 @@
       - xauth
       - net-tools
       - prometheus-node-exporter
+      - uhubctl
 
 
 ########
@@ -158,15 +159,26 @@
       user: laminar
       key: "{{ lookup('file', 'laminar-ssh.pub') }}"
 
-  # Set permissions on USB ST-Link and RPi Picoprobe devices to let
-  # the laminar user program them
+  # Set permissions on USB ST-Link and RPi Picoprobe devices (to let
+  # the laminar user program them), also USB hubs (for power control)
   - name: give laminar permission over ST-Links
     copy:
       dest: /etc/udev/rules.d/99-laminar.rules
       content: |
         SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", GROUP="laminar", MODE="0660"
         SUBSYSTEM=="usb", ATTRS{idVendor}=="2e8a", GROUP="laminar", MODE="0660"
+        SUBSYSTEM=="usb", ATTRS{idVendor}=="05e3", GROUP="laminar", MODE="0660"
 
+  # Add sudoers rule for laminar user
+  - name: let laminar user control USB power
+    community.general.sudoers:
+      name: usb-control
+      state: present
+      user: laminar
+      commands:
+        - /usr/local/bin/tests-on
+        - /usr/local/bin/tests-off
+      nopassword: true
 
 
 ########
@@ -386,3 +398,32 @@
       path: /etc/ssh/sshd_config
       regexp: '^PermitUserEnvironment'
       line: 'PermitUserEnvironment COTTON_*'
+
+  # Set up start-of-test script
+  - name: tests-on
+    copy:
+      dest: /usr/local/bin/tests-on
+      mode: 0755
+      content: |
+        #!/bin/bash -x
+        echo 1 > /sys/class/gpio/gpio13/value
+        echo "1-1.5" > /sys/bus/usb/drivers/usb/unbind
+        echo "1-1.5" > /sys/bus/usb/drivers/usb/bind
+        sleep 1
+        echo "1-1.5.1" > /sys/bus/usb/drivers/usb/bind
+        echo "1-1.5.2" > /sys/bus/usb/drivers/usb/bind
+        uhubctl -l 1-1.5 -a on -p 1
+        uhubctl -l 1-1.5 -a on -p 2
+
+  # Set up end-of-test script
+  - name: tests-off
+    copy:
+      dest: /usr/local/bin/tests-off
+      mode: 0755
+      content: |
+        #!/bin/bash -x
+        echo "1-1.5.1" > /sys/bus/usb/drivers/usb/unbind
+        echo "1-1.5.2" > /sys/bus/usb/drivers/usb/unbind
+        uhubctl -l 1-1.5 -a off -p 1
+        uhubctl -l 1-1.5 -a off -p 2
+        echo 0 > /sys/class/gpio/gpio13/value
