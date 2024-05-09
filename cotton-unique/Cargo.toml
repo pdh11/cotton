@@ -11,7 +11,6 @@ rust-version = "1.75"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "nightly"]
 
 [package.metadata.cargo-all-features]
 skip_feature_sets = ["rp2040"]

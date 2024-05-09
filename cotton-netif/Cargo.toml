@@ -12,7 +12,6 @@ rust-version = "1.75"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "nightly"]
 
 [[example]]
 name = "netif-monitor"

@@ -12,7 +12,6 @@ rust-version = "1.75"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "nightly"]
 
 [dependencies]
 cotton-netif = { path = "../cotton-netif", version = "0.0.4", default-features = false }

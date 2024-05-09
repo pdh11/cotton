@@ -12,7 +12,6 @@ rust-version = "1.75"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "nightly"]
 
 [dependencies]
 w5500 = { git = "https://github.com/kellerkindt/w5500", rev = "74ef8391", version = "0.4.1" }

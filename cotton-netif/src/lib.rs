@@ -23,11 +23,11 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
-#![cfg_attr(nightly, feature(doc_auto_cfg))]
-#![cfg_attr(nightly, feature(doc_cfg_hide))]
-#![cfg_attr(nightly, doc(cfg_hide(doc)))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg_hide))]
+#![cfg_attr(docsrs, doc(cfg_hide(doc)))]
 
-// NB we use CI to set the "nightly" cfg, it isn't built-in
+// NB "docsrs" here really means "nightly", but that isn't an available cfg
 
 extern crate alloc;
 
