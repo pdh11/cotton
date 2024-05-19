@@ -13,7 +13,7 @@ rust-version = "1.75"
 all-features = true
 
 [package.metadata.cargo-all-features]
-skip_feature_sets = ["rp2040"]
+skip_feature_sets = [["rp2040"]]
 
 [dependencies]
 siphasher = { version = "1", default-features = false }

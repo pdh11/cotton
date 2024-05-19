@@ -14,7 +14,7 @@ publish = false
 # tons of devboards. We don't even want it to require a cross-compiler
 # (feature="arm").
 [package.metadata.cargo-all-features]
-skip_feature_sets = ["arm"]
+skip_feature_sets = [["arm"]]
 
 [dev-dependencies]
 cotton-ssdp = { path = "../cotton-ssdp" }
