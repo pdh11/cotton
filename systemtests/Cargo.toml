@@ -9,12 +9,13 @@ authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
 publish = false
+autotests = false
 
 # We don't want cargo test-all-features to require the existence of
 # tons of devboards. We don't even want it to require a cross-compiler
 # (feature="arm").
 [package.metadata.cargo-all-features]
-skip_feature_sets = [["arm"]]
+skip_feature_sets = [["arm"], ["rp2040-w5500"], ["stm32f746-nucleo"]]
 
 [dev-dependencies]
 cotton-ssdp = { path = "../cotton-ssdp" }
@@ -31,3 +32,7 @@ uuid = { version = "1.8", default-features = false, features = ["v4"] }
 arm = []
 stm32f746-nucleo = ["arm"]
 rp2040-w5500 = ["arm"]
+
+[[test]]
+name = "device"
+required-features = ["arm"]
