@@ -1,19 +1,14 @@
+use crate::device_test::{device_test, DeviceTest};
+use crate::ssdp_test::ssdp_test;
 use serial_test::*;
 use std::panic;
 use std::time::Duration;
-use crate::device_test::{device_test, DeviceTest};
-use crate::ssdp_test::ssdp_test;
 
 fn rp2040_test<F: FnOnce(DeviceTest) -> () + panic::UnwindSafe>(
     firmware: &str,
     f: F,
 ) {
-    device_test(
-        "RP2040",
-        "COTTON_PROBE_RP2040_W5500",
-        firmware,
-        f,
-    );
+    device_test("RP2040", "COTTON_PROBE_RP2040_W5500", firmware, f);
 }
 
 #[test]
