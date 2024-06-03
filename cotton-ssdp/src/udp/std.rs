@@ -179,7 +179,7 @@ fn receive_using_recvmsg(
         Some(&mut cmsgspace),
         MsgFlags::empty(),
     )?;
-    let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) = r.cmsgs().next()
+    let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) = r.cmsgs()?.next()
     else {
         println!("receive: no pktinfo");
         return Err(std::io::ErrorKind::InvalidData.into());

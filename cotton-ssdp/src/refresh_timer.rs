@@ -2,7 +2,7 @@ use rand::Rng;
 use std::time::Duration;
 
 #[cfg(test)]
-use mock_instant::Instant;
+use mock_instant::thread_local::Instant;
 
 #[cfg(not(test))]
 use std::time::Instant;
@@ -60,6 +60,7 @@ impl RefreshTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mock_instant::thread_local::MockClock;
 
     #[test]
     fn retransmit_due_immediately() {
@@ -75,22 +76,22 @@ mod tests {
         f.update_refresh();
         let t = f.next_refresh();
         assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
-        mock_instant::MockClock::advance(t);
+        MockClock::advance(t);
 
         f.update_refresh();
         let t = f.next_refresh();
         assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
+        MockClock::advance(t);
 
         f.update_refresh();
         let t = f.next_refresh();
         assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
+        MockClock::advance(t);
 
         f.update_refresh();
         let t = f.next_refresh();
         assert!(t < Duration::from_secs(20));
-        mock_instant::MockClock::advance(t);
+        MockClock::advance(t);
 
         f.update_refresh();
         let t = f.next_refresh();
