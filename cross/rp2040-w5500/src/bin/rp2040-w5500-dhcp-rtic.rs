@@ -5,7 +5,6 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 
 use defmt_rtt as _; // global logger
-use defmt_rtt as _;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 

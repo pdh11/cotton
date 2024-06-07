@@ -179,7 +179,7 @@ fn receive_using_recvmsg(
         Some(&mut cmsgspace),
         MsgFlags::empty(),
     )?;
-    let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) = r.cmsgs().next()
+    let Some(ControlMessageOwned::Ipv4PacketInfo(pi)) = r.cmsgs()?.next()
     else {
         println!("receive: no pktinfo");
         return Err(std::io::ErrorKind::InvalidData.into());
@@ -236,6 +236,7 @@ mod tests {
     use super::*;
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::Ipv4PacketInfo;
+    use nix::sys::socket::sockopt::Ipv4OrigDstAddr;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV6;
     use std::os::unix::io::FromRawFd;
@@ -533,6 +534,31 @@ mod tests {
         rx.set_nonblocking(true).unwrap();
         // But! we forget to do the setsockopt:
         //setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
+        let rx_port = rx.local_addr().unwrap().port();
+        assert!(send_from(
+            &tx,
+            b"foo",
+            &SocketAddr::new(localhost, rx_port),
+            &IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        )
+        .is_ok());
+        let mut buf = [0u8; 1500];
+        let r = receive_to(&rx, &mut buf);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn recvmsg_too_much_cmsg_is_error() {
+        // cf. localhost_source_localhost_dest()
+        let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        //let tx_port = tx.local_addr().unwrap().port();
+        let rx = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+        rx.set_nonblocking(true).unwrap();
+        // But! with both sockopts set our buffer would overflow -- nix errors
+        setsockopt(&rx, Ipv4PacketInfo, &true).unwrap();
+        setsockopt(&rx, Ipv4OrigDstAddr, &true).unwrap();
         let rx_port = rx.local_addr().unwrap().port();
         assert!(send_from(
             &tx,
