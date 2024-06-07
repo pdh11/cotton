@@ -33,7 +33,7 @@ nix = { version = "0.29", default-features = false, features = [
   "socket",
   "uio",
 ], optional = true }
-libc = { version = "0.2.153", default-features = false, optional = true }
+libc = { version = "0.2.155", default-features = false, optional = true }
 uuid = { version = "1.8", default-features = false, features = [
   "v4",
 ], optional = true }
