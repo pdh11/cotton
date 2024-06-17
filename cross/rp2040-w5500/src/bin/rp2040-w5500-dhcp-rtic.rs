@@ -74,7 +74,7 @@ mod app {
     #[init(local = [usb_bus: Option<u32> = None])]
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
-        let unique_id = unsafe { cotton_unique::rp2040::unique_flash_id() };
+        let unique_id = unsafe { cross_rp2040_w5500::unique_flash_id() };
         let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
         let mac = w5500_ll::net::Eui48Addr { octets: mac };
 

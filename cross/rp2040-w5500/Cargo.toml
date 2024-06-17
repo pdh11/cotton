@@ -34,7 +34,7 @@ cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features =
   "smoltcp",
 ] }
 cotton-netif = { path = "../../cotton-netif", default-features = false }
-cotton-unique = { path = "../../cotton-unique", features = ["rp2040"] }
+cotton-unique = { path = "../../cotton-unique", default-features = false }
 cotton-w5500 = { path = "../../cotton-w5500", default-features = false, features = [
   "smoltcp",
   "w5500-evb-pico",

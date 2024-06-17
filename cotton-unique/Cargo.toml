@@ -12,14 +12,9 @@ rust-version = "1.75"
 [package.metadata.docs.rs]
 all-features = true
 
-[package.metadata.cargo-all-features]
-skip_feature_sets = [["rp2040"]]
-
 [dependencies]
 siphasher = { version = "1", default-features = false }
 uuid = { version = "1.8", default-features = false, features = ["v8"] }
-rp2040-flash = { git = "https://github.com/pdh11/rp2040-flash", rev = "2bf31c9", version = "0.4", optional = true }
 
 [features]
-rp2040 = ["dep:rp2040-flash"]
 stm32 = []

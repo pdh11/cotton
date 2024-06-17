@@ -235,8 +235,8 @@ pub(crate) fn receive_to<T: AsRawFd>(
 mod tests {
     use super::*;
     use nix::sys::socket::setsockopt;
-    use nix::sys::socket::sockopt::Ipv4PacketInfo;
     use nix::sys::socket::sockopt::Ipv4OrigDstAddr;
+    use nix::sys::socket::sockopt::Ipv4PacketInfo;
     use std::net::Ipv6Addr;
     use std::net::SocketAddrV6;
     use std::os::unix::io::FromRawFd;

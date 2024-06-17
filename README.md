@@ -26,10 +26,11 @@ So far:
    cotton-netif, in order to do the Right Thing on multi-homed hosts
    (but meaning that it is unlikely to work on Windows platforms).
 
- - cotton-unique: creating deterministic but per-device unique
-   identifiers such as MAC addresses. Not yet on crates.io as it
-   depends on a small unmerged PR to the rp2040-flash crate, but
-   released here in case anyone needs example code.
+ - [cotton-unique](https://crates.io/crates/cotton-unique)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-unique)](https://crates.io/crates/cotton-unique)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-unique)](https://crates.io/crates/cotton-unique)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-unique)](https://docs.rs/cotton-unique/latest/cotton_unique/): creating deterministic but per-device unique
+   identifiers such as MAC addresses.
 
  - cotton-w5500: smoltcp driver for the Wiznet W5500 Ethernet
    controller in MACRAW mode, including interrupt-driven mode. Not yet

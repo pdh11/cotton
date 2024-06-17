@@ -113,7 +113,7 @@ mod app {
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
         super::init_heap();
-        let unique_id = unsafe { cotton_unique::rp2040::unique_flash_id() };
+        let unique_id = unsafe { cross_rp2040_w5500::unique_flash_id() };
         let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
         defmt::println!("MAC address: {:x}", mac);
 
