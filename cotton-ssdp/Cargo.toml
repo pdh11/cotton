@@ -43,7 +43,7 @@ rand = { version = "0.8", default-features = false, features = [
   "std_rng",
 ], optional = true }
 mock_instant = { version = "0.5", default-features = false, optional = true }
-mio = { version = "0.8.11", default-features = false, features = [
+mio = { version = "1", default-features = false, features = [
   "os-poll",
   "net",
 ], optional = true }
