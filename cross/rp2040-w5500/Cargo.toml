@@ -48,8 +48,7 @@ rp-pico = "0.9"
 w5500-dhcp = { git = "https://github.com/newAM/w5500-rs", rev = "5384cec", version = "0.6", default-features = false, features = [
   "defmt",
 ] }
-# We need a rp2040-flash with rp2040-hal 0.10 in it
-rp2040-flash = { git = "https://github.com/pdh11/rp2040-flash", rev = "2bf31c9", version = "0.4" }
+rp2040-flash = "0.5"
 cortex-m-rtic = "1"
 rp2040-hal = { version = "0.10", features = ["rt"] }
 
