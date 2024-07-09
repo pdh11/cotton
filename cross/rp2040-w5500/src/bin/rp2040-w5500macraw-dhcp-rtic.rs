@@ -128,14 +128,17 @@ mod app {
             (spi_mosi, spi_miso, spi_sclk),
         );
 
-        let spi = spi.init(
+        let spi_bus = spi.init(
             &mut resets,
             clocks.peripheral_clock.freq(),
             16u32.MHz(),
             hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
         );
 
-        let bus = w5500::bus::FourWire::new(spi, spi_ncs);
+        let spi_device = 
+            embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi_bus, spi_ncs);
+
+        let bus = w5500::bus::FourWire::new(spi_device);
 
         let w5500_irq = pins.gpio21.into_pull_up_input();
         w5500_irq.set_interrupt_enabled(EdgeLow, true);

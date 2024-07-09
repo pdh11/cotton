@@ -64,7 +64,7 @@ embedded-hal-bus = "0.1"
 fugit = "0.3"
 systick-monotonic = "1.0"
 
-w5500 = { git = "https://github.com/kellerkindt/w5500", rev = "74ef8391", version = "0.4.1" }
+w5500 = "0.5"
 smoltcp = { version = "0.11", features = [
   "medium-ethernet",
   "proto-ipv4",

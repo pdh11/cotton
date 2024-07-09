@@ -151,6 +151,8 @@ pub mod w5500_evb_pico {
     use rp2040_hal::gpio::PullNone;
     use rp2040_hal::gpio::SioOutput;
     use rp2040_hal::pac::SPI0;
+    use embedded_hal_bus::spi::ExclusiveDevice;
+    use embedded_hal_bus::spi::NoDelay;
 
     type Spi0 = rp2040_hal::Spi<
         rp2040_hal::spi::Enabled,
@@ -165,7 +167,9 @@ pub mod w5500_evb_pico {
     type SpiChipSelect =
         rp2040_hal::gpio::Pin<Gpio17, FunctionSio<SioOutput>, PullNone>;
 
-    type SpiBus = w5500::bus::FourWire<Spi0, SpiChipSelect>;
+    type SpiDevice = ExclusiveDevice<Spi0, SpiChipSelect, NoDelay>;
+
+    type SpiBus = w5500::bus::FourWire<SpiDevice>;
 
     /// A W5500 driver specialised for the SPI setup on the W5500-EVB-Pico board
     pub type Device = super::Device<SpiBus>;
