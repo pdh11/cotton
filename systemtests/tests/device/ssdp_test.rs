@@ -20,6 +20,7 @@ impl SsdpTest {
 
     pub fn expect_seen(&self, notification_type: &str, timeout: Duration) {
         let start = Instant::now();
+        eprintln!("{:?}: Looking for {notification_type}", Instant::now());
 
         loop {
             {
@@ -28,6 +29,7 @@ impl SsdpTest {
                     return;
                 }
                 if start.elapsed() > timeout {
+                    eprintln!("{:?}: Didn't find it", Instant::now());
                     assert_contains!(v, notification_type);
                     return;
                 }
@@ -39,7 +41,8 @@ impl SsdpTest {
 }
 
 pub fn ssdp_test<F: FnOnce(SsdpTest) -> () + panic::UnwindSafe>(
-    advertise: Option<String>,
+    my_service: &'static str,
+    device_service: &'static str,
     f: F,
 ) {
     let t = SsdpTest::new();
@@ -58,19 +61,17 @@ pub fn ssdp_test<F: FnOnce(SsdpTest) -> () + panic::UnwindSafe>(
                 Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2))
                     .unwrap();
 
-            if let Some(nt) = advertise {
-                let uuid = uuid::Uuid::new_v4();
-                ssdp.advertise(
-                    uuid.to_string(),
-                    cotton_ssdp::Advertisement {
-                        notification_type: nt.to_string(),
-                        location: "http://127.0.0.1/test".to_string(),
-                    },
-                );
-            }
+            let uuid = uuid::Uuid::new_v4();
+            ssdp.advertise(
+                uuid.to_string(),
+                cotton_ssdp::Advertisement {
+                    notification_type: my_service.to_string(),
+                    location: "http://127.0.0.1/test".to_string(),
+                },
+            );
 
             ssdp.subscribe(
-                "ssdp:all",
+                device_service,
                 Box::new(move |r| {
                     println!("HOST GOT {r:?}");
                     if let cotton_ssdp::Notification::Alive {

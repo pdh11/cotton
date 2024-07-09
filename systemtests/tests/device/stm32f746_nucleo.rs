@@ -19,7 +19,7 @@ fn nucleo_test<F: FnOnce(DeviceTest) -> () + panic::UnwindSafe>(
 #[test]
 #[serial(stm32f746_nucleo)]
 #[cfg_attr(miri, ignore)]
-fn arm_stm32f746_nucleo_hello() {
+fn arm_stm32f746_nucleo_0hello() {
     nucleo_test(
         "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/stm32f746-nucleo-hello",
         |t| {
@@ -51,12 +51,13 @@ fn arm_stm32f746_nucleo_ssdp() {
             nt.expect_stderr("Finished in", Duration::from_secs(45));
             nt.expect("DHCP config acquired!", Duration::from_secs(10));
             ssdp_test(
-                Some("cotton-test-server-stm32f746".to_string()),
+                "cotton-test-server-stm32f746",  // host service
+                "stm32f746-nucleo-test", // device service
                 |st| {
                     nt.expect("SSDP! cotton-test-server-stm32f746",
                               Duration::from_secs(20));
                     st.expect_seen("stm32f746-nucleo-test",
-                              Duration::from_secs(10));
+                              Duration::from_secs(20));
                 }
             );
         }

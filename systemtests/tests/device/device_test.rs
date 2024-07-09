@@ -15,6 +15,24 @@ struct DeviceTestInner {
     errors: String,
 }
 
+impl DeviceTestInner {
+    fn poll(&mut self) {
+        let mut s = String::new();
+        self.stdout.read_available_to_string(&mut s).unwrap();
+        self.output.push_str(&s);
+        if !s.is_empty() {
+            eprintln!("{:?}: stdout {s}", Instant::now());
+        }
+
+        let mut s = String::new();
+        self.stderr.read_available_to_string(&mut s).unwrap();
+        self.errors.push_str(&s);
+        if !s.is_empty() {
+            eprintln!("{:?}: stderr {s}", Instant::now());
+        }
+    }
+}
+
 pub struct DeviceTest {
     inner: Mutex<DeviceTestInner>,
 }
@@ -60,14 +78,12 @@ impl DeviceTest {
 
     pub fn expect(&self, needle: &str, timeout: Duration) {
         let start = Instant::now();
+        eprintln!("{:?}: searching stdout for {needle}", Instant::now());
 
         loop {
             {
                 let mut inner = self.inner.lock().unwrap();
-                let mut s = String::new();
-                inner.stdout.read_available_to_string(&mut s).unwrap();
-                inner.output.push_str(&s);
-                print!("{s}");
+                inner.poll();
                 if let Some((_before, after)) = inner.output.split_once(needle)
                 {
                     eprintln!("OK: {needle}");
@@ -76,6 +92,7 @@ impl DeviceTest {
                 }
 
                 if start.elapsed() > timeout {
+                    eprintln!("{:?}: stdout {}", Instant::now(), inner.output);
                     assert_contains!(inner.output, needle);
                     return;
                 }
@@ -86,22 +103,21 @@ impl DeviceTest {
 
     pub fn expect_stderr(&self, needle: &str, timeout: Duration) {
         let start = Instant::now();
+        eprintln!("{:?}: searching stderr for {needle}", Instant::now());
 
         loop {
             {
                 let mut inner = self.inner.lock().unwrap();
-                let mut s = String::new();
-                inner.stderr.read_available_to_string(&mut s).unwrap();
-                inner.errors.push_str(&s);
-                print!("{s}");
-                if let Some((_before, after)) = inner.output.split_once(needle)
+                inner.poll();
+                if let Some((_before, after)) = inner.errors.split_once(needle)
                 {
                     eprintln!("OK: {needle}");
-                    inner.output = after.to_string();
+                    inner.errors = after.to_string();
                     return;
                 }
 
                 if start.elapsed() > timeout {
+                    eprintln!("{:?}: stderr {}", Instant::now(), inner.errors);
                     assert_contains!(inner.errors, needle);
                     return;
                 }

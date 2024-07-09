@@ -32,10 +32,11 @@ So far:
    [![docs.rs](https://img.shields.io/docsrs/cotton-unique)](https://docs.rs/cotton-unique/latest/cotton_unique/): creating deterministic but per-device unique
    identifiers such as MAC addresses.
 
- - cotton-w5500: smoltcp driver for the Wiznet W5500 Ethernet
-   controller in MACRAW mode, including interrupt-driven mode. Not yet
-   on crates.io as it depends on a git prerelease of the w5500 crate,
-   but released here in case anyone needs example code.
+ - [cotton-w5500](https://crates.io/crates/cotton-w5500)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-w5500)](https://crates.io/crates/cotton-w5500)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-w5500)](https://crates.io/crates/cotton-w5500)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-w5500)](https://docs.rs/cotton-w5500/latest/cotton_w5500/): smoltcp driver for the Wiznet W5500 Ethernet
+   controller in MACRAW mode, including interrupt-driven mode.
 
 These crates are `no_std`-compatible, meaning that they can be used on
 embedded systems. In fact, all pushes to my local (not Github)

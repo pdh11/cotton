@@ -140,7 +140,7 @@ mod app {
             );
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
-            ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+            ssdp.subscribe("cotton-test-server-stm32f746".to_string(), Listener {}, &ws);
 
             let uuid = alloc::format!(
                 "{:032x}",
