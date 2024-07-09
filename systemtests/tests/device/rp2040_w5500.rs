@@ -14,7 +14,7 @@ fn rp2040_test<F: FnOnce(DeviceTest) -> () + panic::UnwindSafe>(
 #[test]
 #[serial(rp2040_w5500)]
 #[cfg_attr(miri, ignore)]
-fn arm_rp2040_w5500_hello() {
+fn arm_rp2040_w5500_0hello() {
     rp2040_test(
         "../cross/rp2040-w5500/target/thumbv6m-none-eabi/debug/hello",
         |t| {
@@ -59,7 +59,8 @@ fn arm_rp2040_w5500macraw_ssdp_rtic() {
             nt.expect_stderr("Finished in", Duration::from_secs(45));
             nt.expect("DHCP config acquired!", Duration::from_secs(10));
             ssdp_test(
-                Some("cotton-test-server-rp2040".to_string()),
+                "cotton-test-server-rp2040",
+                "rp2040-w5500-test",
                 |st| {
                     nt.expect("SSDP! cotton-test-server-rp2040",
                               Duration::from_secs(20));

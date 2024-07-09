@@ -321,7 +321,7 @@ mod app {
                 &ws,
             );
 
-            ssdp.subscribe("ssdp:all".to_string(), Listener {}, &ws);
+            ssdp.subscribe("cotton-test-server-rp2040".to_string(), Listener {}, &ws);
 
             defmt::println!("Advertising!");
             ssdp.advertise(
