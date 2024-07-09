@@ -3,7 +3,7 @@
 [![dependency status](https://deps.rs/repo/github/pdh11/cotton/status.svg)](https://deps.rs/repo/github/pdh11/cotton)
 [![Crates.io](https://img.shields.io/crates/v/cotton-w5500)](https://crates.io/crates/cotton-w5500)
 [![Crates.io](https://img.shields.io/crates/d/cotton-w5500)](https://crates.io/crates/cotton-w5500)
-[![docs.rs](https://img.shields.io/docsrs/cotton-w5500)](https://docs.rs/cotton-w5500/latest/cotton_unique/)
+[![docs.rs](https://img.shields.io/docsrs/cotton-w5500)](https://docs.rs/cotton-w5500/latest/cotton_w5500/)
 [![License: CC0-1.0](https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg)](http://creativecommons.org/publicdomain/zero/1.0/)
 
 # cotton-w5500
