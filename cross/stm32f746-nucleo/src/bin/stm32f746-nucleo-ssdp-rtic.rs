@@ -19,6 +19,7 @@ static ALLOCATOR: LockedHeap = LockedHeap::empty();
 mod app {
     use super::NetworkStorage;
     use crate::alloc::string::ToString;
+    use cotton_ssdp::refresh_timer::SmoltcpTimebase;
     use cotton_ssdp::udp::smoltcp::{
         GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
         WrappedInterface, WrappedSocket,
@@ -35,7 +36,7 @@ mod app {
         device: common::Stm32Ethernet,
         stack: common::Stack<'static>,
         udp_handle: SocketHandle,
-        ssdp: cotton_ssdp::engine::Engine<Listener>,
+        ssdp: cotton_ssdp::engine::Engine<Listener, SmoltcpTimebase>,
         nvic: stm32_eth::stm32::NVIC,
     }
 
@@ -118,7 +119,8 @@ mod app {
         );
         let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let mut ssdp = cotton_ssdp::engine::Engine::new();
+        let random_seed = unique_id.id(b"ssdp-timeout") as u32;
+        let mut ssdp = cotton_ssdp::engine::Engine::new(random_seed, now_fn());
 
         let ix = cotton_netif::InterfaceIndex(
             core::num::NonZeroU32::new(1).unwrap(),
@@ -140,7 +142,11 @@ mod app {
             );
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
-            ssdp.subscribe("cotton-test-server-stm32f746".to_string(), Listener {}, &ws);
+            ssdp.subscribe(
+                "cotton-test-server-stm32f746".to_string(),
+                Listener {},
+                &ws,
+            );
 
             let uuid = alloc::format!(
                 "{:032x}",

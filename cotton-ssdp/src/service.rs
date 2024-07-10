@@ -1,5 +1,5 @@
 use crate::engine::{Callback, Engine};
-use crate::refresh_timer::{RefreshTimer, StdTimebase};
+use crate::refresh_timer::StdTimebase;
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
@@ -160,8 +160,7 @@ this:
 
 */
 pub struct Service {
-    engine: Engine<SyncCallback>,
-    refresh_timer: RefreshTimer<StdTimebase>,
+    engine: Engine<SyncCallback, StdTimebase>,
     multicast_socket: mio::net::UdpSocket,
     search_socket: mio::net::UdpSocket,
 }
@@ -187,7 +186,10 @@ impl Service {
         let mut multicast_socket =
             mio::net::UdpSocket::from_std(socket(1900u16)?);
         let mut search_socket = mio::net::UdpSocket::from_std(socket(0u16)?); // ephemeral port
-        let mut engine = Engine::<SyncCallback>::new();
+        let mut engine = Engine::<SyncCallback, StdTimebase>::new(
+            rand::thread_rng().next_u32(),
+            Instant::now(),
+        );
 
         for netif in interfaces {
             // Ignore errors -- some interfaces are returned on which
@@ -204,10 +206,6 @@ impl Service {
 
         Ok(Self {
             engine,
-            refresh_timer: RefreshTimer::new(
-                rand::thread_rng().next_u32(),
-                Instant::now(),
-            ),
             multicast_socket,
             search_socket,
         })
@@ -312,13 +310,13 @@ impl Service {
 
     /// Time before next wakeup
     pub fn next_wakeup(&self) -> std::time::Duration {
-        Instant::now() - self.refresh_timer.next_refresh()
+        self.engine.poll_timeout() - Instant::now()
     }
 
     /// Handler to be called when wakeup timer elapses
     pub fn wakeup(&mut self) {
-        self.refresh_timer.update_refresh(Instant::now());
-        self.engine.refresh(&self.search_socket);
+        self.engine
+            .handle_timeout(&self.search_socket, Instant::now());
     }
 }
 

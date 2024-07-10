@@ -49,7 +49,7 @@
 //!  - [ ] `Cow<'static>` for input strings?
 //!  - [ ] Hasher instead of `thread_rng`; hash over network interfaces sb unique
 //!  - [ ] Vary phase 1,2,3 timings but keep phase 0 timings on round numbers (needs _absolute_ wall time)
-//!  - [ ] Monotonic time instead of `Instant::now` (lifetime?)
+//!  - [x] Monotonic time instead of `Instant::now` (lifetime?) *Solved differently*
 //!  - [x] `smoltcp`/`no_std`, see <https://github.com/rust-lang/rust/pull/104265>
 //!  - [ ] IPv6, see UPnP DA appendix A
 //!

@@ -1,5 +1,6 @@
 use crate::message;
 use crate::message::Message;
+use crate::refresh_timer::{RefreshTimer, Timebase};
 use crate::udp;
 use crate::{Advertisement, Notification};
 use alloc::collections::BTreeMap;
@@ -8,13 +9,6 @@ use alloc::{string::String, string::ToString, vec::Vec};
 use cotton_netif::{InterfaceIndex, NetworkEvent};
 use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use slotmap::SlotMap;
-
-#[cfg(feature = "smoltcp")]
-use smoltcp::time::Instant;
-#[cfg(not(feature = "smoltcp"))]
-extern crate std;
-#[cfg(not(feature = "smoltcp"))]
-use std::time::Instant;
 
 const MAX_PACKET_SIZE: usize = 512;
 
@@ -83,16 +77,16 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 
 /// Is there an active search that we're going to respond to?`
 #[allow(dead_code)]
-enum ResponseNeeded {
+enum ResponseNeeded<Instant> {
     None,
     Multicast(Instant),
     Unicast(Instant, SocketAddr, IpAddr, String),
 }
 
 #[allow(dead_code)]
-struct ActiveAdvertisement {
+struct ActiveAdvertisement<Instant> {
     advertisement: Advertisement,
-    response_needed: ResponseNeeded,
+    response_needed: ResponseNeeded<Instant>,
 }
 
 /// The core of an SSDP implementation
@@ -114,34 +108,49 @@ struct ActiveAdvertisement {
 /// [`Engine::refresh`] each time the timer expires. See, for
 /// instance, the `tokio::select!` loop in `AsyncService::new_inner`.
 ///
-pub struct Engine<CB: Callback> {
+pub struct Engine<CB: Callback, T: Timebase> {
     interfaces: BTreeMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
-    advertisements: BTreeMap<String, ActiveAdvertisement>,
+    advertisements: BTreeMap<String, ActiveAdvertisement<T::Instant>>,
+    refresh_timer: RefreshTimer<T>,
 }
 
-impl<CB: Callback> Default for Engine<CB> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<CB: Callback> Engine<CB> {
+impl<CB: Callback, T: Timebase> Engine<CB, T> {
     /// Create a new Engine, parameterised by callback type
     ///
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(random_seed: u32, now: T::Instant) -> Self {
         Self {
             interfaces: BTreeMap::default(),
             active_searches: SlotMap::with_key(),
             advertisements: BTreeMap::default(),
+            refresh_timer: RefreshTimer::new(random_seed, now),
         }
     }
 
-    /// Re-send all messages
-    ///
-    /// This should be called periodically, perhaps with the help of a
-    /// [`crate::refresh_timer::RefreshTimer`]
+    /// Deal with any expired timeouts
+    pub fn handle_timeout<SCK: udp::TargetedSend>(
+        &mut self,
+        socket: &SCK,
+        now: T::Instant,
+    ) {
+        if self.refresh_timer.next_refresh() <= now {
+            self.refresh(socket);
+            self.refresh_timer.update_refresh(now);
+        }
+    }
+
+    /// Obtain the desired delay before the next call to `handle_timeout`
+    pub fn poll_timeout(&self) -> T::Instant {
+        self.refresh_timer.next_refresh()
+    }
+
+    /// Reset the refresh timer (e.g. if network has gone away and come back)
+    pub fn reset_refresh_timer(&mut self, now: T::Instant) {
+        self.refresh_timer.reset(now);
+    }
+
+    /// Re-send all announcements
     pub fn refresh<SCK: udp::TargetedSend>(&mut self, socket: &SCK) {
         for (key, value) in &self.advertisements {
             self.notify_on_all(key, &value.advertisement, socket);
@@ -602,8 +611,10 @@ impl<CB: Callback> Engine<CB> {
 mod tests {
     use super::*;
     use crate::message::parse;
+    use crate::refresh_timer::StdTimebase;
     use no_std_net::{Ipv6Addr, SocketAddrV4};
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
     // Bit of a palaver to make make_index() const even though it can panic,
     // see https://ktkaufman03.github.io/blog/2023/04/20/rust-compile-time-checks/
@@ -962,11 +973,23 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
     struct Fixture {
-        e: Engine<FakeCallback>,
+        e: Engine<FakeCallback, StdTimebase>,
         c: FakeCallback,
         s: FakeSocket,
+    }
+
+    impl Default for Fixture {
+        fn default() -> Self {
+            Self {
+                e: Engine::<FakeCallback, StdTimebase>::new(
+                    0u32,
+                    Instant::now(),
+                ),
+                c: FakeCallback::default(),
+                s: FakeSocket::default(),
+            }
+        }
     }
 
     impl Fixture {
@@ -1649,5 +1672,15 @@ mod tests {
     fn bogus_url_passed_through2() {
         let url = rewrite_host("fnord:/", &LOCAL_SRC);
         assert_eq!(url, "fnord:/".to_string());
+    }
+
+    #[test]
+    fn reset() {
+        let mut f = Fixture::default();
+        let now = Instant::now();
+        f.e.handle_timeout(&f.s, now);
+        assert_ne!(f.e.poll_timeout(), now);
+        f.e.reset_refresh_timer(now);
+        assert_eq!(f.e.poll_timeout(), now);
     }
 }

@@ -1,5 +1,5 @@
 use crate::engine::{Callback, Engine};
-use crate::refresh_timer::{RefreshTimer, StdTimebase};
+use crate::refresh_timer::StdTimebase;
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
@@ -28,14 +28,15 @@ type FromStdFn =
     fn(std::net::UdpSocket) -> Result<tokio::net::UdpSocket, std::io::Error>;
 
 struct Inner {
-    engine: Mutex<Engine<AsyncCallback>>,
-    refresh_timer: Mutex<RefreshTimer<StdTimebase>>,
+    engine: Mutex<Engine<AsyncCallback, StdTimebase>>,
     multicast_socket: tokio::net::UdpSocket,
     search_socket: tokio::net::UdpSocket,
 }
 
 impl Inner {
-    fn new(engine: Engine<AsyncCallback>) -> Result<Self, std::io::Error> {
+    fn new(
+        engine: Engine<AsyncCallback, StdTimebase>,
+    ) -> Result<Self, std::io::Error> {
         Self::new_inner(
             engine,
             udp::std::setup_socket,
@@ -44,7 +45,7 @@ impl Inner {
     }
 
     fn new_inner(
-        engine: Engine<AsyncCallback>,
+        engine: Engine<AsyncCallback, StdTimebase>,
         setup_socket: SetupSocketFn,
         from_std: FromStdFn,
     ) -> Result<Self, std::io::Error> {
@@ -54,10 +55,6 @@ impl Inner {
         // @todo IPv6 https://stackoverflow.com/questions/3062205/setting-the-source-ip-for-a-udp-socket
         Ok(Self {
             engine: Mutex::new(engine),
-            refresh_timer: Mutex::new(RefreshTimer::new(
-                rand::thread_rng().next_u32(),
-                Instant::now(),
-            )),
             multicast_socket: from_std(multicast_socket)?,
             search_socket: from_std(search_socket)?,
         })
@@ -65,7 +62,8 @@ impl Inner {
 }
 
 /// The type of [`Inner::new`]
-type InnerNewFn = fn(Engine<AsyncCallback>) -> Result<Inner, std::io::Error>;
+type InnerNewFn =
+    fn(Engine<AsyncCallback, StdTimebase>) -> Result<Inner, std::io::Error>;
 
 /** High-level asynchronous SSDP service using tokio.
  *
@@ -94,7 +92,10 @@ impl AsyncService {
     }
 
     fn new_inner(create: InnerNewFn) -> Result<Self, std::io::Error> {
-        let inner = Arc::new(create(Engine::new())?);
+        let inner = Arc::new(create(Engine::new(
+            rand::thread_rng().next_u32(),
+            Instant::now(),
+        ))?);
         let inner2 = inner.clone();
 
         tokio::spawn(async move {
@@ -126,13 +127,11 @@ impl AsyncService {
                         }
                     },
                     () = tokio::time::sleep(
-                        inner.refresh_timer.lock().unwrap().next_refresh()
+                        inner.engine.lock().unwrap().poll_timeout()
                             - Instant::now()
                     ) => {
-                        inner.refresh_timer.lock().unwrap().update_refresh(
-                            Instant::now());
-                        inner.engine.lock().unwrap().refresh(
-                            &inner.search_socket);
+                        inner.engine.lock().unwrap().handle_timeout(
+                            &inner.search_socket, Instant::now());
                     },
                 };
             }
@@ -245,7 +244,8 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_socket_failure() {
-        let engine = Engine::<AsyncCallback>::new();
+        let engine =
+            Engine::<AsyncCallback, StdTimebase>::new(0u32, Instant::now());
         let e = Inner::new_inner(engine, |_| Err(my_err()), bogus_fromstd);
 
         assert!(e.is_err());
@@ -254,7 +254,8 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_second_socket_failure() {
-        let engine = Engine::<AsyncCallback>::new();
+        let engine =
+            Engine::<AsyncCallback, StdTimebase>::new(0u32, Instant::now());
         let e = Inner::new_inner(
             engine,
             |p| {
@@ -273,7 +274,8 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn service_passes_on_fromstd_failure() {
-        let engine = Engine::<AsyncCallback>::new();
+        let engine =
+            Engine::<AsyncCallback, StdTimebase>::new(0u32, Instant::now());
         let e = Inner::new_inner(
             engine,
             crate::udp::std::setup_socket,
@@ -291,7 +293,10 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async {
-                let engine = Engine::<AsyncCallback>::new();
+                let engine = Engine::<AsyncCallback, StdTimebase>::new(
+                    0u32,
+                    Instant::now(),
+                );
                 let e = Inner::new_inner(
                     engine,
                     crate::udp::std::setup_socket,

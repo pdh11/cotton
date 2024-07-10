@@ -41,7 +41,7 @@ pub fn init_heap() {
 mod app {
     use crate::alloc::string::ToString;
     use crate::NetworkStorage;
-    use cotton_ssdp::refresh_timer::{RefreshTimer, SmoltcpTimebase};
+    use cotton_ssdp::refresh_timer::SmoltcpTimebase;
     use cotton_ssdp::udp::smoltcp::{
         GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
         WrappedInterface, WrappedSocket,
@@ -76,12 +76,11 @@ mod app {
         device: cotton_w5500::smoltcp::w5500_evb_pico::Device,
         stack: Stack,
         udp_handle: SocketHandle,
-        ssdp: cotton_ssdp::engine::Engine<Listener>,
+        ssdp: cotton_ssdp::engine::Engine<Listener, SmoltcpTimebase>,
         nvic: cortex_m::peripheral::NVIC,
         w5500_irq:
             rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullUp>,
         timer_handle: Option<periodic::SpawnHandle>,
-        refresh_timer: RefreshTimer<SmoltcpTimebase>,
         uuid: uuid::Uuid,
     }
 
@@ -231,13 +230,13 @@ mod app {
         );
         let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let ssdp = cotton_ssdp::engine::Engine::new();
+        let refresh_seed = unique_id.id(b"ssdp-refresh") as u32;
+        let ssdp = cotton_ssdp::engine::Engine::new(refresh_seed, now_fn());
 
         let uuid = cotton_unique::uuid(&unique_id, b"upnp");
         let udp_handle = stack.socket_set.add(udp_socket);
 
         let timer_handle = Some(periodic::spawn_after(2.secs()).unwrap());
-        let refresh_seed = unique_id.id(b"ssdp-refresh") as u32;
 
         (
             Shared {},
@@ -249,7 +248,6 @@ mod app {
                 nvic: c.core.NVIC,
                 w5500_irq,
                 timer_handle,
-                refresh_timer: RefreshTimer::new(refresh_seed, now_fn()),
                 uuid,
             },
             init::Monotonics(mono),
@@ -261,13 +259,12 @@ mod app {
         cortex_m::peripheral::NVIC::pend(pac::Interrupt::IO_IRQ_BANK0);
     }
 
-    #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle, refresh_timer, uuid], priority = 2)]
+    #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle, uuid], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (stack, udp_handle, ssdp, refresh_timer, uuid) = (
+        let (stack, udp_handle, ssdp, uuid) = (
             cx.local.stack,
             cx.local.udp_handle,
             cx.local.ssdp,
-            cx.local.refresh_timer,
             cx.local.uuid,
         );
         cx.local.device.clear_interrupt();
@@ -280,13 +277,9 @@ mod app {
         let new_ip = stack.interface.ipv4_addr();
 
         let mut do_refresh = false;
-        let mut next_wake = now - refresh_timer.next_refresh();
+        let mut next_wake = ssdp.poll_timeout() - now;
         if next_wake == smoltcp::time::Duration::ZERO {
-            if old_ip.is_some() {
-                do_refresh = true;
-            }
-            refresh_timer.update_refresh(now);
-            next_wake = now - refresh_timer.next_refresh();
+            do_refresh = true;
         }
         if let Some(duration) = next {
             next_wake = next_wake.min(duration);
@@ -339,10 +332,9 @@ mod app {
                 },
                 &ws,
             );
-            refresh_timer.reset(now);
+            ssdp.reset_refresh_timer(now);
         } else if do_refresh {
-            defmt::println!("Refreshing!");
-            ssdp.refresh(&ws);
+            ssdp.handle_timeout(&ws, now);
         }
 
         if let Some(wasto) = new_ip {
