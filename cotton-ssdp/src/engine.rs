@@ -9,6 +9,11 @@ use cotton_netif::{InterfaceIndex, NetworkEvent};
 use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use slotmap::SlotMap;
 
+#[cfg(feature = "smoltcp")]
+pub use smoltcp::time::Instant;
+#[cfg(not(feature = "smoltcp"))]
+pub use std::time::Instant;
+
 const MAX_PACKET_SIZE: usize = 512;
 
 struct Interface {
@@ -74,6 +79,20 @@ struct ActiveSearch<CB: Callback> {
 
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
+/// Is there an active search that we're going to respond to?`
+#[allow(dead_code)]
+enum ResponseNeeded {
+    None,
+    Multicast(Instant),
+    Unicast(Instant, SocketAddr, IpAddr, String),
+}
+
+#[allow(dead_code)]
+struct ActiveAdvertisement {
+    advertisement: Advertisement,
+    response_needed: ResponseNeeded,
+}
+
 /// The core of an SSDP implementation
 ///
 /// This low-level facility is usually wrapped-up in
@@ -96,7 +115,7 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 pub struct Engine<CB: Callback> {
     interfaces: BTreeMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
-    advertisements: BTreeMap<String, Advertisement>,
+    advertisements: BTreeMap<String, ActiveAdvertisement>,
 }
 
 impl<CB: Callback> Default for Engine<CB> {
@@ -123,7 +142,7 @@ impl<CB: Callback> Engine<CB> {
     /// [`crate::refresh_timer::RefreshTimer`]
     pub fn refresh<SCK: udp::TargetedSend>(&mut self, socket: &SCK) {
         for (key, value) in &self.advertisements {
-            self.notify_on_all(key, value, socket);
+            self.notify_on_all(key, &value.advertisement, socket);
         }
 
         // If anybody is doing an ssdp:all search, then we don't need to
@@ -236,13 +255,13 @@ impl<CB: Callback> Engine<CB> {
                     for (key, value) in &self.advertisements {
                         if target_match(
                             &search_target,
-                            &value.notification_type,
+                            &value.advertisement.notification_type,
                         ) {
-                            let url = rewrite_host(&value.location, &wasto);
+                            let url = rewrite_host(&value.advertisement.location, &wasto);
 
                             let response_type = if search_target == "ssdp:all"
                             {
-                                &value.notification_type
+                                &value.advertisement.notification_type
                             } else {
                                 &search_target
                             };
@@ -312,7 +331,7 @@ impl<CB: Callback> Engine<CB> {
             }
 
             for (key, value) in &self.advertisements {
-                Self::notify_on(key, value, ip, search);
+                Self::notify_on(key, &value.advertisement, ip, search);
             }
         }
     }
@@ -544,7 +563,10 @@ impl<CB: Callback> Engine<CB> {
     ) {
         self.notify_on_all(&unique_service_name, &advertisement, socket);
         self.advertisements
-            .insert(unique_service_name, advertisement);
+            .insert(unique_service_name, ActiveAdvertisement {
+                advertisement,
+                response_needed: ResponseNeeded::None
+            });
     }
 
     /// Withdraw an advertisement for a local resource
@@ -561,7 +583,7 @@ impl<CB: Callback> Engine<CB> {
             self.advertisements.remove(unique_service_name)
         {
             self.byebye_on_all(
-                &advertisement.notification_type,
+                &advertisement.advertisement.notification_type,
                 unique_service_name,
                 socket,
             );
