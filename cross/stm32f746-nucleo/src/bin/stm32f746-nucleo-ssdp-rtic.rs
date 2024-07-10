@@ -183,7 +183,6 @@ mod app {
     fn periodic(cx: periodic::Context) {
         let nvic = cx.local.nvic;
         nvic.request(stm32_eth::stm32::Interrupt::ETH);
-        periodic::spawn_after(2.secs()).unwrap();
     }
 
     #[task(binds = ETH, local = [device, stack, udp_handle, ssdp], priority = 2)]
@@ -196,13 +195,13 @@ mod app {
         );
 
         let old_ip = stack.interface.ipv4_addr();
-        stack.poll(now_fn(), &mut &mut device.dma);
+        let next = stack.poll(now_fn(), &mut &mut device.dma);
         let new_ip = stack.interface.ipv4_addr();
+        let now = now_fn();
+        let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
 
         if let (None, Some(ip)) = (old_ip, new_ip) {
-            let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
             let ws = WrappedSocket::new(socket);
-
             ssdp.on_new_addr_event(
                 &cotton_netif::InterfaceIndex(
                     core::num::NonZeroU32::new(1).unwrap(),
@@ -212,12 +211,11 @@ mod app {
             );
 
             defmt::println!("Refreshing!");
-            ssdp.refresh(&ws);
+            ssdp.reset_refresh_timer(now);
         }
 
         if let Some(wasto) = new_ip {
             let wasto = wire::IpAddress::Ipv4(wasto);
-            let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
             if socket.can_recv() {
                 // Shame about the copy here, but we need the socket
                 // borrowed mutably to write to it (in on_data), and
@@ -239,6 +237,17 @@ mod app {
                 }
             }
         }
+
+        let timeout_needed = ssdp.poll_timeout();
+        if now >= timeout_needed {
+            let ws = WrappedSocket::new(socket);
+            ssdp.handle_timeout(&ws, now);
+        }
+        let mut next_wake = ssdp.poll_timeout() - now;
+        if let Some(duration) = next {
+            next_wake = next_wake.min(duration);
+        }
+        let _ = periodic::spawn_after(next_wake.total_millis().millis());
     }
 }
 

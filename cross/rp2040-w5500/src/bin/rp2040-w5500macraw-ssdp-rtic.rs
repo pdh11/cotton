@@ -323,7 +323,6 @@ mod app {
                 &ws,
             );
 
-            defmt::println!("Advertising!");
             ssdp.advertise(
                 alloc::format!("{:032x}", uuid),
                 cotton_ssdp::Advertisement {
