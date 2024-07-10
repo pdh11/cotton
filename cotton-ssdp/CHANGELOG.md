@@ -5,6 +5,9 @@
 
 * Update MSRV from 1.65 to 1.75.
 
+* Change RefreshTimer to be generic over timebases; pass StdTimebase to
+  preserve the previous behaviour.
+
 ## [0.0.3] 2023-08-12
 
 ### Changed

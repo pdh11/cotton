@@ -134,7 +134,6 @@ mod service;
 pub mod udp;
 
 /// Common code for triggering refreshes of [`Service`] and [`AsyncService`]
-#[cfg(feature = "std")]
 pub mod refresh_timer;
 
 #[cfg(feature = "async")]

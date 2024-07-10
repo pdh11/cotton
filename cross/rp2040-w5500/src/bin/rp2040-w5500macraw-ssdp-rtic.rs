@@ -41,11 +41,12 @@ pub fn init_heap() {
 mod app {
     use crate::alloc::string::ToString;
     use crate::NetworkStorage;
+    use cotton_ssdp::refresh_timer::{RefreshTimer, SmoltcpTimebase};
     use cotton_ssdp::udp::smoltcp::{
         GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
         WrappedInterface, WrappedSocket,
     };
-    use cross_rp2040_w5500::{smoltcp::RefreshTimer, smoltcp::Stack};
+    use cross_rp2040_w5500::smoltcp::Stack;
     use embedded_hal::delay::DelayNs;
     use embedded_hal::digital::OutputPin;
     use fugit::ExtU64;
@@ -80,7 +81,7 @@ mod app {
         w5500_irq:
             rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullUp>,
         timer_handle: Option<periodic::SpawnHandle>,
-        refresh_timer: RefreshTimer,
+        refresh_timer: RefreshTimer<SmoltcpTimebase>,
         uuid: uuid::Uuid,
     }
 
@@ -193,8 +194,9 @@ mod app {
             hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
         );
 
-        let spi_device = 
-            embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi_bus, spi_ncs);
+        let spi_device = embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(
+            spi_bus, spi_ncs,
+        );
 
         let bus = w5500::bus::FourWire::new(spi_device);
 
@@ -235,6 +237,7 @@ mod app {
         let udp_handle = stack.socket_set.add(udp_socket);
 
         let timer_handle = Some(periodic::spawn_after(2.secs()).unwrap());
+        let refresh_seed = unique_id.id(b"ssdp-refresh") as u32;
 
         (
             Shared {},
@@ -246,7 +249,7 @@ mod app {
                 nvic: c.core.NVIC,
                 w5500_irq,
                 timer_handle,
-                refresh_timer: RefreshTimer::new(now_fn()),
+                refresh_timer: RefreshTimer::new(refresh_seed, now_fn()),
                 uuid,
             },
             init::Monotonics(mono),
@@ -277,13 +280,13 @@ mod app {
         let new_ip = stack.interface.ipv4_addr();
 
         let mut do_refresh = false;
-        let mut next_wake = refresh_timer.next_refresh(now);
+        let mut next_wake = now - refresh_timer.next_refresh();
         if next_wake == smoltcp::time::Duration::ZERO {
             if old_ip.is_some() {
                 do_refresh = true;
             }
             refresh_timer.update_refresh(now);
-            next_wake = refresh_timer.next_refresh(now);
+            next_wake = now - refresh_timer.next_refresh();
         }
         if let Some(duration) = next {
             next_wake = next_wake.min(duration);
@@ -321,7 +324,11 @@ mod app {
                 &ws,
             );
 
-            ssdp.subscribe("cotton-test-server-rp2040".to_string(), Listener {}, &ws);
+            ssdp.subscribe(
+                "cotton-test-server-rp2040".to_string(),
+                Listener {},
+                &ws,
+            );
 
             defmt::println!("Advertising!");
             ssdp.advertise(

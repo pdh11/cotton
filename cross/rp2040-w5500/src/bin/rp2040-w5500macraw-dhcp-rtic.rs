@@ -135,8 +135,9 @@ mod app {
             hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
         );
 
-        let spi_device = 
-            embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi_bus, spi_ncs);
+        let spi_device = embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(
+            spi_bus, spi_ncs,
+        );
 
         let bus = w5500::bus::FourWire::new(spi_device);
 

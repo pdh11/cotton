@@ -1,10 +1,12 @@
 use crate::engine::{Callback, Engine};
-use crate::refresh_timer::RefreshTimer;
+use crate::refresh_timer::{RefreshTimer, StdTimebase};
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
 use futures::Stream;
+use rand::RngCore;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -27,7 +29,7 @@ type FromStdFn =
 
 struct Inner {
     engine: Mutex<Engine<AsyncCallback>>,
-    refresh_timer: Mutex<RefreshTimer>,
+    refresh_timer: Mutex<RefreshTimer<StdTimebase>>,
     multicast_socket: tokio::net::UdpSocket,
     search_socket: tokio::net::UdpSocket,
 }
@@ -52,7 +54,10 @@ impl Inner {
         // @todo IPv6 https://stackoverflow.com/questions/3062205/setting-the-source-ip-for-a-udp-socket
         Ok(Self {
             engine: Mutex::new(engine),
-            refresh_timer: Mutex::new(RefreshTimer::default()),
+            refresh_timer: Mutex::new(RefreshTimer::new(
+                rand::thread_rng().next_u32(),
+                Instant::now(),
+            )),
             multicast_socket: from_std(multicast_socket)?,
             search_socket: from_std(search_socket)?,
         })
@@ -122,8 +127,10 @@ impl AsyncService {
                     },
                     () = tokio::time::sleep(
                         inner.refresh_timer.lock().unwrap().next_refresh()
+                            - Instant::now()
                     ) => {
-                        inner.refresh_timer.lock().unwrap().update_refresh();
+                        inner.refresh_timer.lock().unwrap().update_refresh(
+                            Instant::now());
                         inner.engine.lock().unwrap().refresh(
                             &inner.search_socket);
                     },

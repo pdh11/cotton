@@ -1,8 +1,10 @@
 use crate::engine::{Callback, Engine};
-use crate::refresh_timer::RefreshTimer;
+use crate::refresh_timer::{RefreshTimer, StdTimebase};
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
+use rand::RngCore;
+use std::time::Instant;
 
 struct SyncCallback {
     callback: Box<dyn Fn(&Notification)>,
@@ -159,7 +161,7 @@ this:
 */
 pub struct Service {
     engine: Engine<SyncCallback>,
-    refresh_timer: RefreshTimer,
+    refresh_timer: RefreshTimer<StdTimebase>,
     multicast_socket: mio::net::UdpSocket,
     search_socket: mio::net::UdpSocket,
 }
@@ -202,7 +204,10 @@ impl Service {
 
         Ok(Self {
             engine,
-            refresh_timer: RefreshTimer::default(),
+            refresh_timer: RefreshTimer::new(
+                rand::thread_rng().next_u32(),
+                Instant::now(),
+            ),
             multicast_socket,
             search_socket,
         })
@@ -307,12 +312,12 @@ impl Service {
 
     /// Time before next wakeup
     pub fn next_wakeup(&self) -> std::time::Duration {
-        self.refresh_timer.next_refresh()
+        Instant::now() - self.refresh_timer.next_refresh()
     }
 
     /// Handler to be called when wakeup timer elapses
     pub fn wakeup(&mut self) {
-        self.refresh_timer.update_refresh();
+        self.refresh_timer.update_refresh(Instant::now());
         self.engine.refresh(&self.search_socket);
     }
 }

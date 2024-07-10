@@ -10,9 +10,11 @@ use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use slotmap::SlotMap;
 
 #[cfg(feature = "smoltcp")]
-pub use smoltcp::time::Instant;
+use smoltcp::time::Instant;
 #[cfg(not(feature = "smoltcp"))]
-pub use std::time::Instant;
+extern crate std;
+#[cfg(not(feature = "smoltcp"))]
+use std::time::Instant;
 
 const MAX_PACKET_SIZE: usize = 512;
 
@@ -257,7 +259,10 @@ impl<CB: Callback> Engine<CB> {
                             &search_target,
                             &value.advertisement.notification_type,
                         ) {
-                            let url = rewrite_host(&value.advertisement.location, &wasto);
+                            let url = rewrite_host(
+                                &value.advertisement.location,
+                                &wasto,
+                            );
 
                             let response_type = if search_target == "ssdp:all"
                             {
@@ -562,11 +567,13 @@ impl<CB: Callback> Engine<CB> {
         socket: &SCK,
     ) {
         self.notify_on_all(&unique_service_name, &advertisement, socket);
-        self.advertisements
-            .insert(unique_service_name, ActiveAdvertisement {
+        self.advertisements.insert(
+            unique_service_name,
+            ActiveAdvertisement {
                 advertisement,
-                response_needed: ResponseNeeded::None
-            });
+                response_needed: ResponseNeeded::None,
+            },
+        );
     }
 
     /// Withdraw an advertisement for a local resource

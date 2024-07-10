@@ -1,5 +1,5 @@
 use cotton_unique::UniqueId;
-use smoltcp::{socket::dhcpv4, time::Instant, wire::IpCidr};
+use smoltcp::{socket::dhcpv4, wire::IpCidr};
 
 /// A helper container for a TCP/IP stack and some of its metadata
 pub struct Stack {
@@ -91,58 +91,5 @@ impl Stack {
                 });
             }
         }
-    }
-}
-
-/// Encapsulating the SSDP retransmit process
-///
-/// The idea is, every 15 minutes or so, send a few repeated salvos of
-/// notification messages. The interval between salvos is randomised to
-/// help avoid network congestion.
-///
-pub struct RefreshTimer {
-    next_salvo: Instant,
-    phase: u8,
-}
-
-impl RefreshTimer {
-    /// Create a new [`RefreshTimer`]
-    ///
-    #[must_use]
-    pub fn new(now: Instant) -> Self {
-        Self {
-            next_salvo: now,
-            phase: 1u8,
-        }
-    }
-
-    /// Obtain the desired delay before the next refresh is needed
-    #[must_use]
-    pub fn next_refresh(&self, now: Instant) -> smoltcp::time::Duration {
-        if now > self.next_salvo {
-            smoltcp::time::Duration::ZERO
-        } else {
-            self.next_salvo - now
-        }
-    }
-
-    /// Update the refresh timer
-    ///
-    /// The desired timeout duration can be obtained from
-    /// [`RefreshTimer::next_refresh`].
-    ///
-    pub fn update_refresh(&mut self, now: Instant) {
-        if self.next_salvo > now {
-            return;
-        }
-        let random_offset = (now.micros() % 6) as u64; // not really random
-        let period_sec = if self.phase == 0 { 800 } else { 1 } + random_offset;
-        self.next_salvo += smoltcp::time::Duration::from_secs(period_sec);
-        self.phase = (self.phase + 1) % 4;
-    }
-
-    /// Reset the refresh timer (e.g. if network has gone away and come back)
-    pub fn reset(&mut self, now: Instant) {
-        *self = Self::new(now)
     }
 }
