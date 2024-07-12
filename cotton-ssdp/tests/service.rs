@@ -22,6 +22,13 @@ fn services_can_communicate() {
             location: "http://127.0.0.1/description.xml".to_string(),
         },
     );
+    ssdp1.advertise(
+        "uuid:998",
+        Advertisement {
+            notification_type: "upnp::root_device".to_string(),
+            location: "http://127.0.0.1/description.xml".to_string(),
+        },
+    );
 
     let seen = Rc::new(RefCell::new(Vec::new()));
     let seen2 = seen.clone();

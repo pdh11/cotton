@@ -20,6 +20,14 @@ async fn services_communicate() {
         },
     );
 
+    ssdp1.advertise(
+        "uuid:998",
+        Advertisement {
+            notification_type: "upnp::root_device".to_string(),
+            location: "http://127.0.0.1/description.xml".to_string(),
+        },
+    );
+
     let mut stage: u32 = 0;
 
     let mut stream = ssdp2.subscribe("ssdp:all");

@@ -76,17 +76,62 @@ struct ActiveSearch<CB: Callback> {
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
 /// Is there an active search that we're going to respond to?`
-#[allow(dead_code)]
 enum ResponseNeeded<Instant> {
     None,
     Multicast(Instant),
     Unicast(Instant, SocketAddr, IpAddr, String),
 }
 
-#[allow(dead_code)]
 struct ActiveAdvertisement<Instant> {
     advertisement: Advertisement,
     response_needed: ResponseNeeded<Instant>,
+}
+
+impl<Instant> ActiveAdvertisement<Instant> {
+    fn notify_on<SCK: udp::TargetedSend>(
+        &self,
+        unique_service_name: &str,
+        source: &IpAddr,
+        socket: &SCK,
+    ) {
+        let url = rewrite_host(&self.advertisement.location, source);
+        let _ = socket.send_with(
+            MAX_PACKET_SIZE,
+            &SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::new(239, 255, 255, 250),
+                1900,
+            )),
+            source,
+            |b| {
+                message::build_notify(
+                    b,
+                    &self.advertisement.notification_type,
+                    unique_service_name,
+                    &url,
+                )
+            },
+        );
+    }
+
+    fn notify_on_all<SCK: udp::TargetedSend>(
+        &self,
+        unique_service_name: &str,
+        interfaces: &BTreeMap<InterfaceIndex, Interface>,
+        socket: &SCK,
+    ) {
+        for interface in interfaces.values() {
+            if interface.up {
+                for ip in &interface.ips {
+                    self.notify_on(
+                        unique_service_name,
+                        ip,
+                        socket,
+                    );
+                }
+            }
+        }
+    }
+
 }
 
 /// The core of an SSDP implementation
@@ -143,19 +188,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
             match &value.response_needed {
                 ResponseNeeded::Multicast(instant) => {
                     if now > *instant {
-                        /// @TODO notify_on_all
-                        for interface in self.interfaces.values() {
-                            if interface.up {
-                                for ip in &interface.ips {
-                                    Self::notify_on(
-                                        key,
-                                        &value.advertisement,
-                                        ip,
-                                        socket,
-                                    );
-                                }
-                            }
-                        }
+                        value.notify_on_all(key, &self.interfaces, socket);
                         value.response_needed = ResponseNeeded::None;
                     }
                 }
@@ -171,7 +204,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                             *wasto,
                             *wasfrom,
                             key,
-                            &response_type,
+                            response_type,
                             &value.advertisement.location,
                         );
                         value.response_needed = ResponseNeeded::None;
@@ -185,7 +218,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
     /// Obtain the desired delay before the next call to `handle_timeout`
     pub fn poll_timeout(&self) -> T::Instant {
         let mut next_wake = self.refresh_timer.next_refresh();
-        for (_, value) in &self.advertisements {
+        for value in self.advertisements.values() {
             match value.response_needed {
                 ResponseNeeded::Multicast(instant) => {
                     next_wake = next_wake.min(instant)
@@ -207,7 +240,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
     /// Re-send all announcements
     pub fn refresh<SCK: udp::TargetedSend>(&mut self, socket: &SCK) {
         for (key, value) in &self.advertisements {
-            self.notify_on_all(key, &value.advertisement, socket);
+            value.notify_on_all(key, &self.interfaces, socket);
         }
 
         // If anybody is doing an ssdp:all search, then we don't need to
@@ -331,12 +364,11 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                     });
                 }
                 Message::Search { search_target, maximum_wait_sec } => {
-                    let mut reply_at = now; /// @TODO randomise
+                    let mut reply_at = now; // @TODO randomise
                     let delay_ms = ((maximum_wait_sec as u64) * 300)
-                        .min(100)
-                        .max(5000);
+                        .clamp(100, 5000);
                     reply_at += core::time::Duration::from_millis(delay_ms).into();
-                    for (_, value) in &mut self.advertisements {
+                    for value in self.advertisements.values_mut() {
                         if target_match(
                             &search_target,
                             &value.advertisement.notification_type,
@@ -421,7 +453,9 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
             }
 
             for (key, value) in &self.advertisements {
-                Self::notify_on(key, &value.advertisement, ip, search);
+                value.notify_on(
+                    key,
+                    ip, search);
             }
         }
     }
@@ -556,51 +590,6 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
         Ok(())
     }
 
-    fn notify_on<SCK: udp::TargetedSend>(
-        unique_service_name: &str,
-        advertisement: &Advertisement,
-        source: &IpAddr,
-        socket: &SCK,
-    ) {
-        let url = rewrite_host(&advertisement.location, source);
-        let _ = socket.send_with(
-            MAX_PACKET_SIZE,
-            &SocketAddr::V4(SocketAddrV4::new(
-                Ipv4Addr::new(239, 255, 255, 250),
-                1900,
-            )),
-            source,
-            |b| {
-                message::build_notify(
-                    b,
-                    &advertisement.notification_type,
-                    unique_service_name,
-                    &url,
-                )
-            },
-        );
-    }
-
-    fn notify_on_all<SCK: udp::TargetedSend>(
-        &self,
-        unique_service_name: &str,
-        advertisement: &Advertisement,
-        socket: &SCK,
-    ) {
-        for interface in self.interfaces.values() {
-            if interface.up {
-                for ip in &interface.ips {
-                    Self::notify_on(
-                        unique_service_name,
-                        advertisement,
-                        ip,
-                        socket,
-                    );
-                }
-            }
-        }
-    }
-
     fn byebye_on<SCK: udp::TargetedSend>(
         unique_service_name: &str,
         notification_type: &str,
@@ -651,13 +640,16 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
         advertisement: Advertisement,
         socket: &SCK,
     ) {
-        self.notify_on_all(&unique_service_name, &advertisement, socket);
+        let active_advertisement = ActiveAdvertisement {
+            advertisement,
+            response_needed: ResponseNeeded::None,
+        };
+
+        active_advertisement.notify_on_all(&unique_service_name,
+                                           &self.interfaces, socket);
         self.advertisements.insert(
             unique_service_name,
-            ActiveAdvertisement {
-                advertisement,
-                response_needed: ResponseNeeded::None,
-            },
+            active_advertisement,
         );
     }
 
@@ -796,7 +788,7 @@ mod tests {
         }
 
         fn contains_no_response(&self) -> bool {
-            !self.sends.lock().unwrap().iter().any(|(to, from, msg)| {
+            !self.sends.lock().unwrap().iter().any(|(_to, _from, msg)| {
                 matches!(msg,
                          Message::Response { .. })
             })
@@ -890,6 +882,7 @@ mod tests {
         {
             let mut buffer = vec![0u8; size];
             let actual_size = f(&mut buffer);
+            eprintln!("fakesocket: {from:?} - {to:?}");
             self.sends.lock().unwrap().push((
                 *to,
                 *from,
@@ -1423,6 +1416,11 @@ mod tests {
 
         assert!(f.s.no_sends()); // not yet!
 
+        f.e.handle_timeout(&f.s, now);
+
+        let next = f.e.poll_timeout() - now;
+        assert!(next < std::time::Duration::from_secs(6));
+
         f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
 
         assert!(f.s.contains_send(
@@ -1431,6 +1429,38 @@ mod tests {
                          Message::Response { search_target, unique_service_name,
                                              location }
                          if search_target == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
+    }
+
+    #[test]
+    fn response_multicast_to_two_searchers() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+        });
+
+        let n = FakeSocket::build_search("upnp:rootdevice");
+        let now = Instant::now();
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+        f.e.on_data(&n, LOCAL_SRC_2, remote_src(), now);
+
+        assert!(f.s.no_sends()); // not yet!
+
+        f.e.handle_timeout(&f.s, now);
+
+        let next = f.e.poll_timeout() - now;
+        assert!(next < std::time::Duration::from_secs(6));
+
+        f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
+
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::NotifyAlive { notification_type, unique_service_name, location }
+                         if notification_type == "upnp:rootdevice"
                          && unique_service_name == "uuid:137"
                          && location == "http://192.168.100.1/description.xml")));
     }
