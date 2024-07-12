@@ -119,7 +119,7 @@ mod app {
         );
         let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let random_seed = unique_id.id(b"ssdp-timeout") as u32;
+        let random_seed = unique_id.id(b"ssdp-refresh") as u32;
         let mut ssdp = cotton_ssdp::engine::Engine::new(random_seed, now_fn());
 
         let ix = cotton_netif::InterfaceIndex(
@@ -182,6 +182,7 @@ mod app {
     #[task(local = [nvic])]
     fn periodic(cx: periodic::Context) {
         let nvic = cx.local.nvic;
+        defmt::println!("Wake");
         nvic.request(stm32_eth::stm32::Interrupt::ETH);
     }
 
@@ -196,10 +197,10 @@ mod app {
 
         stm32_eth::eth_interrupt_handler();
 
-        let old_ip = stack.interface.ipv4_addr();
-        let next = stack.poll(now_fn(), &mut &mut device.dma);
-        let new_ip = stack.interface.ipv4_addr();
         let now = now_fn();
+        let old_ip = stack.interface.ipv4_addr();
+        let next = stack.poll(now, &mut &mut device.dma);
+        let new_ip = stack.interface.ipv4_addr();
         let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
 
         if let (None, Some(ip)) = (old_ip, new_ip) {
@@ -236,6 +237,7 @@ mod app {
         if let Some(duration) = next {
             next_wake = next_wake.min(duration);
         }
+        defmt::println!("Waking after {}ms", next_wake.total_millis());
         let _ = periodic::spawn_after(next_wake.total_millis().millis());
     }
 }

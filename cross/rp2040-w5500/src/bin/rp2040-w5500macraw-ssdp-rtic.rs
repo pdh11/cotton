@@ -81,7 +81,6 @@ mod app {
         w5500_irq:
             rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullUp>,
         timer_handle: Option<periodic::SpawnHandle>,
-        uuid: uuid::Uuid,
     }
 
     impl cotton_ssdp::engine::Callback for Listener {
@@ -230,10 +229,50 @@ mod app {
         );
         let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let refresh_seed = unique_id.id(b"ssdp-refresh") as u32;
-        let ssdp = cotton_ssdp::engine::Engine::new(refresh_seed, now_fn());
+        let random_seed = unique_id.id(b"ssdp-refresh") as u32;
+        let mut ssdp = cotton_ssdp::engine::Engine::new(random_seed, now_fn());
 
-        let uuid = cotton_unique::uuid(&unique_id, b"upnp");
+        let ix = cotton_netif::InterfaceIndex(
+            core::num::NonZeroU32::new(1).unwrap(),
+        );
+        let ev = cotton_netif::NetworkEvent::NewLink(
+            ix,
+            "".to_string(),
+            cotton_netif::Flags::UP
+                | cotton_netif::Flags::RUNNING
+                | cotton_netif::Flags::MULTICAST,
+        );
+
+        {
+            let wi = WrappedInterface::new(
+                &mut stack.interface,
+                &mut device,
+                now_fn(),
+            );
+            let ws = WrappedSocket::new(&mut udp_socket);
+            _ = ssdp.on_network_event(&ev, &wi, &ws);
+
+            ssdp.subscribe(
+                "cotton-test-server-rp2040".to_string(),
+                Listener {},
+                &ws,
+            );
+
+            let uuid = alloc::format!(
+                "{:032x}",
+                cotton_unique::uuid(&unique_id, b"upnp")
+            );
+
+            ssdp.advertise(
+                uuid,
+                cotton_ssdp::Advertisement {
+                    notification_type: "rp2040-w5500-test".to_string(),
+                    location: "http://127.0.0.1/".to_string(),
+                },
+                &ws,
+            );
+        }
+
         let udp_handle = stack.socket_set.add(udp_socket);
 
         let timer_handle = Some(periodic::spawn_after(2.secs()).unwrap());
@@ -248,7 +287,6 @@ mod app {
                 nvic: c.core.NVIC,
                 w5500_irq,
                 timer_handle,
-                uuid,
             },
             init::Monotonics(mono),
         )
@@ -259,88 +297,41 @@ mod app {
         cortex_m::peripheral::NVIC::pend(pac::Interrupt::IO_IRQ_BANK0);
     }
 
-    #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle, uuid], priority = 2)]
+    #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (stack, udp_handle, ssdp, uuid) = (
+        let (stack, udp_handle, ssdp) = (
             cx.local.stack,
             cx.local.udp_handle,
             cx.local.ssdp,
-            cx.local.uuid,
         );
+
         cx.local.device.clear_interrupt();
         cx.local.w5500_irq.clear_interrupt(EdgeLow);
-        defmt::println!("ETH IRQ");
 
         let now = now_fn();
         let old_ip = stack.interface.ipv4_addr();
         let next = stack.poll(now, cx.local.device);
         let new_ip = stack.interface.ipv4_addr();
-
-        let mut do_refresh = false;
-        let mut next_wake = ssdp.poll_timeout() - now;
-        if next_wake == smoltcp::time::Duration::ZERO {
-            do_refresh = true;
-        }
-        if let Some(duration) = next {
-            next_wake = next_wake.min(duration);
-        }
-
-        let next_wake = next_wake.total_millis();
-        let next_wake = next_wake.millis();
-        let _ = periodic::spawn_after(next_wake);
-
         let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
-        let ws = WrappedSocket::new(socket);
 
         if let (None, Some(ip)) = (old_ip, new_ip) {
-            let ix = cotton_netif::InterfaceIndex(
-                core::num::NonZeroU32::new(1).unwrap(),
-            );
-            let ev = cotton_netif::NetworkEvent::NewLink(
-                ix,
-                "".to_string(),
-                cotton_netif::Flags::UP
-                    | cotton_netif::Flags::RUNNING
-                    | cotton_netif::Flags::MULTICAST,
-            );
-
-            let wi = WrappedInterface::new(
-                &mut stack.interface,
-                cx.local.device,
-                now,
-            );
-            _ = ssdp.on_network_event(&ev, &wi, &ws);
-
+            let ws = WrappedSocket::new(socket);
             ssdp.on_new_addr_event(
-                &ix,
+                &cotton_netif::InterfaceIndex(
+                    core::num::NonZeroU32::new(1).unwrap(),
+                ),
                 &no_std_net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
                 &ws,
             );
 
-            ssdp.subscribe(
-                "cotton-test-server-rp2040".to_string(),
-                Listener {},
-                &ws,
-            );
-
-            ssdp.advertise(
-                alloc::format!("{:032x}", uuid),
-                cotton_ssdp::Advertisement {
-                    notification_type: "rp2040-w5500-test".to_string(),
-                    location: "http://127.0.0.1/".to_string(),
-                },
-                &ws,
-            );
+            defmt::println!("Refreshing!");
             ssdp.reset_refresh_timer(now);
-        } else if do_refresh {
-            ssdp.handle_timeout(&ws, now);
         }
 
         if let Some(wasto) = new_ip {
             let wasto = wire::IpAddress::Ipv4(wasto);
-            let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
             if let Ok((slice, sender)) = socket.recv() {
-                defmt::println!("{} from {}", slice.len(), sender);
+                defmt::println!("{} from {}", slice.len(), sender.endpoint);
                 ssdp.on_data(slice,
                              GenericIpAddress::from(wasto).into(),
                              GenericSocketAddr::from(sender.endpoint).into(),
@@ -348,6 +339,17 @@ mod app {
                 );
             }
         }
+
+        while ssdp.poll_timeout() <= now {
+            let ws = WrappedSocket::new(socket);
+            ssdp.handle_timeout(&ws, now);
+        }
+        let mut next_wake = ssdp.poll_timeout() - now;
+        if let Some(duration) = next {
+            next_wake = next_wake.min(duration);
+        }
+        defmt::println!("Waking after {}ms", next_wake.total_millis());
+        let _ = periodic::spawn_after(next_wake.total_millis().millis());
     }
 }
 
