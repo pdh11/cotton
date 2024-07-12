@@ -286,9 +286,9 @@ impl Service {
         {
             self.engine.on_data(
                 &buf[0..n],
-                &self.search_socket,
                 wasto,
                 wasfrom,
+                Instant::now(),
             );
         }
     }
@@ -301,9 +301,9 @@ impl Service {
         {
             self.engine.on_data(
                 &buf[0..n],
-                &self.search_socket,
                 wasto,
                 wasfrom,
+                Instant::now(),
             );
         }
     }

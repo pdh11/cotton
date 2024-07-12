@@ -216,25 +216,13 @@ mod app {
 
         if let Some(wasto) = new_ip {
             let wasto = wire::IpAddress::Ipv4(wasto);
-            if socket.can_recv() {
-                // Shame about the copy here, but we need the socket
-                // borrowed mutably to write to it (in on_data), and
-                // we also need the data borrowed to read it -- but
-                // that's an immutable borrow at the same time as a
-                // mutable borrow, which isn't allowed.  We could
-                // perhaps have entirely separate sockets for send and
-                // receive, but it's simpler just to copy the data.
-                let mut buffer = [0u8; 512];
-                if let Ok((size, sender)) = socket.recv_slice(&mut buffer) {
-                    // defmt::println!("{} from {}", size, sender);
-                    let ws = WrappedSocket::new(socket);
-                    ssdp.on_data(
-                        &buffer[0..size],
-                        &ws,
-                        GenericIpAddress::from(wasto).into(),
-                        GenericSocketAddr::from(sender.endpoint).into(),
-                    );
-                }
+            if let Ok((slice, sender)) = socket.recv() {
+                defmt::println!("{} from {}", slice.len(), sender);
+                ssdp.on_data(slice,
+                             GenericIpAddress::from(wasto).into(),
+                             GenericSocketAddr::from(sender.endpoint).into(),
+                             now,
+                );
             }
         }
 

@@ -17,6 +17,11 @@
   implementations of Service or AsyncService for example timeout
   handling.
 
+* The `Engine::on_data` call has changed. It requires an additional
+  parameter, the current time as a Timebase::Instant, but no longer
+  requires a Socket. Users of the higher-level Service and
+  AsyncService facilities should see no API change.
+
 ## [0.0.3] 2023-08-12
 
 ### Changed

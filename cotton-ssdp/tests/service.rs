@@ -125,7 +125,7 @@ fn services_can_communicate_unicast() {
         poll.poll(&mut events, Some(sleep)).unwrap();
         println!("polled");
 
-        //ssdp1.wakeup();
+        ssdp1.wakeup();
         ssdp2.wakeup();
         ssdp1.multicast_ready();
         ssdp1.multicast_ready();

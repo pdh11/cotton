@@ -107,9 +107,9 @@ impl AsyncService {
                             inner.multicast_socket.receive_to(&mut buf) {
                             inner.engine.lock().unwrap().on_data(
                                 &buf[0..n],
-                                &inner.search_socket,
                                 wasto,
                                 wasfrom,
+                                Instant::now(),
                             );
                         }
                     },
@@ -120,9 +120,9 @@ impl AsyncService {
                         {
                             inner.engine.lock().unwrap().on_data(
                                 &buf[0..n],
-                                &inner.search_socket,
                                 wasto,
                                 wasfrom,
+                                Instant::now(),
                             );
                         }
                     },

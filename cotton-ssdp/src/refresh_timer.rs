@@ -12,7 +12,7 @@ pub trait Timebase {
     type Duration: From<core::time::Duration>;
 
     /// Representing a moment in time, see `std::time::Instant`
-    type Instant: AddAssign<Self::Duration> + PartialOrd + Copy;
+    type Instant: AddAssign<Self::Duration> + Ord + Copy;
 }
 
 /// Implementing the `Timebase` abstraction in terms of smoltcp types
