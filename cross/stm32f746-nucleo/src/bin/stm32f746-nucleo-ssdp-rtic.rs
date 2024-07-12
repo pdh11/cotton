@@ -194,6 +194,8 @@ mod app {
             cx.local.ssdp,
         );
 
+        stm32_eth::eth_interrupt_handler();
+
         let old_ip = stack.interface.ipv4_addr();
         let next = stack.poll(now_fn(), &mut &mut device.dma);
         let new_ip = stack.interface.ipv4_addr();
@@ -217,7 +219,7 @@ mod app {
         if let Some(wasto) = new_ip {
             let wasto = wire::IpAddress::Ipv4(wasto);
             if let Ok((slice, sender)) = socket.recv() {
-                defmt::println!("{} from {}", slice.len(), sender);
+                defmt::println!("{} from {}", slice.len(), sender.endpoint);
                 ssdp.on_data(slice,
                              GenericIpAddress::from(wasto).into(),
                              GenericSocketAddr::from(sender.endpoint).into(),
@@ -226,8 +228,7 @@ mod app {
             }
         }
 
-        let timeout_needed = ssdp.poll_timeout();
-        if now >= timeout_needed {
+        while ssdp.poll_timeout() <= now {
             let ws = WrappedSocket::new(socket);
             ssdp.handle_timeout(&ws, now);
         }
