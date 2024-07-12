@@ -93,6 +93,7 @@ impl DeviceTest {
 
                 if start.elapsed() > timeout {
                     eprintln!("{:?}: stdout {}", Instant::now(), inner.output);
+                    eprintln!("{:?}: stderr {}", Instant::now(), inner.errors);
                     assert_contains!(inner.output, needle);
                     return;
                 }
@@ -117,6 +118,7 @@ impl DeviceTest {
                 }
 
                 if start.elapsed() > timeout {
+                    eprintln!("{:?}: stdout {}", Instant::now(), inner.output);
                     eprintln!("{:?}: stderr {}", Instant::now(), inner.errors);
                     assert_contains!(inner.errors, needle);
                     return;
