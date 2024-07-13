@@ -1,4 +1,5 @@
 use core::ops::AddAssign;
+use core::fmt::Debug;
 
 /// A timebase is a pair of types Duration/Instant
 ///
@@ -9,10 +10,10 @@ use core::ops::AddAssign;
 /// the smoltcp types (in no_std).
 pub trait Timebase {
     /// Representing a span of elapsed time, see `core::time::Duration`
-    type Duration: From<core::time::Duration>;
+    type Duration: From<core::time::Duration> + Debug;
 
     /// Representing a moment in time, see `std::time::Instant`
-    type Instant: AddAssign<Self::Duration> + Ord + Copy;
+    type Instant: AddAssign<Self::Duration> + Ord + Copy + Debug;
 }
 
 /// Implementing the `Timebase` abstraction in terms of smoltcp types
@@ -83,7 +84,7 @@ impl<T: Timebase> RefreshTimer<T> {
         // random offset 0-2550ms
         let random_offset =
             ((self.random_seed >> (self.phase * 8)) & 255) * 10;
-        let period_msec = if self.phase == 0 { 800_000 } else { 1_000 }
+        let period_msec = if self.phase == 0 { 800_000 } else { 6_000 }
             + (random_offset as u64);
         self.next_salvo +=
             core::time::Duration::from_millis(period_msec).into();

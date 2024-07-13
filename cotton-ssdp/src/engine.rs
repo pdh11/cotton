@@ -391,12 +391,14 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                                             response_type.to_string(),
                                         );
                                 },
-                                ResponseNeeded::Unicast(instant, _, _, _) => {
-                                    // Two different searchers are now
-                                    // asking for this: send a
-                                    // multicast reply.
-                                    value.response_needed =
-                                        ResponseNeeded::Multicast(instant);
+                                ResponseNeeded::Unicast(instant, previous_from, _, _) => {
+                                    if wasfrom != previous_from {
+                                        // Two different searchers are now
+                                        // asking for this: send a
+                                        // multicast reply.
+                                        value.response_needed =
+                                            ResponseNeeded::Multicast(instant);
+                                    }
                                 },
                                 _ => (),
                             }
