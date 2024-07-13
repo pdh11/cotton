@@ -281,7 +281,7 @@ impl Service {
     /// Handler to be called when multicast socket is readable
     pub fn multicast_ready(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) =
+        while let Ok((n, wasto, wasfrom)) =
             self.multicast_socket.receive_to(&mut buf)
         {
             self.engine.on_data(
@@ -296,7 +296,7 @@ impl Service {
     /// Handler to be called when search socket is readable
     pub fn search_ready(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) =
+        while let Ok((n, wasto, wasfrom)) =
             self.search_socket.receive_to(&mut buf)
         {
             self.engine.on_data(

@@ -103,7 +103,7 @@ impl AsyncService {
                 tokio::select! {
                     _ = inner.multicast_socket.readable() => {
                         let mut buf = [0u8; 1500];
-                        if let Ok((n, wasto, wasfrom)) =
+                        while let Ok((n, wasto, wasfrom)) =
                             inner.multicast_socket.receive_to(&mut buf) {
                             inner.engine.lock().unwrap().on_data(
                                 &buf[0..n],
@@ -115,7 +115,7 @@ impl AsyncService {
                     },
                     _ = inner.search_socket.readable() => {
                         let mut buf = [0u8; 1500];
-                        if let Ok((n, wasto, wasfrom)) =
+                        while let Ok((n, wasto, wasfrom)) =
                             inner.search_socket.receive_to(&mut buf)
                         {
                             inner.engine.lock().unwrap().on_data(
