@@ -84,7 +84,7 @@ impl<T: Timebase> RefreshTimer<T> {
         // random offset 0-2550ms
         let random_offset =
             ((self.random_seed >> (self.phase * 8)) & 255) * 10;
-        let period_msec = if self.phase == 0 { 800_000 } else { 6_000 }
+        let period_msec = if self.phase == 3 { 800_000 } else { 6_000 }
             + (random_offset as u64);
         self.next_salvo +=
             core::time::Duration::from_millis(period_msec).into();
@@ -112,11 +112,6 @@ mod tests {
 
         f.update_refresh(now);
         let t = f.next_refresh() - now;
-        assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
-        now += t;
-
-        f.update_refresh(now);
-        let t = f.next_refresh() - now;
         assert!(t < Duration::from_secs(20));
         now += t;
 
@@ -133,6 +128,11 @@ mod tests {
         f.update_refresh(now);
         let t = f.next_refresh() - now;
         assert!(t > Duration::from_secs(780) && t < Duration::from_secs(820));
+        now += t;
+
+        f.update_refresh(now);
+        let t = f.next_refresh() - now;
+        assert!(t < Duration::from_secs(20));
 
         // note no "now += t"
         f.update_refresh(now);

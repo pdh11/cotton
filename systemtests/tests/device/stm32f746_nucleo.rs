@@ -57,7 +57,7 @@ fn arm_stm32f746_nucleo_ssdp() {
                     nt.expect("SSDP! cotton-test-server-stm32f746",
                               Duration::from_secs(20));
                     st.expect_seen("stm32f746-nucleo-test",
-                              Duration::from_secs(20));
+                              Duration::from_secs(30));
                 }
             );
         }

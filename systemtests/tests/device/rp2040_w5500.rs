@@ -65,7 +65,7 @@ fn arm_rp2040_w5500macraw_ssdp_rtic() {
                     nt.expect("SSDP! cotton-test-server-rp2040",
                               Duration::from_secs(20));
                     st.expect_seen("rp2040-w5500-test",
-                              Duration::from_secs(10));
+                              Duration::from_secs(30));
                 }
             );
         }
