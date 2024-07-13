@@ -112,7 +112,9 @@ mod app {
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
         super::init_heap();
-        let unique_id = unsafe { cross_rp2040_w5500::unique_flash_id() };
+        let unique_id = critical_section::with(|_| unsafe {
+            cross_rp2040_w5500::unique_flash_id()
+        });
         let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
         defmt::println!("MAC address: {:x}", mac);
 
@@ -299,11 +301,8 @@ mod app {
 
     #[task(binds = IO_IRQ_BANK0, local = [w5500_irq, device, stack, udp_handle, ssdp, timer_handle], priority = 2)]
     fn eth_interrupt(cx: eth_interrupt::Context) {
-        let (stack, udp_handle, ssdp) = (
-            cx.local.stack,
-            cx.local.udp_handle,
-            cx.local.ssdp,
-        );
+        let (stack, udp_handle, ssdp) =
+            (cx.local.stack, cx.local.udp_handle, cx.local.ssdp);
 
         cx.local.device.clear_interrupt();
         cx.local.w5500_irq.clear_interrupt(EdgeLow);
@@ -332,10 +331,11 @@ mod app {
             let wasto = wire::IpAddress::Ipv4(wasto);
             if let Ok((slice, sender)) = socket.recv() {
                 defmt::println!("{} from {}", slice.len(), sender.endpoint);
-                ssdp.on_data(slice,
-                             GenericIpAddress::from(wasto).into(),
-                             GenericSocketAddr::from(sender.endpoint).into(),
-                             now,
+                ssdp.on_data(
+                    slice,
+                    GenericIpAddress::from(wasto).into(),
+                    GenericSocketAddr::from(sender.endpoint).into(),
+                    now,
                 );
             }
         }
