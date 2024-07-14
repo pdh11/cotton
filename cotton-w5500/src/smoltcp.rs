@@ -141,6 +141,8 @@ impl<'a, Spi: w5500::bus::Bus> smoltcp::phy::TxToken for EthTxToken<'a, Spi> {
 /// For W5500-EVB-Pico
 #[cfg(feature = "w5500-evb-pico")]
 pub mod w5500_evb_pico {
+    use embedded_hal_bus::spi::ExclusiveDevice;
+    use embedded_hal_bus::spi::NoDelay;
     use rp2040_hal::gpio::bank0::Gpio16;
     use rp2040_hal::gpio::bank0::Gpio17;
     use rp2040_hal::gpio::bank0::Gpio18;
@@ -151,8 +153,6 @@ pub mod w5500_evb_pico {
     use rp2040_hal::gpio::PullNone;
     use rp2040_hal::gpio::SioOutput;
     use rp2040_hal::pac::SPI0;
-    use embedded_hal_bus::spi::ExclusiveDevice;
-    use embedded_hal_bus::spi::NoDelay;
 
     type Spi0 = rp2040_hal::Spi<
         rp2040_hal::spi::Enabled,

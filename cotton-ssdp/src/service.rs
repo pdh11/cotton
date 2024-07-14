@@ -1,8 +1,10 @@
 use crate::engine::{Callback, Engine};
-use crate::refresh_timer::RefreshTimer;
+use crate::refresh_timer::StdTimebase;
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
+use rand::RngCore;
+use std::time::Instant;
 
 struct SyncCallback {
     callback: Box<dyn Fn(&Notification)>,
@@ -158,8 +160,7 @@ this:
 
 */
 pub struct Service {
-    engine: Engine<SyncCallback>,
-    refresh_timer: RefreshTimer,
+    engine: Engine<SyncCallback, StdTimebase>,
     multicast_socket: mio::net::UdpSocket,
     search_socket: mio::net::UdpSocket,
 }
@@ -185,7 +186,10 @@ impl Service {
         let mut multicast_socket =
             mio::net::UdpSocket::from_std(socket(1900u16)?);
         let mut search_socket = mio::net::UdpSocket::from_std(socket(0u16)?); // ephemeral port
-        let mut engine = Engine::<SyncCallback>::new();
+        let mut engine = Engine::<SyncCallback, StdTimebase>::new(
+            rand::thread_rng().next_u32(),
+            Instant::now(),
+        );
 
         for netif in interfaces {
             // Ignore errors -- some interfaces are returned on which
@@ -202,7 +206,6 @@ impl Service {
 
         Ok(Self {
             engine,
-            refresh_timer: RefreshTimer::default(),
             multicast_socket,
             search_socket,
         })
@@ -278,42 +281,34 @@ impl Service {
     /// Handler to be called when multicast socket is readable
     pub fn multicast_ready(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) =
+        while let Ok((n, wasto, wasfrom)) =
             self.multicast_socket.receive_to(&mut buf)
         {
-            self.engine.on_data(
-                &buf[0..n],
-                &self.search_socket,
-                wasto,
-                wasfrom,
-            );
+            self.engine
+                .on_data(&buf[0..n], wasto, wasfrom, Instant::now());
         }
     }
 
     /// Handler to be called when search socket is readable
     pub fn search_ready(&mut self) {
         let mut buf = [0u8; 1500];
-        if let Ok((n, wasto, wasfrom)) =
+        while let Ok((n, wasto, wasfrom)) =
             self.search_socket.receive_to(&mut buf)
         {
-            self.engine.on_data(
-                &buf[0..n],
-                &self.search_socket,
-                wasto,
-                wasfrom,
-            );
+            self.engine
+                .on_data(&buf[0..n], wasto, wasfrom, Instant::now());
         }
     }
 
     /// Time before next wakeup
     pub fn next_wakeup(&self) -> std::time::Duration {
-        self.refresh_timer.next_refresh()
+        self.engine.poll_timeout() - Instant::now()
     }
 
     /// Handler to be called when wakeup timer elapses
     pub fn wakeup(&mut self) {
-        self.refresh_timer.update_refresh();
-        self.engine.refresh(&self.search_socket);
+        self.engine
+            .handle_timeout(&self.search_socket, Instant::now());
     }
 }
 

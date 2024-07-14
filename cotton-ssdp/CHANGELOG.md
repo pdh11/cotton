@@ -3,7 +3,24 @@
 
 ## Unreleased
 
+### Changed
+
 * Update MSRV from 1.65 to 1.75.
+
+* Move RefreshTimer into Engine. Users of the low-level Engine
+  facility must now parameterise Engine by a Timebase implementation
+  (usually either StdTimebase or SmoltcpTimebase), but no longer need
+  a separate refresh timer. Users of the higher-level Service and
+  AsyncService facilities should see no API change. The
+  "Engine::refresh" call is left public for transition purposes, but
+  there should no longer be any need to call it directly; see the
+  implementations of Service or AsyncService for example timeout
+  handling.
+
+* The `Engine::on_data` call has changed. It requires an additional
+  parameter, the current time as a Timebase::Instant, but no longer
+  requires a Socket. Users of the higher-level Service and
+  AsyncService facilities should see no API change.
 
 ## [0.0.3] 2023-08-12
 

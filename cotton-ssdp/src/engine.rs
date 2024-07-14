@@ -1,5 +1,6 @@
 use crate::message;
 use crate::message::Message;
+use crate::refresh_timer::{RefreshTimer, Timebase};
 use crate::udp;
 use crate::{Advertisement, Notification};
 use alloc::collections::BTreeMap;
@@ -74,6 +75,60 @@ struct ActiveSearch<CB: Callback> {
 
 slotmap::new_key_type! { struct ActiveSearchKey; }
 
+/// Is there an active search that we're going to respond to?`
+enum ResponseNeeded<Instant> {
+    None,
+    Multicast(Instant),
+    Unicast(Instant, SocketAddr, IpAddr, String),
+}
+
+struct ActiveAdvertisement<Instant> {
+    advertisement: Advertisement,
+    response_needed: ResponseNeeded<Instant>,
+}
+
+impl<Instant> ActiveAdvertisement<Instant> {
+    fn notify_on<SCK: udp::TargetedSend>(
+        &self,
+        unique_service_name: &str,
+        source: &IpAddr,
+        socket: &SCK,
+    ) {
+        let url = rewrite_host(&self.advertisement.location, source);
+        let _ = socket.send_with(
+            MAX_PACKET_SIZE,
+            &SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::new(239, 255, 255, 250),
+                1900,
+            )),
+            source,
+            |b| {
+                message::build_notify(
+                    b,
+                    &self.advertisement.notification_type,
+                    unique_service_name,
+                    &url,
+                )
+            },
+        );
+    }
+
+    fn notify_on_all<SCK: udp::TargetedSend>(
+        &self,
+        unique_service_name: &str,
+        interfaces: &BTreeMap<InterfaceIndex, Interface>,
+        socket: &SCK,
+    ) {
+        for interface in interfaces.values() {
+            if interface.up {
+                for ip in &interface.ips {
+                    self.notify_on(unique_service_name, ip, socket);
+                }
+            }
+        }
+    }
+}
+
 /// The core of an SSDP implementation
 ///
 /// This low-level facility is usually wrapped-up in
@@ -87,43 +142,101 @@ slotmap::new_key_type! { struct ActiveSearchKey; }
 /// [`Engine::on_data`], and changes to available network interfaces
 /// (if required) to [`Engine::on_network_event`].
 ///
-/// The notifications should be retransmitted on a timer; the owner
-/// should implement a timer facility, perhaps by using
-/// [`crate::refresh_timer::RefreshTimer`], and call
-/// [`Engine::refresh`] each time the timer expires. See, for
+/// The notifications will be retransmitted on a timer; the owner
+/// of the `Engine` should, each time incoming packets have been dealt
+/// with, call [`Engine::poll_timeout`] to determine the `Instant` when
+/// `Engine` next has work to do, and then once that Instant occurs, call
+/// [`Engine::handle_timeout`] so that the work can be done. See, for
 /// instance, the `tokio::select!` loop in `AsyncService::new_inner`.
 ///
-pub struct Engine<CB: Callback> {
+pub struct Engine<CB: Callback, T: Timebase> {
     interfaces: BTreeMap<InterfaceIndex, Interface>,
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
-    advertisements: BTreeMap<String, Advertisement>,
+    advertisements: BTreeMap<String, ActiveAdvertisement<T::Instant>>,
+    refresh_timer: RefreshTimer<T>,
 }
 
-impl<CB: Callback> Default for Engine<CB> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<CB: Callback> Engine<CB> {
+impl<CB: Callback, T: Timebase> Engine<CB, T> {
     /// Create a new Engine, parameterised by callback type
     ///
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(random_seed: u32, now: T::Instant) -> Self {
         Self {
             interfaces: BTreeMap::default(),
             active_searches: SlotMap::with_key(),
             advertisements: BTreeMap::default(),
+            refresh_timer: RefreshTimer::new(random_seed, now),
         }
     }
 
-    /// Re-send all messages
-    ///
-    /// This should be called periodically, perhaps with the help of a
-    /// [`crate::refresh_timer::RefreshTimer`]
+    /// Deal with any expired timeouts
+    pub fn handle_timeout<SCK: udp::TargetedSend>(
+        &mut self,
+        socket: &SCK,
+        now: T::Instant,
+    ) {
+        if self.refresh_timer.next_refresh() <= now {
+            self.refresh(socket);
+            self.refresh_timer.update_refresh(now);
+        }
+
+        for (key, value) in &mut self.advertisements {
+            match &value.response_needed {
+                ResponseNeeded::Multicast(instant) => {
+                    if now > *instant {
+                        value.notify_on_all(key, &self.interfaces, socket);
+                        value.response_needed = ResponseNeeded::None;
+                    }
+                }
+                ResponseNeeded::Unicast(
+                    instant,
+                    wasfrom,
+                    wasto,
+                    response_type,
+                ) => {
+                    if now > *instant {
+                        Self::send_response(
+                            socket,
+                            *wasto,
+                            *wasfrom,
+                            key,
+                            response_type,
+                            &value.advertisement.location,
+                        );
+                        value.response_needed = ResponseNeeded::None;
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+
+    /// Obtain the desired delay before the next call to `handle_timeout`
+    pub fn poll_timeout(&self) -> T::Instant {
+        let mut next_wake = self.refresh_timer.next_refresh();
+        for value in self.advertisements.values() {
+            match value.response_needed {
+                ResponseNeeded::Multicast(instant) => {
+                    next_wake = next_wake.min(instant)
+                }
+                ResponseNeeded::Unicast(instant, _, _, _) => {
+                    next_wake = next_wake.min(instant)
+                }
+                _ => (),
+            }
+        }
+        next_wake
+    }
+
+    /// Reset the refresh timer (e.g. if network has gone away and come back)
+    pub fn reset_refresh_timer(&mut self, now: T::Instant) {
+        self.refresh_timer.reset(now);
+    }
+
+    /// Re-send all announcements
     pub fn refresh<SCK: udp::TargetedSend>(&mut self, socket: &SCK) {
         for (key, value) in &self.advertisements {
-            self.notify_on_all(key, value, socket);
+            value.notify_on_all(key, &self.interfaces, socket);
         }
 
         // If anybody is doing an ssdp:all search, then we don't need to
@@ -202,13 +315,27 @@ impl<CB: Callback> Engine<CB> {
         }
     }
 
-    /// Notify the `Engine` that data is ready on one of its sockets
-    pub fn on_data<SCK: udp::TargetedSend>(
-        &mut self,
-        buf: &[u8],
+    fn send_response<SCK: udp::TargetedSend>(
         socket: &SCK,
         wasto: IpAddr,
         wasfrom: SocketAddr,
+        service_name: &str,
+        response_type: &str,
+        location: &str,
+    ) {
+        let url = rewrite_host(location, &wasto);
+        let _ = socket.send_with(MAX_PACKET_SIZE, &wasfrom, &wasto, |b| {
+            message::build_response(b, response_type, service_name, &url)
+        });
+    }
+
+    /// Notify the `Engine` that data is ready on one of its sockets
+    pub fn on_data(
+        &mut self,
+        buf: &[u8],
+        wasto: IpAddr,
+        wasfrom: SocketAddr,
+        now: T::Instant,
     ) {
         if let Ok(m) = message::parse(buf) {
             match m {
@@ -232,33 +359,54 @@ impl<CB: Callback> Engine<CB> {
                         unique_service_name,
                     });
                 }
-                Message::Search { search_target, .. } => {
-                    for (key, value) in &self.advertisements {
+                Message::Search {
+                    search_target,
+                    maximum_wait_sec,
+                } => {
+                    let mut reply_at = now; // @TODO randomise
+                    let delay_ms =
+                        ((maximum_wait_sec as u64) * 300).clamp(100, 5000);
+                    reply_at +=
+                        core::time::Duration::from_millis(delay_ms).into();
+                    for value in self.advertisements.values_mut() {
                         if target_match(
                             &search_target,
-                            &value.notification_type,
+                            &value.advertisement.notification_type,
                         ) {
-                            let url = rewrite_host(&value.location, &wasto);
-
-                            let response_type = if search_target == "ssdp:all"
-                            {
-                                &value.notification_type
-                            } else {
-                                &search_target
-                            };
-                            let _ = socket.send_with(
-                                MAX_PACKET_SIZE,
-                                &wasfrom,
-                                &wasto,
-                                |b| {
-                                    message::build_response(
-                                        b,
-                                        response_type,
-                                        key,
-                                        &url,
-                                    )
-                                },
-                            );
+                            match value.response_needed {
+                                ResponseNeeded::None => {
+                                    // Schedule a response
+                                    let response_type = if search_target
+                                        == "ssdp:all"
+                                    {
+                                        &value.advertisement.notification_type
+                                    } else {
+                                        &search_target
+                                    };
+                                    value.response_needed =
+                                        ResponseNeeded::Unicast(
+                                            reply_at,
+                                            wasfrom,
+                                            wasto,
+                                            response_type.to_string(),
+                                        );
+                                }
+                                ResponseNeeded::Unicast(
+                                    instant,
+                                    previous_from,
+                                    _,
+                                    _,
+                                ) => {
+                                    if wasfrom != previous_from {
+                                        // Two different searchers are now
+                                        // asking for this: send a
+                                        // multicast reply.
+                                        value.response_needed =
+                                            ResponseNeeded::Multicast(instant);
+                                    }
+                                }
+                                _ => (),
+                            }
                         }
                     }
                 }
@@ -312,7 +460,7 @@ impl<CB: Callback> Engine<CB> {
             }
 
             for (key, value) in &self.advertisements {
-                Self::notify_on(key, value, ip, search);
+                value.notify_on(key, ip, search);
             }
         }
     }
@@ -447,51 +595,6 @@ impl<CB: Callback> Engine<CB> {
         Ok(())
     }
 
-    fn notify_on<SCK: udp::TargetedSend>(
-        unique_service_name: &str,
-        advertisement: &Advertisement,
-        source: &IpAddr,
-        socket: &SCK,
-    ) {
-        let url = rewrite_host(&advertisement.location, source);
-        let _ = socket.send_with(
-            MAX_PACKET_SIZE,
-            &SocketAddr::V4(SocketAddrV4::new(
-                Ipv4Addr::new(239, 255, 255, 250),
-                1900,
-            )),
-            source,
-            |b| {
-                message::build_notify(
-                    b,
-                    &advertisement.notification_type,
-                    unique_service_name,
-                    &url,
-                )
-            },
-        );
-    }
-
-    fn notify_on_all<SCK: udp::TargetedSend>(
-        &self,
-        unique_service_name: &str,
-        advertisement: &Advertisement,
-        socket: &SCK,
-    ) {
-        for interface in self.interfaces.values() {
-            if interface.up {
-                for ip in &interface.ips {
-                    Self::notify_on(
-                        unique_service_name,
-                        advertisement,
-                        ip,
-                        socket,
-                    );
-                }
-            }
-        }
-    }
-
     fn byebye_on<SCK: udp::TargetedSend>(
         unique_service_name: &str,
         notification_type: &str,
@@ -542,9 +645,18 @@ impl<CB: Callback> Engine<CB> {
         advertisement: Advertisement,
         socket: &SCK,
     ) {
-        self.notify_on_all(&unique_service_name, &advertisement, socket);
+        let active_advertisement = ActiveAdvertisement {
+            advertisement,
+            response_needed: ResponseNeeded::None,
+        };
+
+        active_advertisement.notify_on_all(
+            &unique_service_name,
+            &self.interfaces,
+            socket,
+        );
         self.advertisements
-            .insert(unique_service_name, advertisement);
+            .insert(unique_service_name, active_advertisement);
     }
 
     /// Withdraw an advertisement for a local resource
@@ -561,7 +673,7 @@ impl<CB: Callback> Engine<CB> {
             self.advertisements.remove(unique_service_name)
         {
             self.byebye_on_all(
-                &advertisement.notification_type,
+                &advertisement.advertisement.notification_type,
                 unique_service_name,
                 socket,
             );
@@ -573,8 +685,10 @@ impl<CB: Callback> Engine<CB> {
 mod tests {
     use super::*;
     use crate::message::parse;
+    use crate::refresh_timer::StdTimebase;
     use no_std_net::{Ipv6Addr, SocketAddrV4};
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
     // Bit of a palaver to make make_index() const even though it can panic,
     // see https://ktkaufman03.github.io/blog/2023/04/20/rust-compile-time-checks/
@@ -767,6 +881,7 @@ mod tests {
         {
             let mut buffer = vec![0u8; size];
             let actual_size = f(&mut buffer);
+            eprintln!("fakesocket: {from:?} - {to:?}");
             self.sends.lock().unwrap().push((
                 *to,
                 *from,
@@ -877,6 +992,20 @@ mod tests {
         ))
     }
 
+    fn remote_src_2() -> SocketAddr {
+        SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(192, 168, 100, 160),
+            12345,
+        ))
+    }
+
+    fn remote_src_3() -> SocketAddr {
+        SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(192, 168, 100, 160),
+            54321,
+        ))
+    }
+
     fn new_eth0_if() -> NetworkEvent {
         NetworkEvent::NewLink(
             make_index::<4>(),
@@ -933,11 +1062,23 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
     struct Fixture {
-        e: Engine<FakeCallback>,
+        e: Engine<FakeCallback, StdTimebase>,
         c: FakeCallback,
         s: FakeSocket,
+    }
+
+    impl Default for Fixture {
+        fn default() -> Self {
+            Self {
+                e: Engine::<FakeCallback, StdTimebase>::new(
+                    0u32,
+                    Instant::now(),
+                ),
+                c: FakeCallback::default(),
+                s: FakeSocket::default(),
+            }
+        }
     }
 
     impl Fixture {
@@ -1134,7 +1275,12 @@ mod tests {
     fn bogus_message_ignored() {
         let mut f = Fixture::default();
 
-        f.e.on_data(&[0, 1, 2, 3, 4, 5], &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(
+            &[0, 1, 2, 3, 4, 5],
+            LOCAL_SRC,
+            remote_src(),
+            Instant::now(),
+        );
 
         assert!(f.s.no_sends());
     }
@@ -1146,7 +1292,7 @@ mod tests {
         });
 
         let n = FakeSocket::build_notify("upnp::Renderer:3");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), Instant::now());
 
         assert_eq!(false, f.c.contains_byebye("upnp::Renderer:3"));
         assert!(f.c.contains_notify("upnp::Renderer:3"));
@@ -1159,7 +1305,7 @@ mod tests {
         });
 
         let n = FakeSocket::build_notify("upnp::ContentDirectory:3");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), Instant::now());
 
         assert!(f.c.no_notifies()); // not interested in this NT
     }
@@ -1171,7 +1317,7 @@ mod tests {
         });
 
         let n = FakeSocket::build_response("upnp::Renderer:3");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), Instant::now());
 
         assert!(f.c.contains_notify("upnp::Renderer:3"));
     }
@@ -1183,7 +1329,7 @@ mod tests {
         });
 
         let n = FakeSocket::build_response("upnp::ContentDirectory:3");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), Instant::now());
 
         assert!(f.c.no_notifies()); // not interested in this NT
     }
@@ -1281,8 +1427,104 @@ mod tests {
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
+        // Get initial announcement salvos out of the way
+        let now = Instant::now() + core::time::Duration::from_secs(60);
+        while f.e.poll_timeout() < now {
+            f.e.handle_timeout(&f.s, now);
+        }
+
+        f.s.clear();
+
         let n = FakeSocket::build_search("upnp:rootdevice");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        let now = Instant::now();
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+
+        f.e.handle_timeout(&f.s, now);
+        assert!(f.s.no_sends()); // not yet!
+
+        let next = f.e.poll_timeout() - now;
+        assert!(next < std::time::Duration::from_secs(6));
+
+        f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
+
+        assert!(f.s.contains_send(
+            remote_src(), LOCAL_SRC,
+            |m| matches!(m,
+                         Message::Response { search_target, unique_service_name,
+                                             location }
+                         if search_target == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
+    }
+
+    #[test]
+    fn response_multicast_to_multiple_searchers() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+        });
+
+        // Get initial announcement salvos out of the way
+        let now = Instant::now() + core::time::Duration::from_secs(60);
+        while f.e.poll_timeout() < now {
+            f.e.handle_timeout(&f.s, now);
+        }
+
+        f.s.clear();
+
+        let n = FakeSocket::build_search("upnp:rootdevice");
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+        f.e.on_data(&n, LOCAL_SRC, remote_src_2(), now);
+        f.e.on_data(&n, LOCAL_SRC, remote_src_3(), now);
+
+        let next = f.e.poll_timeout() - now;
+        assert!(next < std::time::Duration::from_secs(6));
+
+        f.e.handle_timeout(&f.s, now);
+
+        assert!(f.s.no_sends()); // not yet!
+
+        f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
+
+        assert!(f.s.contains_send(
+            multicast_dest(),
+            LOCAL_SRC,
+            |m| matches!(m,
+                         Message::NotifyAlive { notification_type, unique_service_name, location }
+                         if notification_type == "upnp:rootdevice"
+                         && unique_service_name == "uuid:137"
+                         && location == "http://192.168.100.1/description.xml")));
+    }
+
+    #[test]
+    fn response_unicast_to_repeated_searchers() {
+        let mut f = Fixture::new_with(|f| {
+            f.e.on_network_event(&new_eth0_if(), &f.s, &f.s).unwrap();
+            f.e.on_network_event(&NEW_ETH0_ADDR, &f.s, &f.s).unwrap();
+            f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
+        });
+
+        // Get initial announcement salvos out of the way
+        let now = Instant::now() + core::time::Duration::from_secs(60);
+        while f.e.poll_timeout() < now {
+            f.e.handle_timeout(&f.s, now);
+        }
+
+        f.s.clear();
+
+        let n = FakeSocket::build_search("upnp:rootdevice");
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+
+        let next = f.e.poll_timeout() - now;
+        assert!(next < std::time::Duration::from_secs(6));
+
+        f.e.handle_timeout(&f.s, now);
+
+        assert!(f.s.no_sends()); // not yet!
+
+        f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
 
         assert!(f.s.contains_send(
             remote_src(), LOCAL_SRC,
@@ -1309,8 +1551,20 @@ mod tests {
             );
         });
 
+        // Get initial announcement salvos out of the way
+        let now = Instant::now() + core::time::Duration::from_secs(60);
+        while f.e.poll_timeout() < now {
+            f.e.handle_timeout(&f.s, now);
+        }
+
+        f.s.clear();
+
         let n = FakeSocket::build_search("upnp::Directory:2");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+
+        assert!(f.s.no_sends()); // not yet!
+
+        f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
 
         assert!(f.s.contains_send(
             remote_src(), LOCAL_SRC,
@@ -1330,8 +1584,20 @@ mod tests {
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
+        // Get initial announcement salvos out of the way
+        let now = Instant::now() + core::time::Duration::from_secs(60);
+        while f.e.poll_timeout() < now {
+            f.e.handle_timeout(&f.s, now);
+        }
+
+        f.s.clear();
+
         let n = FakeSocket::build_search("ssdp:all");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+
+        assert!(f.s.no_sends()); // not yet!
+
+        f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
 
         assert!(f.s.contains_send(
             remote_src(), LOCAL_SRC,
@@ -1351,8 +1617,18 @@ mod tests {
             f.e.advertise("uuid:137".to_string(), root_advert(), &f.s);
         });
 
+        // Get initial announcement salvos out of the way
+        let now = Instant::now() + core::time::Duration::from_secs(60);
+        while f.e.poll_timeout() < now {
+            f.e.handle_timeout(&f.s, now);
+        }
+
+        f.s.clear();
+
         let n = FakeSocket::build_search("upnp::ContentDirectory:7");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), now);
+
+        f.e.handle_timeout(&f.s, now + std::time::Duration::from_secs(6));
 
         assert!(f.s.no_sends());
     }
@@ -1364,7 +1640,7 @@ mod tests {
         });
 
         let n = FakeSocket::build_byebye("upnp::Renderer:3");
-        f.e.on_data(&n, &f.s, LOCAL_SRC, remote_src());
+        f.e.on_data(&n, LOCAL_SRC, remote_src(), Instant::now());
 
         assert_eq!(false, f.c.contains_notify("upnp::Renderer:3"));
         assert!(f.c.contains_byebye("upnp::Renderer:3"));
@@ -1620,5 +1896,15 @@ mod tests {
     fn bogus_url_passed_through2() {
         let url = rewrite_host("fnord:/", &LOCAL_SRC);
         assert_eq!(url, "fnord:/".to_string());
+    }
+
+    #[test]
+    fn reset() {
+        let mut f = Fixture::default();
+        let now = Instant::now();
+        f.e.handle_timeout(&f.s, now);
+        assert_ne!(f.e.poll_timeout(), now);
+        f.e.reset_refresh_timer(now);
+        assert_eq!(f.e.poll_timeout(), now);
     }
 }

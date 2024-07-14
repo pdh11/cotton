@@ -7,6 +7,8 @@ use std::io::{self, Write};
 fn main() {
     println!("cargo:rerun-if-changed=../cross/stm32f746-nucleo");
     println!("cargo:rerun-if-changed=../cross/rp2040-w5500");
+    println!("cargo:rerun-if-changed=../cotton-ssdp");
+    println!("cargo:rerun-if-changed=../cotton-unique");
 
     if env::var("CARGO_FEATURE_ARM").is_ok() {
         /* Run the inner Cargo without any Cargo-related environment variables

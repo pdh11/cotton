@@ -42,7 +42,6 @@ rand = { version = "0.8", default-features = false, features = [
   "std",
   "std_rng",
 ], optional = true }
-mock_instant = { version = "0.5", default-features = false, optional = true }
 mio = { version = "1", default-features = false, features = [
   "os-poll",
   "net",
@@ -57,6 +56,9 @@ smoltcp = { version = "0.11", default-features = false, features = [
   "proto-igmp",
 ], optional = true }
 
+[dev-dependencies]
+serial_test = { version = "3" }
+
 [features]
 default = ["std", "async", "sync", "smoltcp"]
 std = [
@@ -65,10 +67,10 @@ std = [
   "dep:libc",
   "dep:nix",
   "dep:socket2",
-  "dep:mock_instant",
   "dep:rand",
   "dep:uuid",
   "smoltcp/alloc",
+  "smoltcp/std",
 ]
 sync = ["std", "cotton-netif/sync", "dep:mio"]
 async = [

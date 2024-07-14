@@ -209,9 +209,11 @@ impl<'a> Stack<'a> {
         &mut self,
         now: smoltcp::time::Instant,
         device: &mut D,
-    ) {
-        self.interface.poll(now, device, &mut self.socket_set);
-        self.poll_dhcp();
+    ) -> Option<smoltcp::time::Duration> {
+        while self.interface.poll(now, device, &mut self.socket_set) {
+            self.poll_dhcp();
+        }
+        self.interface.poll_delay(now, &self.socket_set)
     }
 
     /// Poll the DHCP socket for any updates

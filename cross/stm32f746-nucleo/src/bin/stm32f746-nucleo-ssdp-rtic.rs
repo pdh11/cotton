@@ -19,6 +19,7 @@ static ALLOCATOR: LockedHeap = LockedHeap::empty();
 mod app {
     use super::NetworkStorage;
     use crate::alloc::string::ToString;
+    use cotton_ssdp::refresh_timer::SmoltcpTimebase;
     use cotton_ssdp::udp::smoltcp::{
         GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
         WrappedInterface, WrappedSocket,
@@ -35,7 +36,7 @@ mod app {
         device: common::Stm32Ethernet,
         stack: common::Stack<'static>,
         udp_handle: SocketHandle,
-        ssdp: cotton_ssdp::engine::Engine<Listener>,
+        ssdp: cotton_ssdp::engine::Engine<Listener, SmoltcpTimebase>,
         nvic: stm32_eth::stm32::NVIC,
     }
 
@@ -118,7 +119,8 @@ mod app {
         );
         let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let mut ssdp = cotton_ssdp::engine::Engine::new();
+        let random_seed = unique_id.id(b"ssdp-refresh") as u32;
+        let mut ssdp = cotton_ssdp::engine::Engine::new(random_seed, now_fn());
 
         let ix = cotton_netif::InterfaceIndex(
             core::num::NonZeroU32::new(1).unwrap(),
@@ -140,7 +142,11 @@ mod app {
             );
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
-            ssdp.subscribe("cotton-test-server-stm32f746".to_string(), Listener {}, &ws);
+            ssdp.subscribe(
+                "cotton-test-server-stm32f746".to_string(),
+                Listener {},
+                &ws,
+            );
 
             let uuid = alloc::format!(
                 "{:032x}",
@@ -176,8 +182,8 @@ mod app {
     #[task(local = [nvic])]
     fn periodic(cx: periodic::Context) {
         let nvic = cx.local.nvic;
+        defmt::println!("Wake");
         nvic.request(stm32_eth::stm32::Interrupt::ETH);
-        periodic::spawn_after(2.secs()).unwrap();
     }
 
     #[task(binds = ETH, local = [device, stack, udp_handle, ssdp], priority = 2)]
@@ -189,14 +195,16 @@ mod app {
             cx.local.ssdp,
         );
 
+        stm32_eth::eth_interrupt_handler();
+
+        let now = now_fn();
         let old_ip = stack.interface.ipv4_addr();
-        stack.poll(now_fn(), &mut &mut device.dma);
+        let next = stack.poll(now, &mut &mut device.dma);
         let new_ip = stack.interface.ipv4_addr();
+        let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
 
         if let (None, Some(ip)) = (old_ip, new_ip) {
-            let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
             let ws = WrappedSocket::new(socket);
-
             ssdp.on_new_addr_event(
                 &cotton_netif::InterfaceIndex(
                     core::num::NonZeroU32::new(1).unwrap(),
@@ -206,33 +214,31 @@ mod app {
             );
 
             defmt::println!("Refreshing!");
-            ssdp.refresh(&ws);
+            ssdp.reset_refresh_timer(now);
         }
 
         if let Some(wasto) = new_ip {
             let wasto = wire::IpAddress::Ipv4(wasto);
-            let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
-            if socket.can_recv() {
-                // Shame about the copy here, but we need the socket
-                // borrowed mutably to write to it (in on_data), and
-                // we also need the data borrowed to read it -- but
-                // that's an immutable borrow at the same time as a
-                // mutable borrow, which isn't allowed.  We could
-                // perhaps have entirely separate sockets for send and
-                // receive, but it's simpler just to copy the data.
-                let mut buffer = [0u8; 512];
-                if let Ok((size, sender)) = socket.recv_slice(&mut buffer) {
-                    // defmt::println!("{} from {}", size, sender);
-                    let ws = WrappedSocket::new(socket);
-                    ssdp.on_data(
-                        &buffer[0..size],
-                        &ws,
-                        GenericIpAddress::from(wasto).into(),
-                        GenericSocketAddr::from(sender.endpoint).into(),
-                    );
-                }
+            if let Ok((slice, sender)) = socket.recv() {
+                defmt::println!("{} from {}", slice.len(), sender.endpoint);
+                ssdp.on_data(slice,
+                             GenericIpAddress::from(wasto).into(),
+                             GenericSocketAddr::from(sender.endpoint).into(),
+                             now,
+                );
             }
         }
+
+        while ssdp.poll_timeout() <= now {
+            let ws = WrappedSocket::new(socket);
+            ssdp.handle_timeout(&ws, now);
+        }
+        let mut next_wake = ssdp.poll_timeout() - now;
+        if let Some(duration) = next {
+            next_wake = next_wake.min(duration);
+        }
+        defmt::println!("Waking after {}ms", next_wake.total_millis());
+        let _ = periodic::spawn_after(next_wake.total_millis().millis());
     }
 }
 
