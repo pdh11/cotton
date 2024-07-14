@@ -1,7 +1,7 @@
 use cotton_ssdp::{Advertisement, Notification, Service};
+use serial_test::*;
 use std::cell::RefCell;
 use std::rc::Rc;
-use serial_test::*;
 
 #[test]
 #[serial(ssdp)]

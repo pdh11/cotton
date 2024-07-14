@@ -1,5 +1,5 @@
-use core::ops::AddAssign;
 use core::fmt::Debug;
+use core::ops::AddAssign;
 
 /// A timebase is a pair of types Duration/Instant
 ///

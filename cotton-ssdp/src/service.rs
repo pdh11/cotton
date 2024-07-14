@@ -284,12 +284,8 @@ impl Service {
         while let Ok((n, wasto, wasfrom)) =
             self.multicast_socket.receive_to(&mut buf)
         {
-            self.engine.on_data(
-                &buf[0..n],
-                wasto,
-                wasfrom,
-                Instant::now(),
-            );
+            self.engine
+                .on_data(&buf[0..n], wasto, wasfrom, Instant::now());
         }
     }
 
@@ -299,12 +295,8 @@ impl Service {
         while let Ok((n, wasto, wasfrom)) =
             self.search_socket.receive_to(&mut buf)
         {
-            self.engine.on_data(
-                &buf[0..n],
-                wasto,
-                wasfrom,
-                Instant::now(),
-            );
+            self.engine
+                .on_data(&buf[0..n], wasto, wasfrom, Instant::now());
         }
     }
 
