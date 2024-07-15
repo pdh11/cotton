@@ -81,6 +81,9 @@ mod app {
         .unwrap();
 
         let mut timer = hal::Timer::new(c.device.TIMER, &mut resets, &clocks);
+        unsafe {
+            pac::TIMER::steal().dbgpause().write(|w| w.bits(0));
+        }
         let mono = Systick::new(c.core.SYST, clocks.system_clock.freq().raw());
 
         let sio = hal::Sio::new(c.device.SIO);
