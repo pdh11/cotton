@@ -154,6 +154,7 @@ pub struct Engine<CB: Callback, T: Timebase> {
     active_searches: SlotMap<ActiveSearchKey, ActiveSearch<CB>>,
     advertisements: BTreeMap<String, ActiveAdvertisement<T::Instant>>,
     refresh_timer: RefreshTimer<T>,
+    random_seed: u32,
 }
 
 impl<CB: Callback, T: Timebase> Engine<CB, T> {
@@ -166,6 +167,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
             active_searches: SlotMap::with_key(),
             advertisements: BTreeMap::default(),
             refresh_timer: RefreshTimer::new(random_seed, now),
+            random_seed,
         }
     }
 
@@ -363,11 +365,13 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                     search_target,
                     maximum_wait_sec,
                 } => {
-                    let mut reply_at = now; // @TODO randomise
-                    let delay_ms =
-                        ((maximum_wait_sec as u64) * 300).clamp(100, 5000);
+                    let max_delay_ms =
+                        ((maximum_wait_sec as u32) * 1000).clamp(100, 5000);
+                    let delay_ms = self.random_seed % max_delay_ms;
+                    let mut reply_at = now;
                     reply_at +=
-                        core::time::Duration::from_millis(delay_ms).into();
+                        core::time::Duration::from_millis(delay_ms.into())
+                            .into();
                     for value in self.advertisements.values_mut() {
                         if target_match(
                             &search_target,

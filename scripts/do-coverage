@@ -1,34 +1,3 @@
 #!/bin/bash -xe
 
-if [ "x" == "y" ]; then
-export CARGO_INCREMENTAL=0
-export RUSTFLAGS="-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort"
-export RUSTDOCFLAGS="-Cpanic=abort"
-
-cargo test --offline
-grcov . -s . --binary-path ./target/debug/ -t html --branch --ignore-not-existing -o ./target/debug/coverage/
-
-exit 0
-fi
-
-export RUSTFLAGS="-Cinstrument-coverage"
-export LLVM_PROFILE_FILE="`pwd`/target/profraw/tmp-%p-%m.profraw"
-export CARGO_TARGET_DIR="`pwd`/target/profile/"
-rm -rf target/profraw/*
-cargo +nightly test --offline --lib --tests
-rustup run nightly cargo-profdata -- merge -sparse `find target/profraw -name '*.profraw'` -o cotton.profdata
-rustup run nightly cargo-cov -- show \
-    $( \
-      for file in \
-        $( \
-            cargo +nightly test --offline --lib --tests --no-run --message-format=json \
-              | jq -r "select(.profile.test == true) | .filenames[]" \
-              | grep -v dSYM - \
-        ); \
-      do \
-        printf "%s %s " -object $file; \
-      done \
-    ) \
-  --instr-profile=cotton.profdata --format=html --output-dir=target/cov \
-  --show-line-counts-or-regions --ignore-filename-regex='/.cargo/' \
-  --ignore-filename-regex='rustc/' --show-instantiations=false
+exec cargo +stable llvm-cov --html --workspace --exclude systemtests --offline --all-targets
