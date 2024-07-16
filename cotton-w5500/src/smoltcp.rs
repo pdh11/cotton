@@ -147,10 +147,13 @@ pub mod w5500_evb_pico {
     use rp2040_hal::gpio::bank0::Gpio17;
     use rp2040_hal::gpio::bank0::Gpio18;
     use rp2040_hal::gpio::bank0::Gpio19;
+    use rp2040_hal::gpio::bank0::Gpio21;
     use rp2040_hal::gpio::FunctionSio;
     use rp2040_hal::gpio::FunctionSpi;
     use rp2040_hal::gpio::PullDown;
     use rp2040_hal::gpio::PullNone;
+    use rp2040_hal::gpio::PullUp;
+    use rp2040_hal::gpio::SioInput;
     use rp2040_hal::gpio::SioOutput;
     use rp2040_hal::pac::SPI0;
 
@@ -167,12 +170,17 @@ pub mod w5500_evb_pico {
     type SpiChipSelect =
         rp2040_hal::gpio::Pin<Gpio17, FunctionSio<SioOutput>, PullNone>;
 
-    type SpiDevice = ExclusiveDevice<Spi0, SpiChipSelect, NoDelay>;
+    /// The W5500's SPI target on the W5500-EVB-Pico board
+    pub type SpiDevice = ExclusiveDevice<Spi0, SpiChipSelect, NoDelay>;
 
     type SpiBus = w5500::bus::FourWire<SpiDevice>;
 
     /// A W5500 driver specialised for the SPI setup on the W5500-EVB-Pico board
     pub type Device = super::Device<SpiBus>;
+
+    /// The W5500 IRQ pin on the W5500-EVB-Pico board
+    pub type IrqPin =
+        rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullUp>;
 }
 
 #[cfg(all(test, feature = "std"))]

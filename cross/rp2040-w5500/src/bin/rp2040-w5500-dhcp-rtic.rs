@@ -11,29 +11,9 @@ use rp_pico as _; // includes boot2
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
     use embedded_hal::delay::DelayNs;
-    use embedded_hal::digital::OutputPin;
-    use embedded_hal_bus::spi::ExclusiveDevice;
-    use embedded_hal_bus::spi::NoDelay;
     use fugit::ExtU64;
-    use rp2040_hal as hal;
-    use rp2040_hal::fugit::RateExtU32;
-    use rp2040_hal::gpio::bank0::Gpio16;
-    use rp2040_hal::gpio::bank0::Gpio17;
-    use rp2040_hal::gpio::bank0::Gpio18;
-    use rp2040_hal::gpio::bank0::Gpio19;
-    use rp2040_hal::gpio::bank0::Gpio21;
-    use rp2040_hal::gpio::FunctionSio;
-    use rp2040_hal::gpio::FunctionSpi;
     use rp2040_hal::gpio::Interrupt::EdgeLow;
-    use rp2040_hal::gpio::PinState;
-    use rp2040_hal::gpio::PullDown;
-    use rp2040_hal::gpio::PullNone;
-    use rp2040_hal::gpio::SioInput;
-    use rp2040_hal::gpio::SioOutput;
-    use rp2040_hal::pac::SPI0;
-    use rp2040_hal::Clock;
     use rp_pico::pac;
-    use rp_pico::XOSC_CRYSTAL_FREQ;
     use systick_monotonic::Systick;
     use w5500_dhcp::{hl::Hostname, Client as DhcpClient};
     use w5500_ll::eh1::vdm::W5500;
@@ -46,25 +26,11 @@ mod app {
     #[shared]
     struct Shared {}
 
-    type MySpi0 = rp2040_hal::Spi<
-        rp2040_hal::spi::Enabled,
-        SPI0,
-        (
-            rp2040_hal::gpio::Pin<Gpio19, FunctionSpi, PullDown>,
-            rp2040_hal::gpio::Pin<Gpio16, FunctionSpi, PullDown>,
-            rp2040_hal::gpio::Pin<Gpio18, FunctionSpi, PullDown>,
-        ),
-    >;
-
-    type MySpiChipSelect =
-        rp2040_hal::gpio::Pin<Gpio17, FunctionSio<SioOutput>, PullDown>;
-
     #[local]
     struct Local {
         nvic: cortex_m::peripheral::NVIC,
-        w5500: W5500<ExclusiveDevice<MySpi0, MySpiChipSelect, NoDelay>>,
-        w5500_irq:
-            rp2040_hal::gpio::Pin<Gpio21, FunctionSio<SioInput>, PullNone>,
+        w5500: W5500<cotton_w5500::smoltcp::w5500_evb_pico::SpiDevice>,
+        w5500_irq: cotton_w5500::smoltcp::w5500_evb_pico::IrqPin,
         dhcp: DhcpClient<'static>,
     }
 
@@ -74,92 +40,22 @@ mod app {
     #[init(local = [usb_bus: Option<u32> = None])]
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
-        let unique_id = critical_section::with(|_| unsafe {
-            cross_rp2040_w5500::unique_flash_id()
-        });
-        let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
-        let mac = w5500_ll::net::Eui48Addr { octets: mac };
+        let mut setup =
+            cross_rp2040_w5500::setup::BasicSetup::new(c.device, c.core.SYST);
+        defmt::println!("MAC address: {:x}", setup.mac_address);
 
-        //*******
-        // Initialization of the system clock.
-
-        let mut resets = c.device.RESETS;
-        let mut watchdog = hal::watchdog::Watchdog::new(c.device.WATCHDOG);
-
-        // Configure the clocks - The default is to generate a 125 MHz system clock
-        let clocks = hal::clocks::init_clocks_and_plls(
-            XOSC_CRYSTAL_FREQ,
-            c.device.XOSC,
-            c.device.CLOCKS,
-            c.device.PLL_SYS,
-            c.device.PLL_USB,
-            &mut resets,
-            &mut watchdog,
-        )
-        .ok()
-        .unwrap();
-
-        let mut timer = hal::Timer::new(c.device.TIMER, &mut resets, &clocks);
-        unsafe {
-            pac::TIMER::steal().dbgpause().write(|w| w.bits(0));
-        }
-        let mono = Systick::new(c.core.SYST, clocks.system_clock.freq().raw());
-
-        //*******
-        // Initialization of the LED GPIO and the timer.
-
-        let sio = hal::Sio::new(c.device.SIO);
-        let pins = rp_pico::Pins::new(
-            c.device.IO_BANK0,
-            c.device.PADS_BANK0,
-            sio.gpio_bank0,
-            &mut resets,
+        let (w5500_spi, w5500_irq) = cross_rp2040_w5500::setup::spi_setup(
+            setup.pins,
+            setup.spi0,
+            &mut setup.timer,
+            &setup.clocks,
+            &mut setup.resets,
         );
+        let mac = w5500_ll::net::Eui48Addr {
+            octets: setup.mac_address,
+        };
 
-        // W5500-EVB-Pico:
-        //   W5500 SPI on SPI0
-        //         nCS = GPIO17
-        //         TX (MOSI) = GPIO19
-        //         RX (MISO) = GPIO16
-        //         SCK = GPIO18
-        //   W5500 INTn on GPIO21
-        //   W5500 RSTn on GPIO20
-        //   Green LED on GPIO25
-
-        let mut w5500_rst = pins
-            .gpio20
-            .into_pull_type::<PullNone>()
-            .into_push_pull_output_in_state(PinState::Low);
-        timer.delay_ms(2);
-        let _ = w5500_rst.set_high();
-        timer.delay_ms(2);
-
-        let spi_ncs = pins.gpio17.into_push_pull_output();
-        let spi_mosi = pins.gpio19.into_function::<hal::gpio::FunctionSpi>();
-        let spi_miso = pins.gpio16.into_function::<hal::gpio::FunctionSpi>();
-        let spi_sclk = pins.gpio18.into_function::<hal::gpio::FunctionSpi>();
-        let spi = hal::spi::Spi::<_, _, _, 8>::new(
-            c.device.SPI0,
-            (spi_mosi, spi_miso, spi_sclk),
-        );
-
-        let spi = spi.init(
-            &mut resets,
-            clocks.peripheral_clock.freq(),
-            16u32.MHz(),
-            hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
-        );
-
-        // W5500 wants a `SpiDevice`, but the HAL provides a `SpiBus`.
-        // This is as designed, as this way the W5500 doesn't have to
-        // know whether the bus is shared (common TX/RX, different nCS
-        // per target) or not (just one nCS). For cases like
-        // W5500-EVB-Pico where there really *is* just one nCS and one
-        // target, `ExclusiveDevice` takes a `SpiBus` and trivially
-        // implements `SpiDevice`.
-        let spi =
-            embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(spi, spi_ncs);
-        let mut w5500 = W5500::new(spi);
+        let mut w5500 = W5500::new(w5500_spi);
 
         let _phy_cfg: PhyCfg = 'outer: loop {
             // sanity check W5500 communications
@@ -190,20 +86,11 @@ mod app {
                     );
                     break;
                 }
-                timer.delay_ms(LINK_UP_POLL_PERIOD_MILLIS);
+                setup.timer.delay_ms(LINK_UP_POLL_PERIOD_MILLIS);
                 attempts += 1;
             }
         };
         defmt::println!("Done link up");
-
-        // Interrupts not enabled for non-MACRAW mode
-        //
-        let w5500_irq = pins.gpio21.into_floating_input();
-        // w5500_irq.set_interrupt_enabled(EdgeLow, true);
-
-        unsafe {
-            pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
-        }
 
         let seed: u64 = u64::from(cortex_m::peripheral::SYST::get_current())
             << 32
@@ -222,7 +109,7 @@ mod app {
                 w5500_irq,
                 dhcp,
             },
-            init::Monotonics(mono),
+            init::Monotonics(setup.mono),
         )
     }
 
