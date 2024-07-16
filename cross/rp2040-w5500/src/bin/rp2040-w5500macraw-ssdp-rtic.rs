@@ -121,7 +121,8 @@ mod app {
             pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
         }
 
-        let mut device = cotton_w5500::smoltcp::Device::new(bus, &setup.mac_address);
+        let mut device =
+            cotton_w5500::smoltcp::Device::new(bus, &setup.mac_address);
 
         device.enable_interrupt();
 
