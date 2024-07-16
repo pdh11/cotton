@@ -47,22 +47,13 @@ mod app {
         WrappedInterface, WrappedSocket,
     };
     use cross_rp2040_w5500::smoltcp::Stack;
-    use embedded_hal::delay::DelayNs;
-    use embedded_hal::digital::OutputPin;
     use fugit::ExtU64;
-    use rp2040_hal as hal;
-    use rp2040_hal::fugit::RateExtU32;
     use rp2040_hal::gpio::bank0::Gpio21;
     use rp2040_hal::gpio::FunctionSio;
     use rp2040_hal::gpio::Interrupt::EdgeLow;
-    use rp2040_hal::gpio::PinState;
-    use rp2040_hal::gpio::PullDown;
-    use rp2040_hal::gpio::PullNone;
     use rp2040_hal::gpio::PullUp;
     use rp2040_hal::gpio::SioInput;
-    use rp2040_hal::Clock;
     use rp_pico::pac;
-    use rp_pico::XOSC_CRYSTAL_FREQ;
     use smoltcp::{iface::SocketHandle, socket::udp, wire};
     use systick_monotonic::Systick;
 
@@ -112,112 +103,32 @@ mod app {
     fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::println!("Pre-init");
         super::init_heap();
-        let unique_id = critical_section::with(|_| unsafe {
-            cross_rp2040_w5500::unique_flash_id()
-        });
-        let mac = cotton_unique::mac_address(&unique_id, b"w5500-spi0");
-        defmt::println!("MAC address: {:x}", mac);
+        let mut setup =
+            cross_rp2040_w5500::setup::BasicSetup::new(c.device, c.core.SYST);
+        defmt::println!("MAC address: {:x}", setup.mac_address);
 
-        //*******
-        // Initialization of the system clock.
-
-        let mut resets = c.device.RESETS;
-        let mut watchdog = hal::watchdog::Watchdog::new(c.device.WATCHDOG);
-
-        // Configure the clocks - The default is to generate a 125 MHz system clock
-        let clocks = hal::clocks::init_clocks_and_plls(
-            XOSC_CRYSTAL_FREQ,
-            c.device.XOSC,
-            c.device.CLOCKS,
-            c.device.PLL_SYS,
-            c.device.PLL_USB,
-            &mut resets,
-            &mut watchdog,
-        )
-        .ok()
-        .unwrap();
-
-        let mut timer = hal::Timer::new(c.device.TIMER, &mut resets, &clocks);
-        unsafe {
-            pac::TIMER::steal().dbgpause().write(|w| w.bits(0));
-        }
-        let mono = Systick::new(c.core.SYST, clocks.system_clock.freq().raw());
-
-        let sio = hal::Sio::new(c.device.SIO);
-        let pins = rp_pico::Pins::new(
-            c.device.IO_BANK0,
-            c.device.PADS_BANK0,
-            sio.gpio_bank0,
-            &mut resets,
+        let (w5500_spi, w5500_irq) = cross_rp2040_w5500::setup::spi_setup(
+            setup.pins,
+            setup.spi0,
+            &mut setup.timer,
+            &setup.clocks,
+            &mut setup.resets,
         );
 
-        // W5500-EVB-Pico:
-        //   W5500 SPI on SPI0
-        //         nCS = GPIO17
-        //         TX (MOSI) = GPIO19
-        //         RX (MISO) = GPIO16
-        //         SCK = GPIO18
-        //   W5500 INTn on GPIO21
-        //   W5500 RSTn on GPIO20
-        //   Green LED on GPIO25
-
-        let mut w5500_rst = pins
-            .gpio20
-            .into_pull_type::<PullNone>()
-            .into_push_pull_output_in_state(PinState::Low);
-        timer.delay_ms(2);
-        let _ = w5500_rst.set_high();
-        timer.delay_ms(2);
-
-        let spi_ncs = pins
-            .gpio17
-            .into_pull_type::<PullNone>()
-            .into_push_pull_output();
-        let spi_mosi = pins
-            .gpio19
-            .into_pull_type::<PullNone>()
-            .into_function::<hal::gpio::FunctionSpi>();
-        let spi_miso = pins
-            .gpio16
-            .into_pull_type::<PullDown>()
-            .into_function::<hal::gpio::FunctionSpi>();
-        let spi_sclk = pins
-            .gpio18
-            .into_pull_type::<PullNone>()
-            .into_function::<hal::gpio::FunctionSpi>();
-        let spi = hal::spi::Spi::<_, _, _, 8>::new(
-            c.device.SPI0,
-            (spi_mosi, spi_miso, spi_sclk),
-        );
-
-        let spi_bus = spi.init(
-            &mut resets,
-            clocks.peripheral_clock.freq(),
-            16u32.MHz(),
-            hal::spi::FrameFormat::MotorolaSpi(embedded_hal::spi::MODE_0),
-        );
-
-        let spi_device = embedded_hal_bus::spi::ExclusiveDevice::new_no_delay(
-            spi_bus, spi_ncs,
-        );
-
-        let bus = w5500::bus::FourWire::new(spi_device);
-
-        let w5500_irq = pins.gpio21.into_pull_up_input();
+        let bus = w5500::bus::FourWire::new(w5500_spi);
         w5500_irq.set_interrupt_enabled(EdgeLow, true);
-
         unsafe {
             pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
         }
 
-        let mut device = cotton_w5500::smoltcp::Device::new(bus, &mac);
+        let mut device = cotton_w5500::smoltcp::Device::new(bus, &setup.mac_address);
 
         device.enable_interrupt();
 
         let mut stack = Stack::new(
             &mut device,
-            &unique_id,
-            &mac,
+            &setup.unique_id,
+            &setup.mac_address,
             &mut c.local.storage.sockets[..],
             now_fn(),
         );
@@ -234,7 +145,7 @@ mod app {
         );
         let mut udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         _ = udp_socket.bind(1900);
-        let random_seed = unique_id.id(b"ssdp-refresh") as u32;
+        let random_seed = setup.unique_id.id(b"ssdp-refresh") as u32;
         let mut ssdp = cotton_ssdp::engine::Engine::new(random_seed, now_fn());
 
         let ix = cotton_netif::InterfaceIndex(
@@ -265,7 +176,7 @@ mod app {
 
             let uuid = alloc::format!(
                 "{:032x}",
-                cotton_unique::uuid(&unique_id, b"upnp")
+                cotton_unique::uuid(&setup.unique_id, b"upnp")
             );
 
             ssdp.advertise(
@@ -293,7 +204,7 @@ mod app {
                 w5500_irq,
                 timer_handle,
             },
-            init::Monotonics(mono),
+            init::Monotonics(setup.mono),
         )
     }
 

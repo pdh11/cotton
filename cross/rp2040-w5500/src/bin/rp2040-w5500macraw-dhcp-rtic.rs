@@ -50,7 +50,7 @@ mod app {
             cross_rp2040_w5500::setup::BasicSetup::new(c.device, c.core.SYST);
         defmt::println!("MAC address: {:x}", setup.mac_address);
 
-        let (spi_device, w5500_irq) = cross_rp2040_w5500::setup::spi_setup(
+        let (w5500_spi, w5500_irq) = cross_rp2040_w5500::setup::spi_setup(
             setup.pins,
             setup.spi0,
             &mut setup.timer,
@@ -58,7 +58,7 @@ mod app {
             &mut setup.resets,
         );
 
-        let bus = w5500::bus::FourWire::new(spi_device);
+        let bus = w5500::bus::FourWire::new(w5500_spi);
         w5500_irq.set_interrupt_enabled(EdgeLow, true);
         unsafe {
             pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
