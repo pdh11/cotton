@@ -1,0 +1,9 @@
+#!/bin/bash -xe
+#
+# usage:
+#    bin/do-deps <package-name>
+#    feh target/<package-name>-deps.png
+
+cargo modules dependencies --package $1 --no-externs --no-sysroot --no-fns --no-traits --no-types --layout dot > target/$1-deps.dot
+sed -e 's/\[constraint=false\]//' -e 's/splines="line",//' < target/$1-deps.dot > target/$1-deps2.dot
+dot -Tpng < target/$1-deps2.dot > target/$1-deps.png
