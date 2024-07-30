@@ -1,9 +1,24 @@
 #!/bin/bash -xe
 #
 # usage:
-#    bin/do-deps <package-name>
-#    feh target/<package-name>-deps.png
+#    bin/do-deps
+#    (browse to target/deps/index.html)
 
-cargo modules dependencies --package $1 --no-externs --no-sysroot --no-fns --no-traits --no-types --layout dot > target/$1-deps.dot
-sed -e 's/\[constraint=false\]//' -e 's/splines="line",//' < target/$1-deps.dot > target/$1-deps2.dot
-dot -Tpng < target/$1-deps2.dot > target/$1-deps.png
+PACKAGES=`cargo metadata --no-deps --format-version 1 | jq '.packages[].name' --raw-output`
+
+mkdir -p target/deps
+echo "" > target/deps/index.htm
+
+for PKG in $PACKAGES ; do
+    echo "<img src=$PKG-deps.png><pre>" >> target/deps/index.htm
+    cargo modules dependencies --package $PKG \
+          --no-externs --no-sysroot --no-fns --no-traits --no-types \
+          --layout dot > target/$PKG-deps.dot
+    sed -E -e 's/\[constraint=false\]//' -e 's/splines="line",//' \
+        -e 's/rankdir=LR,//' \
+        -e 's/label="(.*)", f/label="{\1}", f/' \
+        < target/$PKG-deps.dot > target/$PKG-deps2.dot
+    tred < target/$PKG-deps2.dot > target/$PKG-deps3.dot 2>> target/deps/index.htm
+    dot -Tpng -Gdpi=72 < target/$PKG-deps3.dot > target/deps/$PKG-deps.png
+    echo "</pre><hr/>" >> target/deps/index.htm
+done
