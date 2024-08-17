@@ -23,12 +23,14 @@ smoltcp = { version = "0.11", default-features = false, features = [
   "socket-raw",
 ], optional = true }
 rp2040-hal = { version = "0.10", optional = true }
-mockall = { version = "0.12.1", optional = true }
 # embedded-hal-bus 0.2 assumes compare_exchange, which Cortex-M0 doesn't have
 embedded-hal-bus = "0.1"
 
+[dev-dependencies]
+mockall = "0.13"
+
 [features]
 default = ["smoltcp", "std"]
-std = ["dep:mockall"]
+std = []
 smoltcp = ["dep:smoltcp"]
 w5500-evb-pico = ["dep:rp2040-hal"]
