@@ -1,15 +1,7 @@
-use super::{Flags, InterfaceIndex, NetworkEvent};
-
-use std::{
-    io::Error,
-    io::ErrorKind,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-};
-
+use crate::network_event::{Flags, InterfaceIndex, NetworkEvent};
 use async_stream::stream;
 use futures_util::stream;
 use futures_util::stream::Stream;
-
 use neli::{
     consts::{
         nl::{NlmF, NlmFFlags},
@@ -28,6 +20,11 @@ use neli::{
     socket::NlSocketHandle,
     types::NlBuffer,
     types::RtBuffer,
+};
+use std::{
+    io::Error,
+    io::ErrorKind,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
 fn ip(ip_bytes: &[u8]) -> Option<IpAddr> {

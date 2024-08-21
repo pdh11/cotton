@@ -1,4 +1,4 @@
-use super::{Flags, InterfaceIndex, NetworkEvent};
+use crate::network_event::{Flags, InterfaceIndex, NetworkEvent};
 use nix::ifaddrs;
 use nix::net::if_::InterfaceFlags;
 use std::collections::HashSet;
