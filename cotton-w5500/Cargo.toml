@@ -15,8 +15,7 @@ all-features = true
 
 [dependencies]
 w5500 = "0.5"
-# defmt 0.3.7 has msrv too big
-defmt = ">=0.3.2, <0.3.7"
+defmt = "0.3.8"
 smoltcp = { version = "0.11", default-features = false, features = [
   "medium-ethernet",
   "proto-ipv4",
