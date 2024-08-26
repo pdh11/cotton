@@ -39,7 +39,7 @@ pub struct BasicSetup {
     pub unique_id: cotton_unique::UniqueId,
     pub mac_address: [u8; 6],
     pub timer: rp2040_hal::Timer,
-    pub pins: rp_pico::Pins,
+    pub pins: rp2040_hal::gpio::Pins,
     pub clocks: rp2040_hal::clocks::ClocksManager,
     pub mono: systick_monotonic::Systick<1000>,
     pub resets: rp2040_hal::pac::RESETS,
@@ -82,13 +82,16 @@ impl BasicSetup {
                 .dbgpause()
                 .write(|w| w.bits(0));
         }
+
         let sio = rp2040_hal::Sio::new(device.SIO);
-        let pins = rp_pico::Pins::new(
+        let pins = rp2040_hal::gpio::Pins::new(
             device.IO_BANK0,
             device.PADS_BANK0,
             sio.gpio_bank0,
             &mut resets,
         );
+
+        defmt::println!("Setup done");
 
         BasicSetup {
             unique_id,
@@ -104,7 +107,7 @@ impl BasicSetup {
 }
 
 pub fn spi_setup(
-    pins: rp_pico::Pins,
+    pins: rp2040_hal::gpio::Pins,
     spi0: rp2040_hal::pac::SPI0,
     timer: &mut rp2040_hal::Timer,
     clocks: &rp2040_hal::clocks::ClocksManager,

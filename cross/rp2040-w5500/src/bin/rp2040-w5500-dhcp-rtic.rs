@@ -37,26 +37,23 @@ mod app {
     #[monotonic(binds = SysTick, default = true)]
     type Monotonic = Systick<1000>;
 
-    #[init(local = [usb_bus: Option<u32> = None])]
-    fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
-        defmt::println!("Pre-init");
-        let mut setup =
-            cross_rp2040_w5500::setup::BasicSetup::new(c.device, c.core.SYST);
-        defmt::println!("MAC address: {:x}", setup.mac_address);
+    // If these w5500-ll / w5500-dhcp calls are inlined into init(),  the
+    // binary crashes oddly (but only when compiled with -Os and LTO) (???)
+    //
+    // Tested on rustc 1.75-1.80.1
+    #[inline(never)]
+    fn create_w5500(
+        spi: cotton_w5500::smoltcp::w5500_evb_pico::SpiDevice,
+    ) -> W5500<cotton_w5500::smoltcp::w5500_evb_pico::SpiDevice> {
+        W5500::new(spi)
+    }
 
-        let (w5500_spi, w5500_irq) = cross_rp2040_w5500::setup::spi_setup(
-            setup.pins,
-            setup.spi0,
-            &mut setup.timer,
-            &setup.clocks,
-            &mut setup.resets,
-        );
-        let mac = w5500_ll::net::Eui48Addr {
-            octets: setup.mac_address,
-        };
-
-        let mut w5500 = W5500::new(w5500_spi);
-
+    #[inline(never)]
+    fn wait_for_link(
+        w5500: &mut W5500<cotton_w5500::smoltcp::w5500_evb_pico::SpiDevice>,
+        mac: w5500_ll::net::Eui48Addr,
+        timer: &mut rp2040_hal::Timer,
+    ) {
         let _phy_cfg: PhyCfg = 'outer: loop {
             // sanity check W5500 communications
             assert_eq!(w5500.version().unwrap(), w5500_dhcp::ll::VERSION);
@@ -86,18 +83,50 @@ mod app {
                     );
                     break;
                 }
-                setup.timer.delay_ms(LINK_UP_POLL_PERIOD_MILLIS);
+                timer.delay_ms(LINK_UP_POLL_PERIOD_MILLIS);
                 attempts += 1;
             }
         };
         defmt::println!("Done link up");
+    }
 
-        let seed: u64 = u64::from(cortex_m::peripheral::SYST::get_current())
-            << 32
+    #[inline(never)]
+    fn create_dhcp(
+        seed: u64,
+        mac: w5500_ll::net::Eui48Addr,
+        w5500: &mut W5500<cotton_w5500::smoltcp::w5500_evb_pico::SpiDevice>,
+    ) -> DhcpClient<'static> {
+        let dhcp = DhcpClient::new(DHCP_SN, seed, mac, HOSTNAME);
+        dhcp.setup_socket(w5500).unwrap();
+        dhcp
+    }
+
+    #[init(local = [])]
+    fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
+        defmt::println!("Pre-init");
+        let mut setup =
+            cross_rp2040_w5500::setup::BasicSetup::new(c.device, c.core.SYST);
+        defmt::println!("MAC address: {:x}", setup.mac_address);
+
+        let (w5500_spi, w5500_irq) = cross_rp2040_w5500::setup::spi_setup(
+            setup.pins,
+            setup.spi0,
+            &mut setup.timer,
+            &setup.clocks,
+            &mut setup.resets,
+        );
+        let mac = w5500_ll::net::Eui48Addr {
+            octets: setup.mac_address,
+        };
+
+        let mut w5500 = create_w5500(w5500_spi);
+
+        wait_for_link(&mut w5500, mac, &mut setup.timer);
+
+        let seed: u64 = setup.unique_id.id(b"dhcp-seed")
             | u64::from(cortex_m::peripheral::SYST::get_current());
 
-        let dhcp = DhcpClient::new(DHCP_SN, seed, mac, HOSTNAME);
-        dhcp.setup_socket(&mut w5500).unwrap();
+        let dhcp = create_dhcp(seed, mac, &mut w5500);
 
         periodic::spawn_after(1.secs()).unwrap();
 

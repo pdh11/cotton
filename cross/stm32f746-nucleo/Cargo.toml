@@ -29,6 +29,17 @@ test = false
 doctest = false
 harness = false
 
+[profile.dev]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "symbols"
+
 [dependencies]
 cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features = [
   "smoltcp",
