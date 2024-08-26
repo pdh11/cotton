@@ -15,8 +15,6 @@ all-features = true
 
 [dependencies]
 w5500 = "0.5"
-# defmt 0.3.7 has msrv too big
-defmt = ">=0.3.2, <0.3.7"
 smoltcp = { version = "0.11", default-features = false, features = [
   "medium-ethernet",
   "proto-ipv4",
@@ -24,7 +22,7 @@ smoltcp = { version = "0.11", default-features = false, features = [
 ], optional = true }
 rp2040-hal = { version = "0.10", optional = true }
 # embedded-hal-bus 0.2 assumes compare_exchange, which Cortex-M0 doesn't have
-embedded-hal-bus = "0.1"
+embedded-hal-bus = { version = "0.1", optional = true }
 
 [dev-dependencies]
 mockall = "0.13"
@@ -33,4 +31,4 @@ mockall = "0.13"
 default = ["smoltcp", "std"]
 std = []
 smoltcp = ["dep:smoltcp"]
-w5500-evb-pico = ["dep:rp2040-hal"]
+w5500-evb-pico = ["dep:rp2040-hal", "dep:embedded-hal-bus"]
