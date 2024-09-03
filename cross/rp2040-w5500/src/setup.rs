@@ -29,9 +29,12 @@ use rp2040_hal::Clock;
 /// concurrently (e.g. in other threads); it is recommended to call
 /// this once during early startup and then pass the result around as
 /// needed.
+#[inline(never)]
 unsafe fn unique_flash_id() -> cotton_unique::UniqueId {
     let mut unique_bytes = [0u8; 16];
-    rp2040_flash::flash::flash_unique_id(&mut unique_bytes, true);
+    cortex_m::interrupt::free(|_| {
+        rp2040_flash::flash::flash_unique_id(&mut unique_bytes, true);
+    });
     cotton_unique::UniqueId::new(&unique_bytes)
 }
 
@@ -39,7 +42,7 @@ pub struct BasicSetup {
     pub unique_id: cotton_unique::UniqueId,
     pub mac_address: [u8; 6],
     pub timer: rp2040_hal::Timer,
-    pub pins: rp2040_hal::gpio::Pins,
+    pub pins: rp_pico::Pins,
     pub clocks: rp2040_hal::clocks::ClocksManager,
     pub mono: systick_monotonic::Systick<1000>,
     pub resets: rp2040_hal::pac::RESETS,
@@ -51,8 +54,7 @@ impl BasicSetup {
         device: rp2040_hal::pac::Peripherals,
         syst: rp2040_hal::pac::SYST,
     ) -> BasicSetup {
-        let unique_id =
-            critical_section::with(|_| unsafe { unique_flash_id() });
+        let unique_id = unsafe { unique_flash_id() };
         let mac_address =
             cotton_unique::mac_address(&unique_id, b"w5500-spi0");
 
@@ -77,21 +79,29 @@ impl BasicSetup {
             clocks.system_clock.freq().raw(),
         );
         let timer = rp2040_hal::Timer::new(device.TIMER, &mut resets, &clocks);
+
+        // The timer doesn't increment if either RP2040 core is under
+        // debug, unless the DBGPAUSE bits are cleared, which they
+        // aren't by default.
+        //
+        // There is no neat and tidy method on hal::Timer to clear
+        // these bits, and they can't be cleared before
+        // hal::Timer::new because it resets the peripheral. So we
+        // have to steal the peripheral, but that's OK because we only
+        // access the DBGPAUSE register, which nobody else is
+        // accessing.
         unsafe {
             rp2040_hal::pac::TIMER::steal()
                 .dbgpause()
                 .write(|w| w.bits(0));
         }
-
         let sio = rp2040_hal::Sio::new(device.SIO);
-        let pins = rp2040_hal::gpio::Pins::new(
+        let pins = rp_pico::Pins::new(
             device.IO_BANK0,
             device.PADS_BANK0,
             sio.gpio_bank0,
             &mut resets,
         );
-
-        defmt::println!("Setup done");
 
         BasicSetup {
             unique_id,
@@ -107,7 +117,7 @@ impl BasicSetup {
 }
 
 pub fn spi_setup(
-    pins: rp2040_hal::gpio::Pins,
+    pins: rp_pico::Pins,
     spi0: rp2040_hal::pac::SPI0,
     timer: &mut rp2040_hal::Timer,
     clocks: &rp2040_hal::clocks::ClocksManager,
