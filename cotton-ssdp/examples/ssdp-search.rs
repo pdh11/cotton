@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             },
             e = netif.next() => {
                 if let Some(Ok(event)) = e {
-                    ssdp.on_network_event(&event);
+                    ssdp.on_network_event(&event)?;
                 }
             }
         }

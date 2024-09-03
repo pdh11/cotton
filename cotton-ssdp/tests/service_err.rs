@@ -10,8 +10,8 @@ fn getinterface_failure_passed_on() {
     // Setting a low limit of open sockets is one of the few ways to cause
     // cotton_netif::get_interfaces to fail (and to cover that code path)
     let mut lim = libc::rlimit {
-        rlim_cur: 0u64,
-        rlim_max: 10_000u64,
+        rlim_cur: 0,
+        rlim_max: 10_000,
     };
     unsafe {
         libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim);

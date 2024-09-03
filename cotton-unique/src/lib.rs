@@ -76,7 +76,7 @@ impl UniqueId {
         let mut h =
             siphasher::sip::SipHasher::new_with_keys(self.id[0], self.id[1]);
         h.write(salt);
-        h.write_u32(salt2);
+        h.write_u32(salt2.to_le());
         h.finish()
     }
 }
@@ -89,7 +89,7 @@ impl UniqueId {
 /// b"w5500-spi0".
 pub fn mac_address(unique: &UniqueId, salt: &[u8]) -> [u8; 6] {
     let mut mac_address = [0u8; 6];
-    let r = unique.id(salt).to_ne_bytes();
+    let r = unique.id(salt).to_le_bytes();
     mac_address.copy_from_slice(&r[0..6]);
     mac_address[0] &= 0xFE; // clear multicast bit
     mac_address[0] |= 2; // set local bit
