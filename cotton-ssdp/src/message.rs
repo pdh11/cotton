@@ -110,7 +110,7 @@ struct MessageCursor<'a> {
 }
 
 impl<'a> MessageCursor<'a> {
-    pub fn new(buf: &'a mut [u8]) -> MessageCursor {
+    pub fn new(buf: &'a mut [u8]) -> MessageCursor<'a> {
         MessageCursor { buf, offset: 0 }
     }
 
