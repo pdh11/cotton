@@ -3,9 +3,13 @@ use serial_test::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+// "PowerPC" here really means "using QEMU", where
+// IP_{ADD/DEL}_MEMBERSHIP fail mysteriously
+// https://gitlab.com/qemu-project/qemu/-/issues/2553
 #[test]
 #[serial(ssdp)]
 #[cfg_attr(miri, ignore)]
+#[cfg(not(any(target_arch = "powerpc", target_arch = "powerpc64")))]
 fn services_can_communicate_notify() {
     const SSDP_TOKEN1: mio::Token = mio::Token(1);
     const SSDP_TOKEN2: mio::Token = mio::Token(2);
@@ -67,6 +71,7 @@ fn services_can_communicate_notify() {
 #[test]
 #[serial(ssdp)]
 #[cfg_attr(miri, ignore)]
+#[cfg(not(any(target_arch = "powerpc", target_arch = "powerpc64")))]
 fn services_can_communicate_search() {
     const SSDP_TOKEN1: mio::Token = mio::Token(1);
     const SSDP_TOKEN2: mio::Token = mio::Token(2);
@@ -126,6 +131,7 @@ fn services_can_communicate_search() {
 #[test]
 #[serial(ssdp)]
 #[cfg_attr(miri, ignore)]
+#[cfg(not(any(target_arch = "powerpc", target_arch = "powerpc64")))]
 fn services_can_deadvertise() {
     const SSDP_TOKEN1: mio::Token = mio::Token(1);
     const SSDP_TOKEN2: mio::Token = mio::Token(2);

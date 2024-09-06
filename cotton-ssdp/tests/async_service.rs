@@ -1,8 +1,12 @@
 use cotton_ssdp::{Advertisement, AsyncService, Notification};
 use futures_util::StreamExt;
 
+// "PowerPC" here really means "using QEMU", where
+// IP_{ADD/DEL}_MEMBERSHIP fail mysteriously
+// https://gitlab.com/qemu-project/qemu/-/issues/2553
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
+#[cfg(not(any(target_arch = "powerpc", target_arch = "powerpc64")))]
 async fn services_communicate() {
     let mut ssdp1 = AsyncService::new().unwrap();
     let mut ssdp2 = AsyncService::new().unwrap();
