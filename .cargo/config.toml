@@ -1,0 +1,9 @@
+[target.sparc64-unknown-linux-gnu]
+linker = "/usr/bin/sparc64-linux-gnu-gcc"
+runner = "/usr/bin/env QEMU_LD_PREFIX=/usr/sparc64-linux-gnu /usr/bin/qemu-sparc64"
+[target.powerpc-unknown-linux-gnu]
+linker = "/usr/bin/powerpc-linux-gnu-gcc"
+runner = "/usr/bin/env QEMU_LD_PREFIX=/usr/powerpc-linux-gnu /usr/bin/qemu-ppc"
+[target.powerpc64-unknown-linux-gnu]
+linker = "/usr/bin/powerpc64-linux-gnu-gcc"
+runner = "/usr/bin/env QEMU_LD_PREFIX=/usr/powerpc64-linux-gnu /usr/bin/qemu-ppc64"

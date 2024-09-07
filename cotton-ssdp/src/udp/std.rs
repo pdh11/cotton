@@ -547,8 +547,11 @@ mod tests {
         assert!(r.is_err());
     }
 
+    // "PowerPC" here really means "using QEMU", which doesn't grok
+    // IP_RECVORIGDSTADDR
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(not(any(target_arch = "powerpc", target_arch = "powerpc64")))]
     fn recvmsg_too_much_cmsg_is_error() {
         // cf. localhost_source_localhost_dest()
         let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
