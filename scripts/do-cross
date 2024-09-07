@@ -1,0 +1,19 @@
+#!/bin/bash -e
+#
+# Run the unit tests cross-compiled on big-endian targets using QEMU
+#
+# Only works on x86_64 right now, because Ubuntu 22.04 arm64 doesn't
+# package the cross-compilers.
+
+if [ -x /usr/bin/powerpc64-linux-gnu-gcc ]; then
+    cargo test-all-features --target powerpc64-unknown-linux-gnu
+fi
+if [ -x /usr/bin/powerpc-linux-gnu-gcc ]; then
+    cargo test-all-features --target powerpc-unknown-linux-gnu
+fi
+if [ `uname -m` == "x86_64" ]; then
+    cargo test-all-features --target i686-unknown-linux-gnu
+fi
+if [ `uname -m` == "aarch64" ]; then
+    echo arm32
+fi
