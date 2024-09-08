@@ -721,7 +721,9 @@ mod tests {
     #[test]
     fn test_addr_message_bad_type() {
         let mut buf = RtBuffer::new();
-        buf.push(Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap());
+        buf.push(
+            Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap(),
+        );
 
         let msg = Nlmsghdr::new(
             None,
@@ -745,7 +747,9 @@ mod tests {
     #[test]
     fn test_addr_message_new() {
         let mut buf = RtBuffer::new();
-        buf.push(Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap());
+        buf.push(
+            Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap(),
+        );
 
         let msg = Nlmsghdr::new(
             None,
@@ -778,7 +782,9 @@ mod tests {
     #[test]
     fn test_addr_message_del() {
         let mut buf = RtBuffer::new();
-        buf.push(Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap());
+        buf.push(
+            Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap(),
+        );
 
         let msg = Nlmsghdr::new(
             None,
@@ -1136,7 +1142,9 @@ mod tests {
         .unwrap();
 
         let mut buf = RtBuffer::new();
-        buf.push(Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap());
+        buf.push(
+            Rtattr::new(None, Ifa::Address, 0xFFFF_0000u32.to_be()).unwrap(),
+        );
 
         let msg = Nlmsghdr::new(
             None,

@@ -155,7 +155,10 @@ impl AsyncService {
     /// Will panic if the internal mutex cannot be locked; that would indicate
     /// a bug in cotton-ssdp.
     ///
-    pub fn on_network_event(&self, event: &cotton_netif::NetworkEvent) -> Result<(), udp::Error> {
+    pub fn on_network_event(
+        &self,
+        event: &cotton_netif::NetworkEvent,
+    ) -> Result<(), udp::Error> {
         self.inner.engine.lock().unwrap().on_network_event(
             event,
             &self.inner.multicast_socket,

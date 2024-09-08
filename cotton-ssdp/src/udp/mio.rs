@@ -97,7 +97,8 @@ mod tests {
         rx.join_multicast_group(
             &IpAddr::V4("239.255.255.250".parse().unwrap()),
             make_index(1),
-        ).unwrap();
+        )
+        .unwrap();
 
         let r = rx.leave_multicast_group(
             &IpAddr::V6("::1".parse().unwrap()),
@@ -118,7 +119,8 @@ mod tests {
         rx.leave_multicast_group(
             &IpAddr::V4("239.255.255.250".parse().unwrap()),
             make_index(1),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]

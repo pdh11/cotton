@@ -102,11 +102,15 @@ mod tests {
                 // "PowerPC" here really means "using QEMU", where
                 // IP_{ADD/DEL}_MEMBERSHIP fail mysteriously
                 // https://gitlab.com/qemu-project/qemu/-/issues/2553
-                #[cfg(not(any(target_arch = "powerpc", target_arch = "powerpc64")))]
+                #[cfg(not(any(
+                    target_arch = "powerpc",
+                    target_arch = "powerpc64"
+                )))]
                 rx.join_multicast_group(
                     &IpAddr::V4("239.255.255.250".parse().unwrap()),
                     make_index(1),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let r = rx.leave_multicast_group(
                     &IpAddr::V6("::1".parse().unwrap()),
@@ -123,11 +127,15 @@ mod tests {
                 // "PowerPC" here really means "using QEMU", where
                 // IP_{ADD/DEL}_MEMBERSHIP fail mysteriously
                 // https://gitlab.com/qemu-project/qemu/-/issues/2553
-                #[cfg(not(any(target_arch = "powerpc", target_arch = "powerpc64")))]
+                #[cfg(not(any(
+                    target_arch = "powerpc",
+                    target_arch = "powerpc64"
+                )))]
                 rx.leave_multicast_group(
                     &IpAddr::V4("239.255.255.250".parse().unwrap()),
                     make_index(1),
-                ).unwrap();
+                )
+                .unwrap();
             });
     }
 }
