@@ -17,18 +17,25 @@ struct DeviceTestInner {
 
 impl DeviceTestInner {
     fn poll(&mut self) {
-        let mut s = String::new();
-        self.stdout.read_available_to_string(&mut s).unwrap();
+        let mut v = Vec::new();
+        self.stdout.read_available(&mut v).unwrap();
+        let s = String::from_utf8_lossy(&v);
         self.output.push_str(&s);
         if !s.is_empty() {
-            eprintln!("{:?}: stdout {s}", Instant::now());
+            eprintln!(
+                "{:?}: NEW stdout ({}/{}) {s}",
+                Instant::now(),
+                s.len(),
+                self.output.len()
+            );
         }
 
-        let mut s = String::new();
-        self.stderr.read_available_to_string(&mut s).unwrap();
+        let mut v = Vec::new();
+        self.stderr.read_available(&mut v).unwrap();
+        let s = String::from_utf8_lossy(&v);
         self.errors.push_str(&s);
         if !s.is_empty() {
-            eprintln!("{:?}: stderr {s}", Instant::now());
+            eprintln!("{:?}: NEW stderr {s}", Instant::now());
         }
     }
 }
@@ -92,8 +99,16 @@ impl DeviceTest {
                 }
 
                 if start.elapsed() > timeout {
-                    eprintln!("{:?}: stdout {}", Instant::now(), inner.output);
-                    eprintln!("{:?}: stderr {}", Instant::now(), inner.errors);
+                    eprintln!(
+                        "{:?}: FAIL stdout {}",
+                        Instant::now(),
+                        inner.output
+                    );
+                    eprintln!(
+                        "{:?}: FAIL stderr {}",
+                        Instant::now(),
+                        inner.errors
+                    );
                     assert_contains!(inner.output, needle);
                     return;
                 }
@@ -118,8 +133,16 @@ impl DeviceTest {
                 }
 
                 if start.elapsed() > timeout {
-                    eprintln!("{:?}: stdout {}", Instant::now(), inner.output);
-                    eprintln!("{:?}: stderr {}", Instant::now(), inner.errors);
+                    eprintln!(
+                        "{:?}: FAIL stdout {}",
+                        Instant::now(),
+                        inner.output
+                    );
+                    eprintln!(
+                        "{:?}: FAIL stderr {}",
+                        Instant::now(),
+                        inner.errors
+                    );
                     assert_contains!(inner.errors, needle);
                     return;
                 }
@@ -137,6 +160,11 @@ pub fn device_test<F: FnOnce(DeviceTest) -> () + panic::UnwindSafe>(
 ) {
     let (mut child, t) = DeviceTest::new(chip, environment_variable, firmware);
     let result = panic::catch_unwind(|| f(t));
-    _ = child.kill();
+    let status = child.try_wait();
+    if let Ok(Some(status)) = status {
+        eprintln!("probe-rs exited: {}", status);
+    } else {
+        _ = child.kill();
+    }
     assert!(result.is_ok());
 }

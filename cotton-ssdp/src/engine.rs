@@ -177,7 +177,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
         socket: &SCK,
         now: T::Instant,
     ) {
-        if self.refresh_timer.next_refresh() <= now {
+        if now >= self.refresh_timer.next_refresh() {
             self.refresh(socket);
             self.refresh_timer.update_refresh(now);
         }
@@ -185,7 +185,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
         for (key, value) in &mut self.advertisements {
             match &value.response_needed {
                 ResponseNeeded::Multicast(instant) => {
-                    if now > *instant {
+                    if now >= *instant {
                         value.notify_on_all(key, &self.interfaces, socket);
                         value.response_needed = ResponseNeeded::None;
                     }
@@ -196,7 +196,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                     wasto,
                     response_type,
                 ) => {
-                    if now > *instant {
+                    if now >= *instant {
                         Self::send_response(
                             socket,
                             *wasto,
@@ -366,12 +366,12 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                     maximum_wait_sec,
                 } => {
                     let max_delay_ms =
-                        ((maximum_wait_sec as u32) * 1000).clamp(100, 5000);
-                    let delay_ms = self.random_seed % max_delay_ms;
+                        ((maximum_wait_sec as u32) * 1000).clamp(0, 5000);
+                    let delay_ms = (self.random_seed % max_delay_ms) + 10;
                     let mut reply_at = now;
                     reply_at +=
                         core::time::Duration::from_millis(delay_ms.into())
-                            .into();
+                        .into();
                     for value in self.advertisements.values_mut() {
                         if target_match(
                             &search_target,
@@ -885,7 +885,6 @@ mod tests {
         {
             let mut buffer = vec![0u8; size];
             let actual_size = f(&mut buffer);
-            eprintln!("fakesocket: {from:?} - {to:?}");
             self.sends.lock().unwrap().push((
                 *to,
                 *from,
@@ -1474,6 +1473,7 @@ mod tests {
         while f.e.poll_timeout() < now {
             f.e.handle_timeout(&f.s, now);
         }
+        f.e.handle_timeout(&f.s, now);
 
         f.s.clear();
 
@@ -1514,6 +1514,7 @@ mod tests {
         while f.e.poll_timeout() < now {
             f.e.handle_timeout(&f.s, now);
         }
+        f.e.handle_timeout(&f.s, now);
 
         f.s.clear();
 
@@ -1560,6 +1561,7 @@ mod tests {
         while f.e.poll_timeout() < now {
             f.e.handle_timeout(&f.s, now);
         }
+        f.e.handle_timeout(&f.s, now);
 
         f.s.clear();
 

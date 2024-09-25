@@ -13,7 +13,6 @@ fn main() {
     println!("cargo:rerun-if-changed=../cotton-w5500");
 
     if env::var("CARGO_FEATURE_ARM").is_ok() {
-
         // cross/stm32f746-nucleo
 
         /* Run the inner Cargo without any Cargo-related environment variables

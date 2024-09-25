@@ -229,7 +229,7 @@ mod app {
             }
         }
 
-        while ssdp.poll_timeout() <= now {
+        if ssdp.poll_timeout() <= now {
             let ws = WrappedSocket::new(socket);
             ssdp.handle_timeout(&ws, now);
         }
