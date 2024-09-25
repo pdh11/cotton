@@ -55,35 +55,48 @@ itself will be useful to others:
 
   - [stm32f746-nucleo-hello](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo/src/bin/stm32f746-nucleo-hello.rs):
     basic test that an attached STM32F746-Nucleo development board is
-    working correctly;
+    working correctly; no-alloc;
 
   - [stm32f746-nucleo-dhcp-rtic](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo/src/bin/stm32f746-nucleo-dhcp-rtic.rs):
     combining [RTIC (1.x)](https://rtic.rs/1/book/en/) +
     [stm32-eth](https://crates.io/crates/stm32-eth/) +
     [smoltcp](https://crates.io/crates/smoltcp) +
     cotton-unique (a.k.a. how *not* to have a hardcoded,
-    made-up MAC address!);
+    made-up MAC address!); no-alloc;
 
   - [stm32f746-nucleo-ssdp-rtic](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo/src/bin/stm32f746-nucleo-dhcp-rtic.rs):
     combining RTIC + stm32-eth + smoltcp + cotton-unique + cotton-ssdp;
-    
+
+  - [stm32f746-nucleo-dhcp-rtic2](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo-rtic2/src/bin/stm32f746-dhcp-rtic2.rs):
+    combining [RTIC 2](https://rtic.rs/2/book/en/) +
+    stm32-eth +
+    smoltcp +
+    cotton-unique; no-alloc;
+
+  - [stm32f746-nucleo-ssdp-rtic2](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo-rtic2/src/bin/stm32f746-ssdp-rtic2.rs):
+    combining RTIC 2 +
+    stm32-eth +
+    smoltcp +
+    cotton-unique +
+    cotton-ssdp;
+
   - [rp2040-w5500-hello](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/hello.rs):
     basic test that an attached W5500-Pico-EVB development board (or
     anything that equivalently wires together an RP2040 and a W5500)
-    is working correctly;
-    
+    is working correctly; no-alloc;
+
   - [rp2040-w5500-dhcp-rtic](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/rp2040-w5500-dhcp-rtic.rs):
     combining 
-    [rp2040-hal](https://crates.io/crates/rp2040-hal) + RTIC + 
-    [w5500-hl](https://crates.io/crates/w5500-hl) + 
-    [w5500-dhcp](https://crates.io/crates/w5500-dhcp) + cotton-unique;
-    
+    [rp2040-hal](https://crates.io/crates/rp2040-hal) + RTIC +
+    [w5500-hl](https://crates.io/crates/w5500-hl) +
+    [w5500-dhcp](https://crates.io/crates/w5500-dhcp) + cotton-unique; no-alloc;
+
   - [rp2040-w5500macraw-dhcp-rtic](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/rp2040-w5500macraw-dhcp-rtic.rs):
     combining rp2040-hal + RTIC +
     [w5500](https://crates.io/crates/w5500) (MACRAW mode with
     interrupts) + smoltcp + cotton-unique (note that's a *different* W5500
-    crate);
-    
+    crate); no-alloc;
+
   - [rp2040-w5500macraw-ssdp-rtic](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/rp2040-w5500macraw-ssdp-rtic.rs):
     combining rp2040-hal + RTIC + w5500 (MACRAW mode with
     interrupts) + smoltcp + cotton-unique + cotton-ssdp;

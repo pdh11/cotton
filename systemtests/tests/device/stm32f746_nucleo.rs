@@ -44,6 +44,19 @@ fn arm_stm32f746_nucleo_dhcp() {
 #[test]
 #[serial(stm32f746_nucleo)]
 #[cfg_attr(miri, ignore)]
+fn arm_stm32f746_nucleo_dhcp_rtic2() {
+    nucleo_test(
+        "../cross/stm32f746-nucleo-rtic2/target/thumbv7em-none-eabi/debug/stm32f746-dhcp-rtic2",
+        |t| {
+            t.expect_stderr("Finished in", Duration::from_secs(45));
+            t.expect("DHCP config acquired!", Duration::from_secs(10));
+        },
+    );
+}
+
+#[test]
+#[serial(stm32f746_nucleo)]
+#[cfg_attr(miri, ignore)]
 fn arm_stm32f746_nucleo_ssdp() {
     nucleo_test(
         "../cross/stm32f746-nucleo/target/thumbv7em-none-eabi/debug/stm32f746-nucleo-ssdp-rtic",
@@ -54,10 +67,33 @@ fn arm_stm32f746_nucleo_ssdp() {
                 "cotton-test-server-stm32f746",  // host service
                 "stm32f746-nucleo-test", // device service
                 |st| {
-                    nt.expect("SSDP! cotton-test-server-stm32f746",
-                              Duration::from_secs(20));
                     st.expect_seen("stm32f746-nucleo-test",
                               Duration::from_secs(30));
+                    nt.expect("SSDP! cotton-test-server-stm32f746",
+                              Duration::from_secs(20));
+                }
+            );
+        }
+    );
+}
+
+#[test]
+#[serial(stm32f746_nucleo)]
+#[cfg_attr(miri, ignore)]
+fn arm_stm32f746_nucleo_ssdp_rtic2() {
+    nucleo_test(
+        "../cross/stm32f746-nucleo-rtic2/target/thumbv7em-none-eabi/debug/stm32f746-ssdp-rtic2",
+        |nt| {
+            nt.expect_stderr("Finished in", Duration::from_secs(45));
+            nt.expect("DHCP config acquired!", Duration::from_secs(10));
+            ssdp_test(
+                "cotton-test-server-stm32f746",  // host service
+                "stm32f746-nucleo-test", // device service
+                |st| {
+                    st.expect_seen("stm32f746-nucleo-test",
+                              Duration::from_secs(30));
+                    nt.expect("SSDP! cotton-test-server-stm32f746",
+                              Duration::from_secs(20));
                 }
             );
         }
