@@ -3,6 +3,11 @@
 
 ## Unreleased
 
+### Fixed
+
+* An off-by-one error in `Engine::handle_timeout()` meant that it would
+  make no progress if called at precisely the requested timeout time.
+
 ### Changed
 
 * Update MSRV from 1.65 to 1.75.

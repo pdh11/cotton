@@ -25,9 +25,14 @@ mod app {
         WrappedInterface, WrappedSocket,
     };
     use cotton_stm32f746_nucleo::common;
-    use fugit::ExtU64;
+    use rtic_monotonics::systick::prelude::*;
+    use rtic_sync::make_channel;
     use smoltcp::{iface::SocketHandle, socket::udp, wire};
-    use systick_monotonic::Systick;
+
+    type Sender = rtic_sync::channel::Sender<'static, (), 1>;
+    type Receiver = rtic_sync::channel::Receiver<'static, (), 1>;
+
+    systick_monotonic!(Mono, 1_000);
 
     pub struct Listener {}
 
@@ -37,7 +42,7 @@ mod app {
         stack: common::Stack<'static>,
         udp_handle: SocketHandle,
         ssdp: cotton_ssdp::engine::Engine<Listener, SmoltcpTimebase>,
-        nvic: stm32_eth::stm32::NVIC,
+        sender: Sender,
     }
 
     impl cotton_ssdp::engine::Callback for Listener {
@@ -60,28 +65,24 @@ mod app {
     #[shared]
     struct Shared {}
 
-    #[monotonic(binds = SysTick, default = true)]
-    type Monotonic = Systick<1000>;
-
     fn now_fn() -> smoltcp::time::Instant {
-        let time = monotonics::now().duration_since_epoch().ticks();
+        let time = Mono::now().duration_since_epoch().ticks();
         smoltcp::time::Instant::from_millis(time as i64)
     }
 
     #[init(local = [
         storage: NetworkStorage = NetworkStorage::new(),
     ])]
-    fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
+    fn init(cx: init::Context) -> (Shared, Local) {
         defmt::println!("Pre-init");
         common::init_heap(&super::ALLOCATOR);
         let unique_id = cotton_unique::stm32::unique_chip_id(
             stm32_device_signature::device_id(),
         );
-        let core = cx.core;
 
         let (ethernet_peripherals, rcc) = common::split_peripherals(cx.device);
         let clocks = common::setup_clocks(rcc);
-        let mono = Systick::new(core.SYST, clocks.hclk().raw());
+        Mono::start(cx.core.SYST, clocks.hclk().raw());
 
         let mut device = common::Stm32Ethernet::new(
             ethernet_peripherals,
@@ -164,7 +165,9 @@ mod app {
 
         let udp_handle = stack.socket_set.add(udp_socket);
 
-        periodic::spawn_after(2.secs()).unwrap();
+        let (sender, receiver) = make_channel!((), 1);
+
+        network_task::spawn(receiver).unwrap();
 
         (
             Shared {},
@@ -173,21 +176,13 @@ mod app {
                 stack,
                 udp_handle,
                 ssdp,
-                nvic: core.NVIC,
+                sender,
             },
-            init::Monotonics(mono),
         )
     }
 
-    #[task(local = [nvic])]
-    fn periodic(cx: periodic::Context) {
-        let nvic = cx.local.nvic;
-        defmt::println!("Wake");
-        nvic.request(stm32_eth::stm32::Interrupt::ETH);
-    }
-
-    #[task(binds = ETH, local = [device, stack, udp_handle, ssdp], priority = 2)]
-    fn eth_interrupt(cx: eth_interrupt::Context) {
+    #[task(local = [device, stack, udp_handle, ssdp], priority = 2)]
+    async fn network_task(cx: network_task::Context, mut receiver: Receiver) {
         let (device, stack, udp_handle, ssdp) = (
             cx.local.device,
             cx.local.stack,
@@ -195,50 +190,76 @@ mod app {
             cx.local.ssdp,
         );
 
-        stm32_eth::eth_interrupt_handler();
+        loop {
+            let now = now_fn();
+            let old_ip = stack.interface.ipv4_addr();
+            let next = stack.poll(now, &mut &mut device.dma);
+            let new_ip = stack.interface.ipv4_addr();
+            let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
 
-        let now = now_fn();
-        let old_ip = stack.interface.ipv4_addr();
-        let next = stack.poll(now, &mut &mut device.dma);
-        let new_ip = stack.interface.ipv4_addr();
-        let socket = stack.socket_set.get_mut::<udp::Socket>(*udp_handle);
+            if let (None, Some(ip)) = (old_ip, new_ip) {
+                let ws = WrappedSocket::new(socket);
+                ssdp.on_new_addr_event(
+                    &cotton_netif::InterfaceIndex(
+                        core::num::NonZeroU32::new(1).unwrap(),
+                    ),
+                    &no_std_net::IpAddr::V4(
+                        GenericIpv4Address::from(ip).into(),
+                    ),
+                    &ws,
+                );
 
-        if let (None, Some(ip)) = (old_ip, new_ip) {
-            let ws = WrappedSocket::new(socket);
-            ssdp.on_new_addr_event(
-                &cotton_netif::InterfaceIndex(
-                    core::num::NonZeroU32::new(1).unwrap(),
-                ),
-                &no_std_net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
-                &ws,
+                defmt::println!("Refreshing!");
+                ssdp.reset_refresh_timer(now);
+            }
+
+            if let Some(wasto) = new_ip {
+                let wasto = wire::IpAddress::Ipv4(wasto);
+                if let Ok((slice, sender)) = socket.recv() {
+                    defmt::println!(
+                        "{} from {}",
+                        slice.len(),
+                        sender.endpoint
+                    );
+                    ssdp.on_data(
+                        slice,
+                        GenericIpAddress::from(wasto).into(),
+                        GenericSocketAddr::from(sender.endpoint).into(),
+                        now,
+                    );
+                }
+            }
+
+            if ssdp.poll_timeout() <= now {
+                let ws = WrappedSocket::new(socket);
+                ssdp.handle_timeout(&ws, now);
+            }
+
+            let mut next_wake = ssdp.poll_timeout();
+            if let Some(duration) = next {
+                next_wake = next_wake.min(now + duration);
+            }
+            defmt::println!(
+                "Waking at {}ms now {}ms",
+                next_wake.total_millis(),
+                now.total_millis()
             );
 
-            defmt::println!("Refreshing!");
-            ssdp.reset_refresh_timer(now);
+            // convert smoltcp::Instant to fugit::Instant
+            let _ = Mono::timeout_at(
+                <Mono as rtic_monotonics::Monotonic>::Instant::from_ticks(
+                    next_wake.total_millis() as u64,
+                ),
+                receiver.recv(),
+            )
+            .await;
         }
+    }
 
-        if let Some(wasto) = new_ip {
-            let wasto = wire::IpAddress::Ipv4(wasto);
-            if let Ok((slice, sender)) = socket.recv() {
-                defmt::println!("{} from {}", slice.len(), sender.endpoint);
-                ssdp.on_data(slice,
-                             GenericIpAddress::from(wasto).into(),
-                             GenericSocketAddr::from(sender.endpoint).into(),
-                             now,
-                );
-            }
-        }
-
-        if ssdp.poll_timeout() <= now {
-            let ws = WrappedSocket::new(socket);
-            ssdp.handle_timeout(&ws, now);
-        }
-        let mut next_wake = ssdp.poll_timeout() - now;
-        if let Some(duration) = next {
-            next_wake = next_wake.min(duration);
-        }
-        defmt::println!("Waking after {}ms", next_wake.total_millis());
-        let _ = periodic::spawn_after(next_wake.total_millis().millis());
+    #[task(binds = ETH, local = [sender])]
+    fn eth_interrupt(cx: eth_interrupt::Context) {
+        stm32_eth::eth_interrupt_handler();
+        _ = cx.local.sender.try_send(());
     }
 }
 
