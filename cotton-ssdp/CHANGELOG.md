@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+## [0.0.4] 2024-09-27
+
 ### Fixed
 
 * An off-by-one error in `Engine::handle_timeout()` meant that it would
