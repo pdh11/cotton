@@ -14,7 +14,7 @@ rust-version = "1.75"
 all-features = true
 
 [dependencies]
-cotton-netif = { path = "../cotton-netif", version = "0.0.4", default-features = false }
+cotton-netif = { path = "../cotton-netif", version = "0.0.5", default-features = false }
 no-std-net = { version = "0.6", default-features = false }
 tokio = { version = "1.24", default-features = false, features = [
   "macros",
