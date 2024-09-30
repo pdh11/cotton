@@ -80,6 +80,11 @@ itself will be useful to others:
     cotton-unique +
     cotton-ssdp;
 
+  - [stm32f746-nucleo-ssdp-embassy](https://github.com/pdh11/cotton/blob/main/cross/stm32f746-nucleo-rtic2/src/bin/stm32f746-ssdp-embassy.rs):
+    combining [Embassy](https://embassy.dev) +
+    cotton-unique +
+    cotton-ssdp; proof-of-concept, not very Embassy-idiomatic;
+
   - [rp2040-w5500-hello](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/hello.rs):
     basic test that an attached W5500-Pico-EVB development board (or
     anything that equivalently wires together an RP2040 and a W5500)
