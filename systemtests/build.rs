@@ -56,6 +56,26 @@ fn main() {
         io::stdout().write_all(&child.stdout).unwrap();
         assert!(child.status.success());
 
+        // cross/stm32f746-nucleo-embassy
+
+        let filtered_env: HashMap<String, String> = env::vars()
+            .filter(|(k, _)| !k.starts_with("CARGO"))
+            .collect();
+        let child = Command::new("cargo")
+            .arg("build")
+            .arg("-vv")
+            .arg("--bins")
+            .arg("--target")
+            .arg("thumbv7em-none-eabi")
+            .current_dir("../cross/stm32f746-nucleo-embassy")
+            .env_clear()
+            .envs(&filtered_env)
+            .output()
+            .expect("failed to cross-compile for ARM");
+        io::stdout().write_all(&child.stderr).unwrap();
+        io::stdout().write_all(&child.stdout).unwrap();
+        assert!(child.status.success());
+
         // cross/rp2040-w5500
 
         let filtered_env: HashMap<String, String> = env::vars()

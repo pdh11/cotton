@@ -99,3 +99,26 @@ fn arm_stm32f746_nucleo_ssdp_rtic2() {
         }
     );
 }
+
+#[test]
+#[serial(stm32f746_nucleo)]
+#[cfg_attr(miri, ignore)]
+fn arm_stm32f746_nucleo_ssdp_embassy() {
+    nucleo_test(
+        "../cross/stm32f746-nucleo-embassy/target/thumbv7em-none-eabi/debug/stm32f746-ssdp-embassy",
+        |nt| {
+            nt.expect_stderr("Finished in", Duration::from_secs(45));
+            nt.expect("Network task initialized", Duration::from_secs(10));
+            ssdp_test(
+                "cotton-test-server-stm32f746",  // host service
+                "stm32f746-nucleo-test", // device service
+                |st| {
+                    st.expect_seen("stm32f746-nucleo-test",
+                              Duration::from_secs(30));
+                    nt.expect("SSDP! cotton-test-server-stm32f746",
+                              Duration::from_secs(20));
+                }
+            );
+        }
+    );
+}

@@ -1,0 +1,81 @@
+[package]
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+name = "cotton-stm32f746-nucleo"
+publish = false
+edition = "2021"
+version = "0.0.1"
+autotests = false
+
+[[bin]]
+name = "stm32f746-ssdp-embassy"
+test = false
+doctest = false
+harness = false
+
+[profile.dev]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "symbols"
+
+[dependencies]
+cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features = [
+  "smoltcp",
+] }
+cotton-netif = { path = "../../cotton-netif", default-features = false }
+cotton-unique = { version = "0.1", path = "../../cotton-unique", features = [
+  "stm32",
+] }
+embassy-stm32 = { version = "0.1.0", features = [
+  "defmt",
+  "stm32f746zg",
+  "memory-x",
+  "unstable-pac",
+  "time-driver-any",
+  "exti",
+] }
+embassy-executor = { version = "0.6.0", features = [
+  "task-arena-size-32768",
+  "arch-cortex-m",
+  "executor-thread",
+  "defmt",
+  "integrated-timers",
+] }
+embassy-time = { version = "0.3.2", features = [
+  "defmt",
+  "defmt-timestamp-uptime",
+  "tick-hz-32_768",
+] }
+embassy-net = { version = "0.4.0", features = [
+  "defmt",
+  "tcp",
+  "udp",
+  "dhcpv4",
+  "medium-ethernet",
+  "igmp",
+] }
+embassy-futures = { version = "0.1.0" }
+
+defmt = "0.3.8"
+defmt-rtt = "0.4"
+
+cortex-m = { version = "0.7.6", features = [
+  "inline-asm",
+  "critical-section-single-core",
+] }
+cortex-m-rt = "0.7.0"
+embedded-hal = "0.2.6"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+heapless = { version = "0.8", default-features = false }
+rand_core = "0.6.3"
+critical-section = "1.1"
+static_cell = "2"
+no-std-net = "0.6"
+linked_list_allocator = { version = "0.10", default-features = false, features = [
+  "use_spin_nightly",
+] }
