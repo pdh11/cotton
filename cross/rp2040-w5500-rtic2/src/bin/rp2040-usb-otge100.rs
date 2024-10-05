@@ -231,30 +231,60 @@ mod app {
         >(
             &self,
             address: u8,
+            packet_size: u8,
             setup: SetupPacket,
             buf: &mut [u8],
             f: F,
         ) -> Result<usize, UsbError> {
             assert!(setup.wLength <= 64);
 
+            let packets = setup.wLength / (packet_size as u16) + 1;
+            defmt::println!("we'll need {} packets", packets);
+
             self.dpram.epx_control().write(|w| {
                 unsafe {
                     w.buffer_address().bits(0x180);
                 }
+                if packets > 1 {
+                    w.double_buffered().set_bit();
+                    w.interrupt_per_buff().set_bit();
+                }
                 w.enable().set_bit()
             });
+            let mut remain = setup.wLength;
             self.dpram.ep_buffer_control(0).write(|w| {
-                w.last_0().set_bit();
                 w.full_0().clear_bit();
                 w.pid_0().set_bit();
-                unsafe { w.length_0().bits(setup.wLength) }
+                let packet0 = core::cmp::min(remain, packet_size as u16);
+                unsafe { w.length_0().bits(packet0) };
+                if remain < packet0 {
+                    w.last_0().set_bit();
+                    remain = 0;
+                } else {
+                    remain -= packet0;
+                    w.full_1().clear_bit();
+                    w.pid_1().clear_bit();
+                    let packet1 = core::cmp::min(remain, packet_size as u16);
+                    defmt::println!(
+                        "p0 {} p1 {} r {}",
+                        packet0,
+                        packet1,
+                        remain
+                    );
+                    unsafe { w.length_1().bits(packet1) };
+                    remain -= packet1;
+                    if remain == 0 {
+                        w.last_1().set_bit();
+                    }
+                }
+                w
             });
 
             cortex_m::asm::delay(12);
 
-            self.dpram
-                .ep_buffer_control(0)
-                .modify(|_, w| w.available_0().set_bit());
+            self.dpram.ep_buffer_control(0).modify(|_, w| {
+                w.available_0().set_bit().available_1().set_bit()
+            });
 
             // USB 2.0 s9.4.3
             self.dpram.setup_packet_low().write(|w| unsafe {
@@ -304,6 +334,11 @@ mod app {
                 pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
             }
 
+            defmt::println!(
+                "Initial bcr {:x}",
+                self.dpram.ep_buffer_control(0).read().bits()
+            );
+
             self.regs
                 .sie_ctrl()
                 .modify(|_, w| w.start_trans().set_bit());
@@ -332,7 +367,7 @@ mod app {
                 let bcr = self.dpram.ep_buffer_control(0).read();
                 let ctrl = self.regs.sie_ctrl().read();
                 defmt::println!(
-                    "bcr=0x{:x} sie_status=0x{:x} sie_ctrl=0x{:x}",
+                    "ERROR bcr=0x{:x} sie_status=0x{:x} sie_ctrl=0x{:x}",
                     bcr.bits(),
                     status.bits(),
                     ctrl.bits()
@@ -357,6 +392,16 @@ mod app {
                 }
                 return Err(UsbError::Timeout);
             }
+            let bcr = self.dpram.ep_buffer_control(0).read();
+            let ctrl = self.regs.sie_ctrl().read();
+            defmt::println!(
+                "COMPLETE bcr=0x{:x} sie_status=0x{:x} sie_ctrl=0x{:x}",
+                bcr.bits(),
+                status.bits(),
+                ctrl.bits()
+            );
+
+            let mut offset = 0;
 
             let transferred = self
                 .dpram
@@ -365,17 +410,38 @@ mod app {
                 .length_0()
                 .bits()
                 .into();
-            if buf.len() < transferred {
+            if buf.len() < transferred + offset {
                 return Err(UsbError::BufferTooSmall);
             }
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     (0x5010_0000 + 0x180) as *const u8,
-                    &mut buf[0] as *mut u8,
+                    &mut buf[offset] as *mut u8,
                     transferred,
                 );
             }
-            Ok(transferred)
+            offset += transferred;
+
+            let transferred = self
+                .dpram
+                .ep_buffer_control(0)
+                .read()
+                .length_1()
+                .bits()
+                .into();
+            if buf.len() < transferred + offset {
+                return Err(UsbError::BufferTooSmall);
+            }
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    (0x5010_0000 + 0x1C0) as *const u8,
+                    &mut buf[offset] as *mut u8,
+                    transferred,
+                );
+            }
+            offset += transferred;
+
+            Ok(offset)
         }
     }
 
@@ -624,6 +690,7 @@ mod app {
         let rc = stack
             .control_transfer_in(
                 0,
+                8,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
                     bRequest: GET_DESCRIPTOR,
@@ -636,7 +703,7 @@ mod app {
             )
             .await;
         defmt::println!("fetched: {:?}", rc);
-        if rc.is_ok() {
+        let mps0 = if rc.is_ok() {
             defmt::println!(
                 "Device: len {}, class {}, subclass {}, mps0 {}",
                 descriptors[0],
@@ -644,19 +711,23 @@ mod app {
                 descriptors[5],
                 descriptors[7]
             );
-        }
+            descriptors[7]
+        } else {
+            8
+        };
 
         defmt::println!("fetching2");
         let future = UsbFuture::new(cx.shared.waker);
         let rc = stack
             .control_transfer_in(
                 0,
+                mps0,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
                     bRequest: GET_DESCRIPTOR,
                     wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
                     wIndex: 0,
-                    wLength: 8,
+                    wLength: 15,
                 },
                 &mut descriptors,
                 future,
