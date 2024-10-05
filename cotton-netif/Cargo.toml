@@ -33,7 +33,7 @@ tokio = { version = "1.24", default-features = false, features = [
   "rt",
 ], optional = true }
 tokio-test = { version = "0.4", default-features = false, optional = true }
-futures-util = { version = "0.3", default-features = false, features = [
+futures-util = { version = "0.3.31", default-features = false, features = [
   "async-await",
   "async-await-macro",
 ], optional = true }
