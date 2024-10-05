@@ -6,13 +6,13 @@ use defmt_rtt as _;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 
-#[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [ADC_IRQ_FIFO])]
+#[rtic::app(device = rp_pico::hal::pac, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
     use embedded_hal::delay::DelayNs;
     use fugit::ExtU64;
     use rp2040_hal::Clock;
     use rp_pico::pac;
-    use systick_monotonic::Systick;
+    use rtic_monotonics::rp2040::prelude::*;
 
     #[inline(never)]
     unsafe fn unique_flash_id() -> cotton_unique::UniqueId {
@@ -158,12 +158,12 @@ mod app {
 
     #[local]
     struct Local {
+        stack: UsbStack,
         //        regs: pac::USBCTRL_REGS,
         nvic: cortex_m::peripheral::NVIC,
     }
 
-    #[monotonic(binds = SysTick, default = true)]
-    type Monotonic = Systick<1000>;
+    rp2040_timer_monotonic!(Mono); // 1MHz!
 
     pub enum UsbError {
         Nak,
@@ -190,16 +190,13 @@ mod app {
         }
 
         pub fn control_transfer_in(
-            self,
+            &self,
             address: u8,
             setup: SetupPacket,
             buf: &mut [u8],
         ) -> Result<usize, UsbError> {
             assert!(setup.wLength <= 64);
 
-            // set up EPx and EPx buffer control
-            // write setup packet
-            // start transaction
             self.dpram.epx_control().write(|w| {
                 unsafe {
                     w.buffer_address().bits(0x180);
@@ -354,8 +351,8 @@ mod app {
         }
     }
 
-    #[init(local = [])]
-    fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
+    #[init()]
+    fn init(c: init::Context) -> (Shared, Local) {
         defmt::println!(
             "{} from {} {}-g{}",
             env!("CARGO_BIN_NAME"),
@@ -383,10 +380,6 @@ mod app {
         .ok()
         .unwrap();
 
-        let mono = systick_monotonic::Systick::new(
-            c.core.SYST,
-            clocks.system_clock.freq().raw(),
-        );
         let mut timer =
             rp2040_hal::Timer::new(device.TIMER, &mut resets, &clocks);
 
@@ -534,11 +527,23 @@ mod app {
             unsafe { *((0x5010_0000 + 0x180) as *const DeviceDescriptor) };
 
         defmt::println!("s={:?}", s);
-
-        let mut descriptors = [0u8; 64];
-
         let stack = UsbStack::new(regs, dpram);
 
+        usb_task::spawn().unwrap();
+
+        (
+            Shared {},
+            Local {
+                stack,
+                nvic: c.core.NVIC,
+            },
+        )
+    }
+
+    #[task(local = [stack], priority = 2)]
+    async fn usb_task(cx: usb_task::Context) {
+        let stack = cx.local.stack;
+        let mut descriptors = [0u8; 64];
         let rc = stack.control_transfer_in(
             0,
             SetupPacket {
@@ -553,36 +558,15 @@ mod app {
         if let Ok(sz) = rc {
             show_descriptors(&descriptors[0..sz]);
         }
-
-        periodic::spawn_after(2.secs()).unwrap();
-
-        (
-            Shared {},
-            Local {
-                //                regs,
-                /*
-                device,
-                stack, */
-                nvic: c.core.NVIC,
-                //w5500_irq,
-            },
-            init::Monotonics(mono),
-        )
     }
 
-    #[task(local = [nvic])]
-    fn periodic(_cx: periodic::Context) {
-        //        defmt::println!("sie_status=0x{:x}", cx.local.regs.sie_status().read().bits());
-        periodic::spawn_after(2.secs()).unwrap();
-    }
-
+        /*
     #[task(binds = IO_IRQ_BANK0, local = [], priority = 2)]
     fn eth_interrupt(_cx: eth_interrupt::Context) {
-        /*
                 let w5500_irq = cx.local.w5500_irq;
                 cx.local.device.clear_interrupt();
                 w5500_irq.clear_interrupt(EdgeLow);
                 cx.local.stack.poll(now_fn(), cx.local.device);
-        */
     }
+        */
 }
