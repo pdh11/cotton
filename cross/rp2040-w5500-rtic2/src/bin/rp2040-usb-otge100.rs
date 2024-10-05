@@ -213,6 +213,151 @@ mod app {
         }
     }
 
+    struct Packetiser {
+        next_prep: u8,
+        remain: u16,
+        packet_size: u16,
+        need_zero_size_packet: bool,
+    }
+
+    impl Packetiser {
+        fn new(remain: u16, packet_size: u16) -> Self {
+            Self {
+                next_prep: 0,
+                remain,
+                packet_size,
+                need_zero_size_packet: (remain % packet_size) == 0,
+            }
+        }
+
+        fn next_packet(&self) -> Option<(u16, bool)> {
+            if self.remain == 0 {
+                assert!(self.need_zero_size_packet);
+                return Some((0, true));
+            }
+            if self.remain < self.packet_size {
+                return Some((self.remain, true));
+            }
+            if self.remain > self.packet_size {
+                return Some((self.packet_size, false));
+            }
+            Some((self.remain, false))
+        }
+
+        fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
+            if let Some((this_packet, is_last)) = self.next_packet() {
+                let val = reg.read();
+                match self.next_prep {
+                    0 => {
+                        if !val.available_0().bit() {
+                            self.remain -= this_packet;
+                            reg.modify(|_, w| {
+                                w.full_0().clear_bit();
+                                w.pid_0().set_bit();
+                                w.last_0().bit(is_last);
+                                unsafe { w.length_0().bits(this_packet) };
+                                w
+                            });
+
+                            cortex_m::asm::delay(12);
+
+                            reg.modify(|_, w| w.available_0().set_bit());
+
+                            self.next_prep = 1;
+                        }
+                    }
+
+                    _ => {
+                        if !val.available_1().bit() {
+                            self.remain -= this_packet;
+                            reg.modify(|_, w| {
+                                w.full_1().clear_bit();
+                                w.pid_1().clear_bit();
+                                w.last_1().bit(is_last);
+                                unsafe { w.length_1().bits(this_packet) };
+                                w
+                            });
+
+                            cortex_m::asm::delay(12);
+
+                            reg.modify(|_, w| w.available_1().set_bit());
+
+                            self.next_prep = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    struct Depacketiser {
+        next_read: u8,
+        remain: usize,
+        offset: usize,
+    }
+
+    impl Depacketiser {
+        fn new(remain: u16) -> Self {
+            Self {
+                next_read: 0,
+                remain: remain as usize,
+                offset: 0,
+            }
+        }
+
+        fn read(
+            &mut self,
+            reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
+            buf: &mut [u8],
+        ) {
+            let val = reg.read();
+            match self.next_read {
+                0 => {
+                    if val.full_0().bit() {
+                        let this_packet = core::cmp::min(
+                            self.remain,
+                            val.length_0().bits() as usize,
+                        );
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(
+                                (0x5010_0000 + 0x180) as *const u8,
+                                &mut buf[self.offset] as *mut u8,
+                                this_packet,
+                            );
+                        }
+
+                        self.remain -= this_packet;
+                        self.offset += this_packet;
+                        self.next_read = 1;
+                    }
+                }
+                _ => {
+                    if val.full_1().bit() {
+                        let this_packet = core::cmp::min(
+                            self.remain,
+                            val.length_1().bits() as usize,
+                        );
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(
+                                (0x5010_0000 + 0x1C0) as *const u8,
+                                &mut buf[self.offset] as *mut u8,
+                                this_packet,
+                            );
+                        }
+
+                        self.remain -= this_packet;
+                        self.offset += this_packet;
+                        self.next_read = 0;
+                    }
+                }
+            }
+        }
+
+        fn total(&self) -> usize {
+            self.offset
+        }
+    }
+
     pub struct UsbStack {
         regs: pac::USBCTRL_REGS,
         dpram: pac::USBCTRL_DPRAM,
@@ -251,40 +396,12 @@ mod app {
                 }
                 w.enable().set_bit()
             });
-            let mut remain = setup.wLength;
-            self.dpram.ep_buffer_control(0).write(|w| {
-                w.full_0().clear_bit();
-                w.pid_0().set_bit();
-                let packet0 = core::cmp::min(remain, packet_size as u16);
-                unsafe { w.length_0().bits(packet0) };
-                if remain < packet0 {
-                    w.last_0().set_bit();
-                    remain = 0;
-                } else {
-                    remain -= packet0;
-                    w.full_1().clear_bit();
-                    w.pid_1().clear_bit();
-                    let packet1 = core::cmp::min(remain, packet_size as u16);
-                    defmt::println!(
-                        "p0 {} p1 {} r {}",
-                        packet0,
-                        packet1,
-                        remain
-                    );
-                    unsafe { w.length_1().bits(packet1) };
-                    remain -= packet1;
-                    if remain == 0 {
-                        w.last_1().set_bit();
-                    }
-                }
-                w
-            });
 
-            cortex_m::asm::delay(12);
-
-            self.dpram.ep_buffer_control(0).modify(|_, w| {
-                w.available_0().set_bit().available_1().set_bit()
-            });
+            let mut packetiser =
+                Packetiser::new(setup.wLength, packet_size as u16);
+            let mut depacketiser = Depacketiser::new(setup.wLength);
+            packetiser.prepare(self.dpram.ep_buffer_control(0));
+            packetiser.prepare(self.dpram.ep_buffer_control(0));
 
             // USB 2.0 s9.4.3
             self.dpram.setup_packet_low().write(|w| unsafe {
@@ -362,7 +479,6 @@ mod app {
                     .clear_bit()
             });
 
-            //            let status = self.regs.sie_status().read();
             if !status.trans_complete().bit() {
                 let bcr = self.dpram.ep_buffer_control(0).read();
                 let ctrl = self.regs.sie_ctrl().read();
@@ -401,47 +517,9 @@ mod app {
                 ctrl.bits()
             );
 
-            let mut offset = 0;
-
-            let transferred = self
-                .dpram
-                .ep_buffer_control(0)
-                .read()
-                .length_0()
-                .bits()
-                .into();
-            if buf.len() < transferred + offset {
-                return Err(UsbError::BufferTooSmall);
-            }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    (0x5010_0000 + 0x180) as *const u8,
-                    &mut buf[offset] as *mut u8,
-                    transferred,
-                );
-            }
-            offset += transferred;
-
-            let transferred = self
-                .dpram
-                .ep_buffer_control(0)
-                .read()
-                .length_1()
-                .bits()
-                .into();
-            if buf.len() < transferred + offset {
-                return Err(UsbError::BufferTooSmall);
-            }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    (0x5010_0000 + 0x1C0) as *const u8,
-                    &mut buf[offset] as *mut u8,
-                    transferred,
-                );
-            }
-            offset += transferred;
-
-            Ok(offset)
+            depacketiser.read(self.dpram.ep_buffer_control(0), buf);
+            depacketiser.read(self.dpram.ep_buffer_control(0), buf);
+            Ok(depacketiser.total())
         }
     }
 
