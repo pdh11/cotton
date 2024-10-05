@@ -179,6 +179,7 @@ mod app {
         BufferTooSmall,
     }
 
+    #[derive(Copy, Clone)]
     pub struct UsbFuture<'a> {
         waker: &'a CriticalSectionWakerRegistration,
         // pipe: u8
@@ -197,17 +198,18 @@ mod app {
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
-            defmt::println!("register");
+            defmt::trace!("register");
             self.waker.register(cx.waker());
 
             let regs = unsafe { pac::USBCTRL_REGS::steal() };
             let status = regs.sie_status().read();
-            if (status.bits() & 0xFF04_0000) != 0 {
-                defmt::println!("ready {:x}", status.bits());
+            let ints = regs.ints().read();
+            if ints.bits() != 0 {
+                defmt::info!("ready {:x}", status.bits());
                 regs.sie_status().write(|w| unsafe { w.bits(0xFF04_0000) });
                 Poll::Ready(status)
             } else {
-                defmt::println!("pending");
+                defmt::trace!("pending");
                 Poll::Pending
             }
         }
@@ -230,10 +232,14 @@ mod app {
             }
         }
 
-        fn next_packet(&self) -> Option<(u16, bool)> {
+        fn next_packet(&mut self) -> Option<(u16, bool)> {
             if self.remain == 0 {
-                assert!(self.need_zero_size_packet);
-                return Some((0, true));
+                if self.need_zero_size_packet {
+                    self.need_zero_size_packet = false;
+                    return Some((0, true));
+                } else {
+                    return None;
+                }
             }
             if self.remain < self.packet_size {
                 return Some((self.remain, true));
@@ -245,11 +251,11 @@ mod app {
         }
 
         fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
-            if let Some((this_packet, is_last)) = self.next_packet() {
-                let val = reg.read();
-                match self.next_prep {
-                    0 => {
-                        if !val.available_0().bit() {
+            let val = reg.read();
+            match self.next_prep {
+                0 => {
+                    if !val.available_0().bit() {
+                        if let Some((this_packet, is_last)) = self.next_packet() {
                             self.remain -= this_packet;
                             reg.modify(|_, w| {
                                 w.full_0().clear_bit();
@@ -266,9 +272,11 @@ mod app {
                             self.next_prep = 1;
                         }
                     }
+                }
 
-                    _ => {
-                        if !val.available_1().bit() {
+                _ => {
+                    if !val.available_1().bit() {
+                        if let Some((this_packet, is_last)) = self.next_packet() {
                             self.remain -= this_packet;
                             reg.modify(|_, w| {
                                 w.full_1().clear_bit();
@@ -372,7 +380,7 @@ mod app {
         }
 
         pub async fn control_transfer_in<
-            F: Future<Output = pac::usbctrl_regs::sie_status::R>,
+            F: Future<Output = pac::usbctrl_regs::sie_status::R> + Copy,
         >(
             &self,
             address: u8,
@@ -381,10 +389,8 @@ mod app {
             buf: &mut [u8],
             f: F,
         ) -> Result<usize, UsbError> {
-            assert!(setup.wLength <= 64);
-
             let packets = setup.wLength / (packet_size as u16) + 1;
-            defmt::println!("we'll need {} packets", packets);
+            defmt::info!("we'll need {} packets", packets);
 
             self.dpram.epx_control().write(|w| {
                 unsafe {
@@ -397,10 +403,12 @@ mod app {
                 w.enable().set_bit()
             });
 
+            self.dpram.ep_buffer_control(0)
+                .write(|w| unsafe { w.bits(0) });
+
             let mut packetiser =
                 Packetiser::new(setup.wLength, packet_size as u16);
             let mut depacketiser = Depacketiser::new(setup.wLength);
-            packetiser.prepare(self.dpram.ep_buffer_control(0));
             packetiser.prepare(self.dpram.ep_buffer_control(0));
 
             // USB 2.0 s9.4.3
@@ -422,71 +430,100 @@ mod app {
                 w.address().bits(address)
             });
 
-            self.regs.inte().write(|w| {
-                w.trans_complete()
-                    .set_bit()
-                    .error_data_seq()
-                    .set_bit()
-                    .stall()
-                    .set_bit()
-                    .error_rx_timeout()
-                    .set_bit()
-                    .error_rx_overflow()
-                    .set_bit()
-                    .error_bit_stuff()
-                    .set_bit()
-                    .error_crc()
-                    .set_bit()
-            });
+            let mut started = false;
 
-            self.regs.sie_ctrl().modify(|_, w| {
-                w.receive_data().set_bit();
-                w.send_setup().set_bit()
-            });
+            loop {
+                packetiser.prepare(self.dpram.ep_buffer_control(0));
+                packetiser.prepare(self.dpram.ep_buffer_control(0));
 
-            cortex_m::asm::delay(12);
+                self.regs
+                    .sie_status()
+                    .write(|w| unsafe { w.bits(0xFF00_0000) });
+                self.regs
+                    .buff_status()
+                    .write(|w| unsafe { w.bits(0xFFFF_FFFF) });
+                self.regs.inte().write(|w| {
+                    if packets > 2 {
+                        w.buff_status().set_bit();
+                    }
+                    w.trans_complete()
+                        .set_bit()
+                        .error_data_seq()
+                        .set_bit()
+                        .stall()
+                        .set_bit()
+                        .error_rx_timeout()
+                        .set_bit()
+                        .error_rx_overflow()
+                        .set_bit()
+                        .error_bit_stuff()
+                        .set_bit()
+                        .error_crc()
+                        .set_bit()
+                });
 
-            unsafe {
-                pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
-                pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
-            }
+                unsafe {
+                    pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
+                    pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
+                }
 
-            defmt::println!(
-                "Initial bcr {:x}",
-                self.dpram.ep_buffer_control(0).read().bits()
-            );
+                defmt::info!(
+                    "Initial bcr {:x}",
+                    self.dpram.ep_buffer_control(0).read().bits()
+                );
 
-            self.regs
-                .sie_ctrl()
-                .modify(|_, w| w.start_trans().set_bit());
+                if !started {
+                    started = true;
 
-            let status = f.await;
+                    self.regs.sie_ctrl().modify(|_, w| {
+                        w.receive_data().set_bit();
+                        w.send_setup().set_bit()
+                    });
 
-            self.regs.inte().write(|w| {
-                w.trans_complete()
-                    .clear_bit()
-                    .error_data_seq()
-                    .clear_bit()
-                    .stall()
-                    .clear_bit()
-                    .error_rx_timeout()
-                    .clear_bit()
-                    .error_rx_overflow()
-                    .clear_bit()
-                    .error_bit_stuff()
-                    .clear_bit()
-                    .error_crc()
-                    .clear_bit()
-            });
+                    cortex_m::asm::delay(12);
 
-            if !status.trans_complete().bit() {
+                    self.regs
+                        .sie_ctrl()
+                        .modify(|_, w| w.start_trans().set_bit());
+                }
+
+                let status = f.await;
+
+                defmt::trace!("awaited");
+
+                self.regs.inte().write(|w| {
+                    w.trans_complete()
+                        .clear_bit()
+                        .error_data_seq()
+                        .clear_bit()
+                        .stall()
+                        .clear_bit()
+                        .error_rx_timeout()
+                        .clear_bit()
+                        .error_rx_overflow()
+                        .clear_bit()
+                        .error_bit_stuff()
+                        .clear_bit()
+                        .error_crc()
+                        .clear_bit()
+                        .buff_status()
+                        .clear_bit()
+                });
+
+                if status.trans_complete().bit() {
+                    depacketiser.read(self.dpram.ep_buffer_control(0), buf);
+                    break;
+                }
+
                 let bcr = self.dpram.ep_buffer_control(0).read();
                 let ctrl = self.regs.sie_ctrl().read();
-                defmt::println!(
-                    "ERROR bcr=0x{:x} sie_status=0x{:x} sie_ctrl=0x{:x}",
+                let bstat = self.regs.buff_status().read();
+                defmt::trace!(
+                    "bcr=0x{:x} sie_status=0x{:x} sie_ctrl=0x{:x} bstat={:x}",
                     bcr.bits(),
                     status.bits(),
-                    ctrl.bits()
+                    ctrl.bits(),
+                    bstat.bits(),
                 );
                 if status.data_seq_error().bit() {
                     return Err(UsbError::DataSeqError);
@@ -494,11 +531,14 @@ mod app {
                 if status.stall_rec().bit() {
                     return Err(UsbError::Stall);
                 }
-                if status.nak_rec().bit() {
-                    return Err(UsbError::Nak);
-                }
+                // if status.nak_rec().bit() {
+                //     return Err(UsbError::Nak);
+                // }
                 if status.rx_overflow().bit() {
                     return Err(UsbError::Overflow);
+                }
+                if status.rx_timeout().bit() {
+                    return Err(UsbError::Timeout);
                 }
                 if status.bit_stuff_error().bit() {
                     return Err(UsbError::BitStuffError);
@@ -506,18 +546,18 @@ mod app {
                 if status.crc_error().bit() {
                     return Err(UsbError::CrcError);
                 }
-                return Err(UsbError::Timeout);
+
+                depacketiser.read(self.dpram.ep_buffer_control(0), buf);
+                depacketiser.read(self.dpram.ep_buffer_control(0), buf);
             }
+
             let bcr = self.dpram.ep_buffer_control(0).read();
             let ctrl = self.regs.sie_ctrl().read();
-            defmt::println!(
-                "COMPLETE bcr=0x{:x} sie_status=0x{:x} sie_ctrl=0x{:x}",
+            defmt::trace!(
+                "COMPLETE bcr=0x{:x} sie_ctrl=0x{:x}",
                 bcr.bits(),
-                status.bits(),
                 ctrl.bits()
             );
-
-            depacketiser.read(self.dpram.ep_buffer_control(0), buf);
             depacketiser.read(self.dpram.ep_buffer_control(0), buf);
             Ok(depacketiser.total())
         }
@@ -655,7 +695,7 @@ mod app {
 
         loop {
             let status = regs.sie_status().read();
-            defmt::println!("sie_status=0x{:x}", status.bits());
+            defmt::trace!("sie_status=0x{:x}", status.bits());
             match status.speed().bits() {
                 1 => {
                     defmt::println!("LS detected");
@@ -675,78 +715,7 @@ mod app {
         timer.delay_ms(50);
 
         regs.sie_ctrl().modify(|_, w| w.reset_bus().clear_bit());
-        /*
-                // set up EPx and EPx buffer control
-                // write setup packet
-                // start transaction
-                dpram.epx_control().write(|w| {
-                    unsafe {
-                        w.buffer_address().bits(0x180);
-                    }
-                    w.enable().set_bit()
-                });
-                dpram.ep_buffer_control(0).write(|w| {
-                    w.last_0().set_bit();
-                    w.full_0().clear_bit();
-                    w.pid_0().set_bit();
-                    unsafe { w.length_0().bits(18) }
-                });
 
-                cortex_m::asm::delay(12);
-
-                dpram
-                    .ep_buffer_control(0)
-                    .modify(|_, w| w.available_0().set_bit());
-
-                // USB 2.0 s9.4.3
-                dpram.setup_packet_low().write(|w| unsafe {
-                    w.bmrequesttype().bits(DEVICE_TO_HOST);
-                    w.brequest().bits(GET_DESCRIPTOR);
-                    w.wvalue().bits((DEVICE_DESCRIPTOR as u16) << 8)
-                });
-                dpram
-                    .setup_packet_high()
-                    .write(|w| unsafe { w.wlength().bits(18) });
-
-                regs.addr_endp().write(|w| unsafe {
-                    w.endpoint().bits(0);
-                    w.address().bits(0)
-                });
-                defmt::println!(
-                    "bcr=0x{:x}",
-                    dpram.ep_buffer_control(0).read().bits()
-                );
-
-                regs.sie_ctrl().modify(|_, w| {
-                    w.receive_data().set_bit();
-                    w.send_setup().set_bit()
-                });
-
-                cortex_m::asm::delay(12);
-
-                regs.sie_ctrl().modify(|_, w| w.start_trans().set_bit());
-
-                loop {
-                    let status = regs.sie_status().read();
-                    let bcr = dpram.ep_buffer_control(0).read();
-                    let ctrl = regs.sie_ctrl().read();
-                    defmt::println!(
-                        "bcr=0x{:x} sie_status=0x{:x} sie_ctrl=0x{:x}",
-                        bcr.bits(),
-                        status.bits(),
-                        ctrl.bits()
-                    );
-                    if status.trans_complete().bit() {
-                        break;
-                    }
-                    timer.delay_ms(250);
-                }
-
-                let s: DeviceDescriptor =
-                    unsafe { *((0x5010_0000 + 0x180) as *const DeviceDescriptor) };
-
-                defmt::println!("s={:?}", s);
-        */
         let stack = UsbStack::new(regs, dpram);
 
         usb_task::spawn().unwrap();
@@ -764,7 +733,7 @@ mod app {
         let stack = cx.local.stack;
         let future = UsbFuture::new(cx.shared.waker);
         let mut descriptors = [0u8; 64];
-        defmt::println!("fetching1");
+        defmt::trace!("fetching1");
         let rc = stack
             .control_transfer_in(
                 0,
@@ -780,7 +749,6 @@ mod app {
                 future,
             )
             .await;
-        defmt::println!("fetched: {:?}", rc);
         let mps0 = if rc.is_ok() {
             defmt::println!(
                 "Device: len {}, class {}, subclass {}, mps0 {}",
@@ -791,10 +759,38 @@ mod app {
             );
             descriptors[7]
         } else {
+            defmt::println!("fetched {:?}", rc);
             8
         };
 
-        defmt::println!("fetching2");
+        defmt::trace!("fetching3");
+        let future = UsbFuture::new(cx.shared.waker);
+        let rc = stack
+            .control_transfer_in(
+                0,
+                mps0,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
+                    wIndex: 0,
+                    wLength: 18,
+                },
+                &mut descriptors,
+                future,
+            )
+            .await;
+        if let Ok(_sz) = rc {
+            defmt::println!(
+                "VID:PID = {:04x}:{:04x}",
+                u16::from_le_bytes([descriptors[8], descriptors[9]]),
+                u16::from_le_bytes([descriptors[10], descriptors[11]])
+            );
+        } else {
+            defmt::println!("fetched {:?}", rc);
+        }
+
+        defmt::trace!("fetching2");
         let future = UsbFuture::new(cx.shared.waker);
         let rc = stack
             .control_transfer_in(
@@ -805,23 +801,22 @@ mod app {
                     bRequest: GET_DESCRIPTOR,
                     wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
                     wIndex: 0,
-                    wLength: 15,
+                    wLength: 39,
                 },
                 &mut descriptors,
                 future,
             )
             .await;
-        defmt::println!("fetched: {:?}", rc);
         if let Ok(sz) = rc {
             show_descriptors(&descriptors[0..sz]);
+        } else {
+            defmt::println!("fetched {:?}", rc);
         }
     }
 
     #[task(binds = USBCTRL_IRQ, shared = [&waker], priority = 2)]
     fn usb_interrupt(cx: usb_interrupt::Context) {
         pac::NVIC::mask(pac::Interrupt::USBCTRL_IRQ);
-        defmt::println!("IRQ");
         cx.shared.waker.wake();
-        defmt::println!("woke");
     }
 }
