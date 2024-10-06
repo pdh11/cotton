@@ -11,7 +11,6 @@ mod app {
     use core::future::Future;
     use core::pin::Pin;
     use core::task::{Context, Poll};
-    use embedded_hal::delay::DelayNs;
     use rp_pico::pac;
     use rtic_common::waker_registration::CriticalSectionWakerRegistration;
     use rtic_monotonics::rp2040::prelude::*;
@@ -162,7 +161,9 @@ mod app {
 
     #[local]
     struct Local {
-        stack: UsbStack,
+        resets: pac::RESETS,
+        regs: Option<pac::USBCTRL_REGS>,
+        dpram: Option<pac::USBCTRL_DPRAM>,
     }
 
     rp2040_timer_monotonic!(Mono); // 1MHz!
@@ -464,12 +465,14 @@ mod app {
                             self.remain,
                             val.length_0().bits() as usize,
                         );
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(
-                                (0x5010_0000 + 0x180) as *const u8,
-                                &mut self.buf[self.offset] as *mut u8,
-                                this_packet,
-                            );
+                        if this_packet > 0 {
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    (0x5010_0000 + 0x180) as *const u8,
+                                    &mut self.buf[self.offset] as *mut u8,
+                                    this_packet,
+                                );
+                            }
                         }
 
                         self.remain -= this_packet;
@@ -483,12 +486,14 @@ mod app {
                             self.remain,
                             val.length_1().bits() as usize,
                         );
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(
-                                (0x5010_0000 + 0x1C0) as *const u8,
-                                &mut self.buf[self.offset] as *mut u8,
-                                this_packet,
-                            );
+                        if this_packet > 0 {
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    (0x5010_0000 + 0x1C0) as *const u8,
+                                    &mut self.buf[self.offset] as *mut u8,
+                                    this_packet,
+                                );
+                            }
                         }
 
                         self.remain -= this_packet;
@@ -528,32 +533,161 @@ mod app {
         }
     }
 
-    pub struct UsbStack {
-        regs: pac::USBCTRL_REGS,
-        dpram: pac::USBCTRL_DPRAM,
-        addresses_in_use: [u32; 4],
+    #[derive(defmt::Format, Copy, Clone)]
+    pub enum UsbSpeed {
+        Low1_1,
+        Full12,
+        High240,
     }
 
-    impl UsbStack {
+    #[derive(defmt::Format, Copy, Clone)]
+    pub struct UsbDevice {
+        address: u8,
+        packet_size_ep0: u8,
+        vid: u16,
+        pid: u16,
+        speed: UsbSpeed,
+    }
+
+    pub struct UsbStack<'a> {
+        regs: pac::USBCTRL_REGS,
+        dpram: pac::USBCTRL_DPRAM,
+        waker: &'a CriticalSectionWakerRegistration,
+    }
+
+    impl<'a> UsbStack<'a> {
         pub fn new(
             regs: pac::USBCTRL_REGS,
             dpram: pac::USBCTRL_DPRAM,
+            resets: &mut pac::RESETS,
+            waker: &'a CriticalSectionWakerRegistration,
         ) -> Self {
-            Self {
-                regs,
-                dpram,
-                addresses_in_use: [0u32; 4],
-            }
+            resets.reset().modify(|_, w| w.usbctrl().set_bit());
+            resets.reset().modify(|_, w| w.usbctrl().clear_bit());
+
+            Self { regs, dpram, waker }
         }
 
-        pub fn allocate_address(&mut self) -> Option<u8> {
-            for i in 1..127 {
-                if (self.addresses_in_use[i / 32] >> (i % 32)) == 0 {
-                    self.addresses_in_use[i / 32] |= 1 << (i % 32);
-                    return Some(i as u8);
-                }
+        pub async fn enumerate_root_device(&self) -> UsbDevice {
+            self.regs.usb_muxing().modify(|_, w| {
+                w.to_phy().set_bit();
+                w.softcon().set_bit()
+            });
+            self.regs.usb_pwr().modify(|_, w| {
+                w.vbus_detect().set_bit();
+                w.vbus_detect_override_en().set_bit()
+            });
+            self.regs.main_ctrl().modify(|_, w| {
+                w.sim_timing().clear_bit();
+                w.host_ndevice().set_bit();
+                w.controller_en().set_bit()
+            });
+            self.regs.sie_ctrl().write(|w| {
+                w.pulldown_en().set_bit();
+                w.vbus_en().set_bit();
+                w.keep_alive_en().set_bit();
+                w.sof_en().set_bit()
+            });
+
+            unsafe {
+                pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
+                pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
             }
-            None
+
+            self.regs.inte().write(|w| w.host_conn_dis().set_bit());
+
+            let f = UsbFuture::new(self.waker);
+
+            f.await;
+
+            let status = self.regs.sie_status().read();
+            defmt::trace!("sie_status=0x{:x}", status.bits());
+            let speed = match status.speed().bits() {
+                1 => {
+                    defmt::println!("LS detected");
+                    UsbSpeed::Low1_1
+                }
+                2 => {
+                    defmt::println!("FS detected");
+                    UsbSpeed::Full12
+                }
+                _ => UsbSpeed::Low1_1,
+            };
+
+            self.regs.sie_ctrl().modify(|_, w| w.reset_bus().set_bit());
+
+            Mono::delay(50.millis()).await;
+
+            self.regs
+                .sie_ctrl()
+                .modify(|_, w| w.reset_bus().clear_bit());
+
+            // Read prefix of device descriptor
+            let mut descriptors = [0u8; 18];
+            let rc = self
+                .control_transfer_in(
+                    0,
+                    8,
+                    SetupPacket {
+                        bmRequestType: DEVICE_TO_HOST,
+                        bRequest: GET_DESCRIPTOR,
+                        wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
+                        wIndex: 0,
+                        wLength: 8,
+                    },
+                    &mut descriptors,
+                )
+                .await;
+
+            let packet_size_ep0 = if rc.is_ok() { descriptors[7] } else { 8 };
+
+            // Set address (root device always gets "1")
+            let _ = self
+                .control_transfer_out(
+                    0,
+                    packet_size_ep0,
+                    SetupPacket {
+                        bmRequestType: HOST_TO_DEVICE,
+                        bRequest: SET_ADDRESS,
+                        wValue: 1,
+                        wIndex: 0,
+                        wLength: 0,
+                    },
+                    &descriptors,
+                )
+                .await;
+
+            // Fetch rest of device descriptor
+            let mut vid = 0;
+            let mut pid = 0;
+            let rc = self
+                .control_transfer_in(
+                    1,
+                    packet_size_ep0,
+                    SetupPacket {
+                        bmRequestType: DEVICE_TO_HOST,
+                        bRequest: GET_DESCRIPTOR,
+                        wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
+                        wIndex: 0,
+                        wLength: 18,
+                    },
+                    &mut descriptors,
+                )
+                .await;
+            if let Ok(_sz) = rc {
+                vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
+                pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
+            } else {
+                defmt::println!("fetched {:?}", rc);
+            }
+
+            UsbDevice {
+                address: 1,
+                packet_size_ep0,
+                vid,
+                pid,
+                speed,
+            }
         }
 
         async fn control_transfer_inner(
@@ -563,7 +697,6 @@ mod app {
             setup: SetupPacket,
             packetiser: &mut impl Packetiser,
             depacketiser: &mut impl Depacketiser,
-            f: impl Future<Output = pac::usbctrl_regs::sie_status::R> + Copy,
         ) -> Result<(), UsbError> {
             let packets = setup.wLength / (packet_size as u16) + 1;
             defmt::info!("we'll need {} packets", packets);
@@ -668,6 +801,8 @@ mod app {
                         .modify(|_, w| w.start_trans().set_bit());
                 }
 
+                let f = UsbFuture::new(self.waker);
+
                 let status = f.await;
 
                 defmt::trace!("awaited");
@@ -743,15 +878,12 @@ mod app {
             Ok(())
         }
 
-        pub async fn control_transfer_in<
-            F: Future<Output = pac::usbctrl_regs::sie_status::R> + Copy,
-        >(
+        pub async fn control_transfer_in(
             &self,
             address: u8,
             packet_size: u8,
             setup: SetupPacket,
             buf: &mut [u8],
-            f: F,
         ) -> Result<usize, UsbError> {
             if buf.len() < setup.wLength as usize {
                 return Err(UsbError::BufferTooSmall);
@@ -767,22 +899,18 @@ mod app {
                 setup,
                 &mut packetiser,
                 &mut depacketiser,
-                f,
             )
             .await?;
 
             Ok(depacketiser.total())
         }
 
-        pub async fn control_transfer_out<
-            F: Future<Output = pac::usbctrl_regs::sie_status::R> + Copy,
-        >(
+        pub async fn control_transfer_out(
             &self,
             address: u8,
             packet_size: u8,
             setup: SetupPacket,
             buf: &[u8],
-            f: F,
         ) -> Result<(), UsbError> {
             if buf.len() < setup.wLength as usize {
                 return Err(UsbError::BufferTooSmall);
@@ -798,7 +926,6 @@ mod app {
                 setup,
                 &mut packetiser,
                 &mut depacketiser,
-                f,
             )
             .await?;
 
@@ -870,7 +997,7 @@ mod app {
         let mut watchdog =
             rp2040_hal::watchdog::Watchdog::new(device.WATCHDOG);
 
-        let clocks = rp2040_hal::clocks::init_clocks_and_plls(
+        let _clocks = rp2040_hal::clocks::init_clocks_and_plls(
             rp_pico::XOSC_CRYSTAL_FREQ,
             device.XOSC,
             device.CLOCKS,
@@ -882,8 +1009,7 @@ mod app {
         .ok()
         .unwrap();
 
-        let mut timer =
-            rp2040_hal::Timer::new(device.TIMER, &mut resets, &clocks);
+        Mono::start(device.TIMER, &resets);
 
         // The timer doesn't increment if either RP2040 core is under
         // debug, unless the DBGPAUSE bits are cleared, which they
@@ -910,154 +1036,39 @@ mod app {
         );
         */
 
-        let regs = device.USBCTRL_REGS;
-        let dpram = device.USBCTRL_DPRAM;
-
-        resets.reset().modify(|_, w| w.usbctrl().set_bit());
-        resets.reset().modify(|_, w| w.usbctrl().clear_bit());
-
-        regs.usb_muxing().modify(|_, w| {
-            w.to_phy().set_bit();
-            w.softcon().set_bit()
-        });
-        regs.usb_pwr().modify(|_, w| {
-            w.vbus_detect().set_bit();
-            w.vbus_detect_override_en().set_bit()
-        });
-        regs.main_ctrl().modify(|_, w| {
-            w.sim_timing().clear_bit();
-            w.host_ndevice().set_bit();
-            w.controller_en().set_bit()
-        });
-        regs.sie_ctrl().write(|w| {
-            w.pulldown_en().set_bit();
-            w.vbus_en().set_bit();
-            w.keep_alive_en().set_bit();
-            w.sof_en().set_bit()
-        });
-
-        loop {
-            let status = regs.sie_status().read();
-            defmt::trace!("sie_status=0x{:x}", status.bits());
-            match status.speed().bits() {
-                1 => {
-                    defmt::println!("LS detected");
-                    break;
-                }
-                2 => {
-                    defmt::println!("FS detected");
-                    break;
-                }
-                _ => {}
-            }
-            timer.delay_ms(250);
-        }
-
-        regs.sie_ctrl().modify(|_, w| w.reset_bus().set_bit());
-
-        timer.delay_ms(50);
-
-        regs.sie_ctrl().modify(|_, w| w.reset_bus().clear_bit());
-
-        let stack = UsbStack::new(regs, dpram);
-
         usb_task::spawn().unwrap();
 
         (
             Shared {
                 waker: CriticalSectionWakerRegistration::new(),
             },
-            Local { stack },
+            Local {
+                regs: Some(device.USBCTRL_REGS),
+                dpram: Some(device.USBCTRL_DPRAM),
+                resets,
+            },
         )
     }
 
-    #[task(local = [stack], shared = [&waker], priority = 2)]
+    #[task(local = [regs, dpram, resets], shared = [&waker], priority = 2)]
     async fn usb_task(cx: usb_task::Context) {
-        let stack = cx.local.stack;
-        let future = UsbFuture::new(cx.shared.waker);
-        let mut descriptors = [0u8; 64];
-        defmt::trace!("fetching1");
-        let rc = stack
-            .control_transfer_in(
-                0,
-                8,
-                SetupPacket {
-                    bmRequestType: DEVICE_TO_HOST,
-                    bRequest: GET_DESCRIPTOR,
-                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
-                    wIndex: 0,
-                    wLength: 8,
-                },
-                &mut descriptors,
-                future,
-            )
-            .await;
-        let mps0 = if rc.is_ok() {
-            defmt::println!(
-                "Device: len {}, class {}, subclass {}, mps0 {}",
-                descriptors[0],
-                descriptors[4],
-                descriptors[5],
-                descriptors[7]
-            );
-            descriptors[7]
-        } else {
-            defmt::println!("fetched {:?}", rc);
-            8
-        };
+        let stack = UsbStack::new(
+            cx.local.regs.take().unwrap(),
+            cx.local.dpram.take().unwrap(),
+            cx.local.resets,
+            cx.shared.waker,
+        );
 
-        defmt::trace!("setting");
-        let future = UsbFuture::new(cx.shared.waker);
-        let rc = stack
-            .control_transfer_out(
-                0,
-                mps0,
-                SetupPacket {
-                    bmRequestType: HOST_TO_DEVICE,
-                    bRequest: SET_ADDRESS,
-                    wValue: 1,
-                    wIndex: 0,
-                    wLength: 0,
-                },
-                &descriptors,
-                future,
-            )
-            .await;
-        defmt::println!("fetched {:?}", rc);
+        let device = stack.enumerate_root_device().await;
 
-        defmt::trace!("fetching3");
-        let future = UsbFuture::new(cx.shared.waker);
-        let mut vid = 0;
-        let mut pid = 0;
-        let rc = stack
-            .control_transfer_in(
-                1,
-                mps0,
-                SetupPacket {
-                    bmRequestType: DEVICE_TO_HOST,
-                    bRequest: GET_DESCRIPTOR,
-                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
-                    wIndex: 0,
-                    wLength: 18,
-                },
-                &mut descriptors,
-                future,
-            )
-            .await;
-        if let Ok(_sz) = rc {
-            vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
-            pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
-            defmt::println!("VID:PID = {:04x}:{:04x}", vid, pid);
-        } else {
-            defmt::println!("fetched {:?}", rc);
-        }
+        defmt::println!("Got root device {:?}", device);
 
         defmt::trace!("fetching2");
-        let future = UsbFuture::new(cx.shared.waker);
+        let mut descriptors = [0u8; 64];
         let rc = stack
             .control_transfer_in(
                 1,
-                mps0,
+                device.packet_size_ep0,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
                     bRequest: GET_DESCRIPTOR,
@@ -1066,7 +1077,6 @@ mod app {
                     wLength: 39,
                 },
                 &mut descriptors,
-                future,
             )
             .await;
         if let Ok(sz) = rc {
@@ -1075,14 +1085,13 @@ mod app {
             defmt::println!("fetched {:?}", rc);
         }
 
-        if vid == 0x0B95 && pid == 0x7720 {
+        if device.vid == 0x0B95 && device.pid == 0x7720 {
             // ASIX AX88772
             defmt::trace!("fetching4");
-            let future = UsbFuture::new(cx.shared.waker);
             let rc = stack
                 .control_transfer_in(
                     1,
-                    mps0,
+                    device.packet_size_ep0,
                     SetupPacket {
                         bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
                         bRequest: 0x13,
@@ -1090,8 +1099,7 @@ mod app {
                         wIndex: 0,
                         wLength: 6,
                     },
-                &mut descriptors,
-                    future,
+                    &mut descriptors,
                 )
                 .await;
             if let Ok(_sz) = rc {
