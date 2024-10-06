@@ -1027,6 +1027,8 @@ mod app {
 
         defmt::trace!("fetching3");
         let future = UsbFuture::new(cx.shared.waker);
+        let mut vid = 0;
+        let mut pid = 0;
         let rc = stack
             .control_transfer_in(
                 1,
@@ -1043,11 +1045,9 @@ mod app {
             )
             .await;
         if let Ok(_sz) = rc {
-            defmt::println!(
-                "VID:PID = {:04x}:{:04x}",
-                u16::from_le_bytes([descriptors[8], descriptors[9]]),
-                u16::from_le_bytes([descriptors[10], descriptors[11]])
-            );
+            vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
+            pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
+            defmt::println!("VID:PID = {:04x}:{:04x}", vid, pid);
         } else {
             defmt::println!("fetched {:?}", rc);
         }
@@ -1073,6 +1073,32 @@ mod app {
             show_descriptors(&descriptors[0..sz]);
         } else {
             defmt::println!("fetched {:?}", rc);
+        }
+
+        if vid == 0x0B95 && pid == 0x7720 {
+            // ASIX AX88772
+            defmt::trace!("fetching4");
+            let future = UsbFuture::new(cx.shared.waker);
+            let rc = stack
+                .control_transfer_in(
+                    1,
+                    mps0,
+                    SetupPacket {
+                        bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
+                        bRequest: 0x13,
+                        wValue: 0,
+                        wIndex: 0,
+                        wLength: 6,
+                    },
+                &mut descriptors,
+                    future,
+                )
+                .await;
+            if let Ok(_sz) = rc {
+                defmt::println!("AX88772 MAC {:x}", &descriptors[0..6]);
+            } else {
+                defmt::println!("fetched {:?}", rc);
+            }
         }
     }
 
