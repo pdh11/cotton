@@ -29,6 +29,9 @@ codegen-units = 1
 strip = "symbols"
 
 [dependencies]
+cotton-usb-host = { path = "../../cotton-usb-host", default-features = false, features = [
+  "rp2040",
+] }
 cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features = [
   "smoltcp",
 ] }
