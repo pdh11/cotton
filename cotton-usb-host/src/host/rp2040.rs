@@ -22,12 +22,16 @@ impl UsbStatics {
     pub fn on_irq(&self) {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
-        defmt::println!("IRQ ints={:x} inte={:x}", ints.bits(),
-                        regs.inte().read().bits());
+        defmt::println!(
+            "IRQ ints={:x} inte={:x}",
+            ints.bits(),
+            regs.inte().read().bits()
+        );
         if ints.buff_status().bit() {
             let bs = regs.buff_status().read().bits();
             for i in 1..15 {
                 if (bs & (3 << (i * 2))) != 0 {
+                    defmt::println!("IRQ wakes {}", i);
                     self.pipe_wakers[i].wake();
                 }
             }
@@ -37,8 +41,11 @@ impl UsbStatics {
         unsafe {
             regs.inte().modify(|r, w| w.bits(r.bits() & !bits));
         }
-        defmt::println!("IRQ2 ints={:x} inte={:x}", ints.bits(),
-                        regs.inte().read().bits());
+        defmt::println!(
+            "IRQ2 ints={:x} inte={:x}",
+            ints.bits(),
+            regs.inte().read().bits()
+        );
         self.waker.wake();
     }
 }
@@ -86,11 +93,14 @@ impl<'a> Future for UsbFuture<'a> {
                 intr.bits(),
                 status.bits()
             );
-            regs.inte().modify(|_, w|
-                               w.host_conn_dis().set_bit()
+            regs.inte().modify(|_, w| {
+                w.host_conn_dis()
+                    .set_bit()
                     .stall()
                     .set_bit()
-                               .trans_complete().set_bit());
+                    .trans_complete()
+                    .set_bit()
+            });
             Poll::Pending
         }
     }
@@ -430,42 +440,51 @@ impl<'stack, 'buf> Stream for InterruptEndpoint<'stack, 'buf> {
                     bytes,
                 )
             };
-            dpram.ep_buffer_control((self.pipe.n * 2) as usize)
-                .write(|w|
-                       unsafe {
-                           w.full_0().clear_bit()
-                               .length_0().bits(self.buffer.len() as u16)
-                       }
-                );
+            dpram.ep_buffer_control((self.pipe.n * 2) as usize).write(
+                |w| unsafe {
+                    w.full_0()
+                        .clear_bit()
+                        .length_0()
+                        .bits(self.buffer.len() as u16)
+                },
+            );
 
             cortex_m::asm::delay(12);
 
-            dpram.ep_buffer_control((self.pipe.n * 2) as usize)
-                .write(|w|
-                       unsafe {
-                           w.full_0().clear_bit()
-                               .length_0().bits(self.buffer.len() as u16)
-                               .available_0().set_bit()
-                       }
-                );
+            dpram.ep_buffer_control((self.pipe.n * 2) as usize).write(
+                |w| unsafe {
+                    w.full_0()
+                        .clear_bit()
+                        .length_0()
+                        .bits(self.buffer.len() as u16)
+                        .available_0()
+                        .set_bit()
+                },
+            );
 
             Poll::Ready(Some(bytes))
         } else {
             let regs = unsafe { pac::USBCTRL_REGS::steal() };
             regs.inte().modify(|_, w| w.buff_status().set_bit());
             regs.int_ep_ctrl().modify(|r, w| unsafe {
-                w.bits(r.bits() | (1<<self.pipe.n))
+                w.bits(r.bits() | (1 << self.pipe.n))
             });
-            defmt::println!("IE pending inte {:x} iec {:x} ecr {:x}",
-                            regs.inte().read().bits(),
-                            regs.int_ep_ctrl().read().bits(),
-                            dpram.ep_control((self.pipe.n * 2) as usize - 2).read().bits(),
+            defmt::println!(
+                "IE pending inte {:x} iec {:x} ecr {:x} epbc {:x}",
+                regs.inte().read().bits(),
+                regs.int_ep_ctrl().read().bits(),
+                dpram
+                    .ep_control((self.pipe.n * 2) as usize - 2)
+                    .read()
+                    .bits(),
+                dpram
+                    .ep_buffer_control((self.pipe.n * 2) as usize)
+                    .read()
+                    .bits(),
             );
+            regs.ep_status_stall_nak()
+                .write(|w| unsafe { w.bits(3 << (self.pipe.n * 2)) });
 
-            unsafe {
-                pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
-                pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
-            }
             Poll::Pending
         }
     }
@@ -557,10 +576,10 @@ impl<'a> UsbStack<'a> {
             _ => UsbSpeed::Low1_1,
         };
 
-        unsafe {
-            self.regs.sie_status().modify(|_, w| w.speed().bits(3))
-        };
-        self.regs.inte().modify(|_, w| w.host_conn_dis().clear_bit());
+        unsafe { self.regs.sie_status().modify(|_, w| w.speed().bits(3)) };
+        self.regs
+            .inte()
+            .modify(|_, w| w.host_conn_dis().clear_bit());
 
         self.regs.sie_ctrl().modify(|_, w| w.reset_bus().set_bit());
 
@@ -696,9 +715,7 @@ impl<'a> UsbStack<'a> {
             self.regs
                 .sie_status()
                 .write(|w| unsafe { w.bits(0xFF00_0000) });
-            self.regs
-                .buff_status()
-                .write(|w| unsafe { w.bits(0x3) });
+            self.regs.buff_status().write(|w| unsafe { w.bits(0x3) });
             self.regs.inte().write(|w| {
                 if packets > 2 {
                     w.buff_status().set_bit();
@@ -718,11 +735,6 @@ impl<'a> UsbStack<'a> {
                     .error_crc()
                     .set_bit()
             });
-
-            unsafe {
-                pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
-                pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
-            }
 
             defmt::info!(
                 "Initial bcr {:x}",
@@ -757,9 +769,7 @@ impl<'a> UsbStack<'a> {
 
             defmt::trace!("awaited");
 
-            self.regs
-                .buff_status()
-                .write(|w| unsafe { w.bits(0x3) });
+            self.regs.buff_status().write(|w| unsafe { w.bits(0x3) });
 
             self.regs.inte().write(|w| {
                 w.trans_complete()
@@ -910,39 +920,54 @@ impl<'a> UsbStack<'a> {
             // @todo set up ep_control
             let n = pipe.n;
 
-            self.regs.host_addr_endp(n as usize)
-                .write(|w| unsafe { w.address().bits(address)
-                       .endpoint().bits(endpoint)
-                       .intep_dir().clear_bit() // IN
-                });
-
-            self.dpram.ep_control((n*2 - 2) as usize)
+            self.regs
+                .host_addr_endp((n - 1) as usize)
                 .write(|w| unsafe {
-                    w.enable().set_bit()
-                        .interrupt_per_buff().set_bit()
-                        .endpoint_type().interrupt()
-                        .buffer_address().bits(0x200 + (n as u16)*64)
-                        .host_poll_interval().bits(core::cmp::min(interval as u16, 9))
+                    w.address()
+                        .bits(address)
+                        .endpoint()
+                        .bits(endpoint)
+                        .intep_dir()
+                        .clear_bit() // IN
                 });
 
-            self.dpram.ep_buffer_control((n * 2) as usize)
-                .write(|w|
-                       unsafe {
-                           w.full_0().clear_bit()
-                               .length_0().bits(buffer.len() as u16)
-                       }
-                );
+            self.dpram
+                .ep_control((n * 2 - 2) as usize)
+                .write(|w| unsafe {
+                    w.enable()
+                        .set_bit()
+                        .interrupt_per_buff()
+                        .set_bit()
+                        .endpoint_type()
+                        .interrupt()
+                        .buffer_address()
+                        .bits(0x200 + (n as u16) * 64)
+                        .host_poll_interval()
+                        .bits(core::cmp::min(interval as u16, 9))
+                });
+
+            self.dpram
+                .ep_buffer_control((n * 2) as usize)
+                .write(|w| unsafe {
+                    w.full_0().clear_bit().length_0().bits(buffer.len() as u16)
+                });
 
             cortex_m::asm::delay(12);
 
-            self.dpram.ep_buffer_control((n * 2) as usize)
-                .write(|w|
-                       unsafe {
-                           w.full_0().clear_bit()
-                               .length_0().bits(buffer.len() as u16)
-                               .available_0().set_bit()
-                       }
-                );
+            self.dpram
+                .ep_buffer_control((n * 2) as usize)
+                .write(|w| unsafe {
+                    w.full_0()
+                        .clear_bit()
+                        .length_0()
+                        .bits(buffer.len() as u16)
+                        .pid_0()
+                        .clear_bit()
+                        .last_0()
+                        .set_bit()
+                        .available_0()
+                        .set_bit()
+                });
             InterruptEndpoint {
                 pipe,
                 waker: &self.statics.pipe_wakers[n as usize],

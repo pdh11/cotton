@@ -165,6 +165,10 @@ pub const INTERFACE_DESCRIPTOR: u8 = 4;
 pub const ENDPOINT_DESCRIPTOR: u8 = 5;
 pub const HUB_DESCRIPTOR: u8 = 0x29; // USB 2.0 table 11-13
 
+// Values for SET_FEATURE for hubs (USB 2.0 table 11-17)
+pub const PORT_RESET: u16 = 4;
+pub const PORT_POWER: u16 = 8;
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -250,10 +254,8 @@ pub fn show_descriptors(buf: &[u8]) {
             HUB_DESCRIPTOR => {
                 debug::println!(
                     "  {:?}",
-                    HubDescriptor::try_from_bytes(
-                        &buf[index..index + dlen]
-                    )
-                    .unwrap()
+                    HubDescriptor::try_from_bytes(&buf[index..index + dlen])
+                        .unwrap()
                 );
             }
             _ => {
