@@ -154,11 +154,21 @@ pub enum UsbError {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum UsbSpeed {
     Low1_1,
     Full12,
     High480,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum EndpointType {
+    Control = 0,
+    Isochronous = 1,
+    Bulk = 2,
+    Interrupt = 3,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

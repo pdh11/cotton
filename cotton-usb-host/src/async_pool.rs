@@ -4,30 +4,47 @@ use core::cell::UnsafeCell;
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
+#[cfg(feature = "std")]
+use std::fmt::{self, Display};
 
-#[derive(Default)]
-pub struct Pool<const N: usize> {
+pub struct Pool {
+    total: u8,
+    // @todo This can probably just be a RefCell<u32>
     allocated: UnsafeCell<u32>,
     waker: RefCell<Option<Waker>>,
 }
 
-pub struct Pooled<'a, const N: usize> {
-    n: u8,
-    pool: &'a Pool<N>,
+pub struct Pooled<'a> {
+    pub n: u8,
+    pool: &'a Pool,
 }
 
-impl<'a, const N: usize> Drop for Pooled<'a, N> {
+#[cfg(feature = "std")]
+impl<'a> Display for Pooled<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Pooled({})", self.n)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for Pooled<'a> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "Pooled({})", self.n);
+    }
+}
+
+impl<'a> Drop for Pooled<'a> {
     fn drop(&mut self) {
         self.pool.dealloc_internal(self.n);
     }
 }
 
-pub struct PoolFuture<'a, const N: usize> {
-    pool: &'a Pool<N>,
+pub struct PoolFuture<'a> {
+    pool: &'a Pool,
 }
 
-impl<'a, const N: usize> Future for PoolFuture<'a, N> {
-    type Output = Pooled<'a, N>;
+impl<'a> Future for PoolFuture<'a> {
+    type Output = Pooled<'a>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.pool.waker.replace(Some(cx.waker().clone()));
@@ -40,22 +57,24 @@ impl<'a, const N: usize> Future for PoolFuture<'a, N> {
     }
 }
 
-impl<const N: usize> Pool<N> {
-    pub fn new() -> Self {
-        assert!(N <= 32);
+impl Pool {
+    pub fn new(total: u8) -> Self {
+        assert!(total <= 32);
         Self {
+            total,
             allocated: UnsafeCell::new(0),
             waker: None.into(),
         }
     }
 
     fn alloc_internal(&self) -> Option<u8> {
+        // @todo We're always in thread context here, probably don't need CS
         let n = critical_section::with(|_| unsafe {
             let bits: u32 = *self.allocated.get();
-            for i in 0..N {
+            for i in 0..self.total {
                 if (bits & (1 << i)) == 0 {
                     *self.allocated.get() = bits | 1 << i;
-                    return Some(i as u8);
+                    return Some(i);
                 }
             }
             None
@@ -80,7 +99,7 @@ impl<const N: usize> Pool<N> {
         }
     }
 
-    pub async fn alloc(&self) -> Pooled<N> {
+    pub async fn alloc(&self) -> Pooled {
         let fut = PoolFuture { pool: self };
         fut.await
     }

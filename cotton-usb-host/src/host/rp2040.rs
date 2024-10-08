@@ -1,5 +1,5 @@
 use crate::async_pool::Pool;
-use crate::types::{SetupPacket, UsbDevice, UsbError, UsbSpeed};
+use crate::types::{EndpointType, SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use crate::types::{
     DEVICE_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR, HOST_TO_DEVICE,
     SET_ADDRESS,
@@ -7,8 +7,42 @@ use crate::types::{
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+use futures::stream::Stream;
 use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
+
+pub struct UsbStatics {
+    waker: CriticalSectionWakerRegistration,
+    pipe_wakers: [CriticalSectionWakerRegistration; 16],
+}
+
+impl UsbStatics {
+    pub fn on_irq(&self) {
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let ints = regs.ints().read();
+        if ints.buff_status().bit() {
+            let bs = regs.buff_status().read().bits();
+            for i in 1..15 {
+                if (bs & (3 << (i * 2))) != 0 {
+                    self.pipe_wakers[i].wake();
+                }
+            }
+            regs.buff_status().write(|w| unsafe { w.bits(0xFFFF_FFFC) });
+        }
+        self.waker.wake();
+    }
+}
+
+impl UsbStatics {
+    const W: CriticalSectionWakerRegistration =
+        CriticalSectionWakerRegistration::new();
+    pub const fn new() -> Self {
+        Self {
+            waker: CriticalSectionWakerRegistration::new(),
+            pipe_wakers: [Self::W; 16],
+        }
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct UsbFuture<'a> {
@@ -348,13 +382,47 @@ impl Depacketiser for OutDepacketiser {
     }
 }
 
-type Pipe<'a> = crate::async_pool::Pooled<'a, 1>;
+type Pipe<'a> = crate::async_pool::Pooled<'a>;
+
+struct InterruptEndpoint<'stack, 'buf> {
+    pipe: Pipe<'stack>,
+    waker: &'stack CriticalSectionWakerRegistration,
+    buffer: &'buf mut [u8],
+}
+
+impl<'stack, 'buf> Stream for InterruptEndpoint<'stack, 'buf> {
+    type Item = ();
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.waker.register(cx.waker());
+
+        let regs = unsafe { pac::USBCTRL_DPRAM::steal() };
+        let bc = regs.ep_buffer_control((self.pipe.n * 2) as usize).read();
+        if bc.full_0().bit() {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    (0x5010_0200 + (self.pipe.n as u32) * 64) as *const u8,
+                    &mut self.buffer[0] as *mut u8,
+                    bc.length_0().bits() as usize,
+                )
+            };
+            Poll::Ready(Some(()))
+        } else {
+            // @todo enable interrupt
+            Poll::Pending
+        }
+    }
+}
 
 pub struct UsbStack<'a> {
     regs: pac::USBCTRL_REGS,
     dpram: pac::USBCTRL_DPRAM,
-    waker: &'a CriticalSectionWakerRegistration,
-    control_pipes: Pool<1>,
+    statics: &'a UsbStatics,
+    control_pipes: Pool,
+    bulk_pipes: Pool,
 }
 
 impl<'a> UsbStack<'a> {
@@ -362,7 +430,7 @@ impl<'a> UsbStack<'a> {
         regs: pac::USBCTRL_REGS,
         dpram: pac::USBCTRL_DPRAM,
         resets: &mut pac::RESETS,
-        waker: &'a CriticalSectionWakerRegistration,
+        statics: &'a UsbStatics,
     ) -> Self {
         resets.reset().modify(|_, w| w.usbctrl().set_bit());
         resets.reset().modify(|_, w| w.usbctrl().clear_bit());
@@ -370,13 +438,18 @@ impl<'a> UsbStack<'a> {
         Self {
             regs,
             dpram,
-            waker,
-            control_pipes: Pool::new(),
+            statics,
+            control_pipes: Pool::new(1),
+            bulk_pipes: Pool::new(15),
         }
     }
 
-    async fn alloc_pipe(&self) -> Pipe {
-        self.control_pipes.alloc().await
+    async fn alloc_pipe(&self, endpoint_type: EndpointType) -> Pipe {
+        if endpoint_type == EndpointType::Control {
+            self.control_pipes.alloc().await
+        } else {
+            self.bulk_pipes.alloc().await
+        }
     }
 
     pub async fn enumerate_root_device(
@@ -410,7 +483,7 @@ impl<'a> UsbStack<'a> {
 
         self.regs.inte().write(|w| w.host_conn_dis().set_bit());
 
-        let f = UsbFuture::new(self.waker);
+        let f = UsbFuture::new(&self.statics.waker);
 
         f.await;
 
@@ -615,7 +688,7 @@ impl<'a> UsbStack<'a> {
                     .modify(|_, w| w.start_trans().set_bit());
             }
 
-            let f = UsbFuture::new(self.waker);
+            let f = UsbFuture::new(&self.statics.waker);
 
             let status = f.await;
 
@@ -703,7 +776,7 @@ impl<'a> UsbStack<'a> {
             return Err(UsbError::BufferTooSmall);
         }
 
-        let _pipe = self.alloc_pipe().await;
+        let _pipe = self.alloc_pipe(EndpointType::Control).await;
 
         let mut packetiser =
             InPacketiser::new(setup.wLength, packet_size as u16);
@@ -732,7 +805,7 @@ impl<'a> UsbStack<'a> {
             return Err(UsbError::BufferTooSmall);
         }
 
-        let _pipe = self.alloc_pipe().await;
+        let _pipe = self.alloc_pipe(EndpointType::Control).await;
 
         let mut packetiser =
             OutPacketiser::new(setup.wLength, packet_size as u16, buf);
@@ -749,4 +822,27 @@ impl<'a> UsbStack<'a> {
 
         Ok(())
     }
+
+    /*
+        pub fn interrupt_endpoint_in(
+            &self,
+            address: u8,
+            endpoint: u8,
+            max_packet_size: u16,
+            interval: u8,
+            buffer: &mut [u8],
+        ) -> impl Stream<Item = ()> {
+            let pipe = self.alloc_pipe(EndpointType::Interrupt).await;
+
+            debug::println!("interrupt_endpoint got {:?}", pipe);
+
+            // @todo set up ep_control
+
+            InterruptEndpoint {
+                pipe,
+                waker: &self.statics.pipe_wakers[pipe.n],
+                buffer,
+            }
+        }
+    */
 }

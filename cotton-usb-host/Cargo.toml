@@ -17,6 +17,7 @@ all-features = true
 skip_feature_sets = [["rp2040"], ["defmt"]]
 
 [dependencies]
+futures = { version = "0.3", default-features = false }
 defmt = { version = "0.3.8", optional = true }
 rp2040-pac = { version = "0.6", optional = true }
 cortex-m = { version = "0.7.7", optional = true }
@@ -28,6 +29,7 @@ critical-section = "1.1"
 default = ["std"]
 std = [
     "critical-section/std",
+    "futures/std",
 ]
 rp2040 = [
   "defmt",

@@ -8,14 +8,13 @@ use rp_pico as _; // includes boot2
 
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
-    use cotton_usb_host::host::rp2040::UsbStack;
+    use cotton_usb_host::host::rp2040::{UsbStack, UsbStatics};
     use cotton_usb_host::types::SetupPacket;
     use cotton_usb_host::types::{
         show_descriptors, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
         GET_DESCRIPTOR, VENDOR_REQUEST,
     };
     use rp_pico::pac;
-    use rtic_common::waker_registration::CriticalSectionWakerRegistration;
     use rtic_monotonics::rp2040::prelude::*;
 
     #[inline(never)]
@@ -29,7 +28,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        waker: CriticalSectionWakerRegistration,
+        statics: UsbStatics,
     }
 
     #[local]
@@ -101,7 +100,7 @@ mod app {
 
         (
             Shared {
-                waker: CriticalSectionWakerRegistration::new(),
+                statics: UsbStatics::new(),
             },
             Local {
                 regs: Some(device.USBCTRL_REGS),
@@ -111,13 +110,13 @@ mod app {
         )
     }
 
-    #[task(local = [regs, dpram, resets], shared = [&waker], priority = 2)]
+    #[task(local = [regs, dpram, resets], shared = [&statics], priority = 2)]
     async fn usb_task(cx: usb_task::Context) {
         let stack = UsbStack::new(
             cx.local.regs.take().unwrap(),
             cx.local.dpram.take().unwrap(),
             cx.local.resets,
-            cx.shared.waker,
+            cx.shared.statics,
         );
 
         let device = stack.enumerate_root_device(Mono).await;
@@ -169,11 +168,13 @@ mod app {
                 defmt::println!("fetched {:?}", rc);
             }
         }
+
+        // let _ep = stack.interrupt_endpoint_in(1, 3, 8, 0xFF, descriptors);
     }
 
-    #[task(binds = USBCTRL_IRQ, shared = [&waker], priority = 2)]
+    #[task(binds = USBCTRL_IRQ, shared = [&statics], priority = 2)]
     fn usb_interrupt(cx: usb_interrupt::Context) {
         pac::NVIC::mask(pac::Interrupt::USBCTRL_IRQ);
-        cx.shared.waker.wake();
+        cx.shared.statics.on_irq();
     }
 }
