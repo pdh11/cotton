@@ -111,6 +111,32 @@ impl EndpointDescriptor {
     }
 }
 
+#[repr(C)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[allow(non_snake_case)] // These names are from USB 2.0 table 11-13
+pub struct HubDescriptor {
+    bDescLength: u8,
+    bDescriptorType: u8,
+    bNbrPorts: u8,
+    wHubCharacteristics: [u8; 2],
+    bPwrOn2PwrGood: u8,
+    bHubContrCurrent: u8,
+    DeviceRemovable: u8, // NB only for hubs up to 8 (true) ports
+    PortPwrCtrlMask: u8, // NB only for hubs up to 8 (true) ports
+}
+
+impl HubDescriptor {
+    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() >= core::mem::size_of::<Self>() {
+            Some(unsafe { *(bytes as *const [u8] as *const Self) })
+        } else {
+            None
+        }
+    }
+}
+
 // For request_type (USB 2.0 table 9-2)
 pub const DEVICE_TO_HOST: u8 = 0x80;
 pub const HOST_TO_DEVICE: u8 = 0;
@@ -137,6 +163,7 @@ pub const CONFIGURATION_DESCRIPTOR: u8 = 2;
 pub const STRING_DESCRIPTOR: u8 = 3;
 pub const INTERFACE_DESCRIPTOR: u8 = 4;
 pub const ENDPOINT_DESCRIPTOR: u8 = 5;
+pub const HUB_DESCRIPTOR: u8 = 0x29; // USB 2.0 table 11-13
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
@@ -215,6 +242,15 @@ pub fn show_descriptors(buf: &[u8]) {
                 debug::println!(
                     "  {:?}",
                     EndpointDescriptor::try_from_bytes(
+                        &buf[index..index + dlen]
+                    )
+                    .unwrap()
+                );
+            }
+            HUB_DESCRIPTOR => {
+                debug::println!(
+                    "  {:?}",
+                    HubDescriptor::try_from_bytes(
                         &buf[index..index + dlen]
                     )
                     .unwrap()

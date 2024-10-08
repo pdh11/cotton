@@ -29,7 +29,7 @@ TODO before merge:
 
  - [ ] Unit tests
  - [ ] At least one real example (MSC?)
- - [ ] Interlocking to avoid contending on pipe 0
+ - [x] Interlocking to avoid contending on pipe 0
  - [ ] STM32?
 
 [^1]: The documentation describes this as "USB 2.0 LS and FS" (1.1 and

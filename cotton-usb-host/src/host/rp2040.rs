@@ -22,6 +22,8 @@ impl UsbStatics {
     pub fn on_irq(&self) {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
+        defmt::println!("IRQ ints={:x} inte={:x}", ints.bits(),
+                        regs.inte().read().bits());
         if ints.buff_status().bit() {
             let bs = regs.buff_status().read().bits();
             for i in 1..15 {
@@ -31,6 +33,12 @@ impl UsbStatics {
             }
             regs.buff_status().write(|w| unsafe { w.bits(0xFFFF_FFFC) });
         }
+        let bits = regs.ints().read().bits();
+        unsafe {
+            regs.inte().modify(|r, w| w.bits(r.bits() & !bits));
+        }
+        defmt::println!("IRQ2 ints={:x} inte={:x}", ints.bits(),
+                        regs.inte().read().bits());
         self.waker.wake();
     }
 }
@@ -67,17 +75,22 @@ impl<'a> Future for UsbFuture<'a> {
 
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
-        let ints = regs.ints().read();
-        if ints.bits() != 0 {
+        let intr = regs.intr().read();
+        if (intr.bits() & 0x409) != 0 {
             defmt::info!("ready {:x}", status.bits());
             regs.sie_status().write(|w| unsafe { w.bits(0xFF04_0000) });
             Poll::Ready(status)
         } else {
             defmt::trace!(
-                "pending ints={:x} st={:x}",
-                ints.bits(),
+                "pending intr={:x} st={:x}",
+                intr.bits(),
                 status.bits()
             );
+            regs.inte().modify(|_, w|
+                               w.host_conn_dis().set_bit()
+                    .stall()
+                    .set_bit()
+                               .trans_complete().set_bit());
             Poll::Pending
         }
     }
@@ -131,6 +144,7 @@ impl Packetiser for InPacketiser {
                 if !val.available_0().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
                         self.remain -= this_packet;
+                        defmt::println!("Prepared {}-byte space", this_packet);
                         reg.modify(|_, w| {
                             w.full_0().clear_bit();
                             w.pid_0().set_bit();
@@ -152,6 +166,7 @@ impl Packetiser for InPacketiser {
                 if !val.available_1().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
                         self.remain -= this_packet;
+                        defmt::println!("Prepared {}-byte space", this_packet);
                         reg.modify(|_, w| {
                             w.full_1().clear_bit();
                             w.pid_1().clear_bit();
@@ -312,6 +327,7 @@ impl<'a> Depacketiser for InDepacketiser<'a> {
         match self.next_retire {
             0 => {
                 if val.full_0().bit() {
+                    defmt::println!("Got {} bytes", val.length_0().bits());
                     let this_packet = core::cmp::min(
                         self.remain,
                         val.length_0().bits() as usize,
@@ -333,6 +349,7 @@ impl<'a> Depacketiser for InDepacketiser<'a> {
             }
             _ => {
                 if val.full_1().bit() {
+                    defmt::println!("Got {} bytes", val.length_1().bits());
                     let this_packet = core::cmp::min(
                         self.remain,
                         val.length_1().bits() as usize,
@@ -401,9 +418,10 @@ impl<'stack, 'buf> Stream for InterruptEndpoint<'stack, 'buf> {
     ) -> Poll<Option<Self::Item>> {
         self.waker.register(cx.waker());
 
-        let regs = unsafe { pac::USBCTRL_DPRAM::steal() };
-        let bc = regs.ep_buffer_control((self.pipe.n * 2) as usize).read();
+        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        let bc = dpram.ep_buffer_control((self.pipe.n * 2) as usize).read();
         if bc.full_0().bit() {
+            defmt::println!("IE ready");
             let bytes = bc.length_0().bits() as usize;
             unsafe {
                 core::ptr::copy_nonoverlapping(
@@ -412,9 +430,42 @@ impl<'stack, 'buf> Stream for InterruptEndpoint<'stack, 'buf> {
                     bytes,
                 )
             };
+            dpram.ep_buffer_control((self.pipe.n * 2) as usize)
+                .write(|w|
+                       unsafe {
+                           w.full_0().clear_bit()
+                               .length_0().bits(self.buffer.len() as u16)
+                       }
+                );
+
+            cortex_m::asm::delay(12);
+
+            dpram.ep_buffer_control((self.pipe.n * 2) as usize)
+                .write(|w|
+                       unsafe {
+                           w.full_0().clear_bit()
+                               .length_0().bits(self.buffer.len() as u16)
+                               .available_0().set_bit()
+                       }
+                );
+
             Poll::Ready(Some(bytes))
         } else {
-            // @todo enable interrupt
+            let regs = unsafe { pac::USBCTRL_REGS::steal() };
+            regs.inte().modify(|_, w| w.buff_status().set_bit());
+            regs.int_ep_ctrl().modify(|r, w| unsafe {
+                w.bits(r.bits() | (1<<self.pipe.n))
+            });
+            defmt::println!("IE pending inte {:x} iec {:x} ecr {:x}",
+                            regs.inte().read().bits(),
+                            regs.int_ep_ctrl().read().bits(),
+                            dpram.ep_control((self.pipe.n * 2) as usize - 2).read().bits(),
+            );
+
+            unsafe {
+                pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
+                pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
+            }
             Poll::Pending
         }
     }
@@ -451,7 +502,9 @@ impl<'a> UsbStack<'a> {
         if endpoint_type == EndpointType::Control {
             self.control_pipes.alloc().await
         } else {
-            self.bulk_pipes.alloc().await
+            let mut p = self.bulk_pipes.alloc().await;
+            p.n += 1;
+            p
         }
     }
 
@@ -504,6 +557,11 @@ impl<'a> UsbStack<'a> {
             _ => UsbSpeed::Low1_1,
         };
 
+        unsafe {
+            self.regs.sie_status().modify(|_, w| w.speed().bits(3))
+        };
+        self.regs.inte().modify(|_, w| w.host_conn_dis().clear_bit());
+
         self.regs.sie_ctrl().modify(|_, w| w.reset_bus().set_bit());
 
         delay.delay_ms(50).await;
@@ -512,12 +570,14 @@ impl<'a> UsbStack<'a> {
             .sie_ctrl()
             .modify(|_, w| w.reset_bus().clear_bit());
 
+        delay.delay_ms(10).await;
+
         // Read prefix of device descriptor
         let mut descriptors = [0u8; 18];
         let rc = self
             .control_transfer_in(
                 0,
-                8,
+                64,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
                     bRequest: GET_DESCRIPTOR,
@@ -568,7 +628,7 @@ impl<'a> UsbStack<'a> {
             vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
             pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
         } else {
-            defmt::println!("fetched {:?}", rc);
+            defmt::println!("Dtor fetch 2 {:?}", rc);
         }
 
         UsbDevice {
@@ -638,7 +698,7 @@ impl<'a> UsbStack<'a> {
                 .write(|w| unsafe { w.bits(0xFF00_0000) });
             self.regs
                 .buff_status()
-                .write(|w| unsafe { w.bits(0xFFFF_FFFF) });
+                .write(|w| unsafe { w.bits(0x3) });
             self.regs.inte().write(|w| {
                 if packets > 2 {
                     w.buff_status().set_bit();
@@ -696,6 +756,10 @@ impl<'a> UsbStack<'a> {
             let status = f.await;
 
             defmt::trace!("awaited");
+
+            self.regs
+                .buff_status()
+                .write(|w| unsafe { w.bits(0x3) });
 
             self.regs.inte().write(|w| {
                 w.trans_complete()
@@ -828,17 +892,17 @@ impl<'a> UsbStack<'a> {
 
     pub fn interrupt_endpoint_in<'b, 'buf>(
         &'b self,
-        _address: u8,
-        _endpoint: u8,
+        address: u8,
+        endpoint: u8,
         _max_packet_size: u16,
-        _interval: u8,
+        interval: u8,
         buffer: &'buf mut [u8],
     ) -> impl Stream<Item = usize> + 'b
     where
         'a: 'buf,
         'buf: 'b,
     {
-        async {
+        async move {
             let pipe = self.alloc_pipe(EndpointType::Interrupt).await;
 
             debug::println!("interrupt_endpoint got {:?}", pipe);
@@ -846,6 +910,39 @@ impl<'a> UsbStack<'a> {
             // @todo set up ep_control
             let n = pipe.n;
 
+            self.regs.host_addr_endp(n as usize)
+                .write(|w| unsafe { w.address().bits(address)
+                       .endpoint().bits(endpoint)
+                       .intep_dir().clear_bit() // IN
+                });
+
+            self.dpram.ep_control((n*2 - 2) as usize)
+                .write(|w| unsafe {
+                    w.enable().set_bit()
+                        .interrupt_per_buff().set_bit()
+                        .endpoint_type().interrupt()
+                        .buffer_address().bits(0x200 + (n as u16)*64)
+                        .host_poll_interval().bits(core::cmp::min(interval as u16, 9))
+                });
+
+            self.dpram.ep_buffer_control((n * 2) as usize)
+                .write(|w|
+                       unsafe {
+                           w.full_0().clear_bit()
+                               .length_0().bits(buffer.len() as u16)
+                       }
+                );
+
+            cortex_m::asm::delay(12);
+
+            self.dpram.ep_buffer_control((n * 2) as usize)
+                .write(|w|
+                       unsafe {
+                           w.full_0().clear_bit()
+                               .length_0().bits(buffer.len() as u16)
+                               .available_0().set_bit()
+                       }
+                );
             InterruptEndpoint {
                 pipe,
                 waker: &self.statics.pipe_wakers[n as usize],
