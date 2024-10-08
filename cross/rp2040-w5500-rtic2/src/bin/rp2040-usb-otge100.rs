@@ -8,12 +8,14 @@ use rp_pico as _; // includes boot2
 
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
+    use core::pin::pin;
     use cotton_usb_host::host::rp2040::{UsbStack, UsbStatics};
     use cotton_usb_host::types::SetupPacket;
     use cotton_usb_host::types::{
         show_descriptors, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
         GET_DESCRIPTOR, VENDOR_REQUEST,
     };
+    use futures_util::StreamExt;
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
 
@@ -167,9 +169,20 @@ mod app {
             } else {
                 defmt::println!("fetched {:?}", rc);
             }
-        }
+        } else {
+            // @todo Hack!
+            let mut ep = pin!(stack.interrupt_endpoint_in(
+                1,
+                3,
+                8,
+                0xFF,
+                &mut descriptors
+            ));
 
-        // let _ep = stack.interrupt_endpoint_in(1, 3, 8, 0xFF, descriptors);
+            while let Some(n) = ep.next().await {
+                defmt::println!("got {} on ep", n);
+            }
+        }
     }
 
     #[task(binds = USBCTRL_IRQ, shared = [&statics], priority = 2)]
