@@ -11,10 +11,11 @@ mod app {
     use core::pin::pin;
     use cotton_usb_host::host::rp2040::{UsbStack, UsbStatics};
     use cotton_usb_host::types::{
-        show_descriptors, CLASS_REQUEST, CLEAR_FEATURE,
-        CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR, GET_STATUS,
-        HOST_TO_DEVICE, HUB_DESCRIPTOR, PORT_POWER, RECIPIENT_OTHER,
-        SET_CONFIGURATION, SET_FEATURE, VENDOR_REQUEST,
+        parse_descriptors, HubDescriptor, ShowDescriptors, CLASS_REQUEST,
+        CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
+        GET_DESCRIPTOR, GET_STATUS, HOST_TO_DEVICE, HUB_DESCRIPTOR,
+        PORT_POWER, RECIPIENT_OTHER, SET_CONFIGURATION, SET_FEATURE,
+        VENDOR_REQUEST,
     };
     use cotton_usb_host::types::{SetupPacket, UsbDevice};
     use futures_util::StreamExt;
@@ -151,8 +152,17 @@ mod app {
         defmt::println!("Get hub dtor: {}", rc);
 
         let ports = if let Ok(sz) = rc {
-            show_descriptors(&descriptors[0..sz]);
-            descriptors[2]
+            defmt::println!("hd {:?}", &descriptors[0..sz]);
+            if sz >= core::mem::size_of::<HubDescriptor>() {
+                defmt::println!(
+                    "{}",
+                    &HubDescriptor::try_from_bytes(&descriptors[0..sz])
+                        .unwrap()
+                );
+                descriptors[2]
+            } else {
+                4
+            }
         } else {
             4
         };
@@ -280,7 +290,7 @@ mod app {
             )
             .await;
         if let Ok(sz) = rc {
-            show_descriptors(&descriptors[0..sz]);
+            parse_descriptors(&descriptors[0..sz], &mut ShowDescriptors);
         } else {
             defmt::println!("fetched {:?}", rc);
         }
