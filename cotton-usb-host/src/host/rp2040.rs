@@ -6,6 +6,7 @@ use crate::types::{
     SET_ADDRESS,
 };
 use core::future::Future;
+use core::ops::Deref;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::future::FutureExt;
@@ -411,16 +412,45 @@ impl Depacketiser for OutDepacketiser {
     }
 }
 
-type Pipe<'a> = crate::async_pool::Pooled<'a>;
-
-struct InterruptEndpoint<'stack, 'buf> {
-    pipe: Pipe<'stack>,
-    waker: &'stack CriticalSectionWakerRegistration,
-    buffer: &'buf mut [u8],
+pub struct InterruptPacket {
+    pub size: u8,
+    pub data: [u8; 64],
 }
 
-impl<'stack, 'buf> Stream for InterruptEndpoint<'stack, 'buf> {
-    type Item = usize;
+impl Default for InterruptPacket {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InterruptPacket {
+    pub const fn new() -> Self {
+        Self {
+            size: 0,
+            data: [0u8; 64],
+        }
+    }
+}
+
+impl Deref for InterruptPacket {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.data[0..(self.size as usize)]
+    }
+}
+
+type Pipe<'a> = crate::async_pool::Pooled<'a>;
+
+struct InterruptEndpoint<'stack> {
+    pipe: Pipe<'stack>,
+    waker: &'stack CriticalSectionWakerRegistration,
+    max_packet_size: u16,
+    data_toggle: bool,
+}
+
+impl<'stack> Stream for InterruptEndpoint<'stack> {
+    type Item = InterruptPacket;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -431,38 +461,50 @@ impl<'stack, 'buf> Stream for InterruptEndpoint<'stack, 'buf> {
         let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
         let bc = dpram.ep_buffer_control((self.pipe.n * 2) as usize).read();
         if bc.full_0().bit() {
-            defmt::println!("IE ready");
-            let bytes = bc.length_0().bits() as usize;
+            let mut result = InterruptPacket::default();
+            result.size = core::cmp::min(bc.length_0().bits(), 64) as u8;
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     (0x5010_0200 + (self.pipe.n as u32) * 64) as *const u8,
-                    &mut self.buffer[0] as *mut u8,
-                    bytes,
+                    &mut result.data[0] as *mut u8,
+                    result.size as usize,
                 )
             };
+            self.data_toggle = !self.data_toggle;
             dpram.ep_buffer_control((self.pipe.n * 2) as usize).write(
                 |w| unsafe {
                     w.full_0()
                         .clear_bit()
+                        .pid_0()
+                        .bit(self.data_toggle)
                         .length_0()
-                        .bits(self.buffer.len() as u16)
+                        .bits(self.max_packet_size as u16)
+                        .last_0()
+                        .set_bit()
                 },
             );
 
             cortex_m::asm::delay(12);
 
-            dpram.ep_buffer_control((self.pipe.n * 2) as usize).write(
-                |w| unsafe {
-                    w.full_0()
-                        .clear_bit()
-                        .length_0()
-                        .bits(self.buffer.len() as u16)
-                        .available_0()
-                        .set_bit()
-                },
+            dpram
+                .ep_buffer_control((self.pipe.n * 2) as usize)
+                .modify(|_, w| w.available_0().set_bit());
+            let regs = unsafe { pac::USBCTRL_REGS::steal() };
+            defmt::println!(
+                "IE ready inte {:x} iec {:x} ecr {:x} epbc {:x}",
+                regs.inte().read().bits(),
+                regs.int_ep_ctrl().read().bits(),
+                dpram
+                    .ep_control((self.pipe.n * 2) as usize - 2)
+                    .read()
+                    .bits(),
+                dpram
+                    .ep_buffer_control((self.pipe.n * 2) as usize)
+                    .read()
+                    .bits(),
             );
 
-            Poll::Ready(Some(bytes))
+            Poll::Ready(Some(result))
         } else {
             let regs = unsafe { pac::USBCTRL_REGS::steal() };
             regs.inte().modify(|_, w| w.buff_status().set_bit());
@@ -900,25 +942,22 @@ impl<'a> UsbStack<'a> {
         Ok(())
     }
 
-    pub fn interrupt_endpoint_in<'b, 'buf>(
+    pub fn interrupt_endpoint_in<'b>(
         &'b self,
         address: u8,
         endpoint: u8,
-        _max_packet_size: u16,
+        max_packet_size: u16,
         interval: u8,
-        buffer: &'buf mut [u8],
-    ) -> impl Stream<Item = usize> + 'b
+    ) -> impl Stream<Item = InterruptPacket> + 'b
     where
-        'a: 'buf,
-        'buf: 'b,
+        'a: 'b,
     {
         async move {
             let pipe = self.alloc_pipe(EndpointType::Interrupt).await;
 
-            debug::println!("interrupt_endpoint got {:?}", pipe);
-
-            // @todo set up ep_control
             let n = pipe.n;
+
+            debug::println!("interrupt_endpoint on pipe {}", n);
 
             self.regs
                 .host_addr_endp((n - 1) as usize)
@@ -949,29 +988,27 @@ impl<'a> UsbStack<'a> {
             self.dpram
                 .ep_buffer_control((n * 2) as usize)
                 .write(|w| unsafe {
-                    w.full_0().clear_bit().length_0().bits(buffer.len() as u16)
+                    w.full_0()
+                        .clear_bit()
+                        .length_0()
+                        .bits(max_packet_size)
+                        .pid_0()
+                        .clear_bit()
+                        .last_0()
+                        .set_bit()
                 });
 
             cortex_m::asm::delay(12);
 
             self.dpram
                 .ep_buffer_control((n * 2) as usize)
-                .write(|w| unsafe {
-                    w.full_0()
-                        .clear_bit()
-                        .length_0()
-                        .bits(buffer.len() as u16)
-                        .pid_0()
-                        .clear_bit()
-                        .last_0()
-                        .set_bit()
-                        .available_0()
-                        .set_bit()
-                });
+                .modify(|_, w| w.available_0().set_bit());
+
             InterruptEndpoint {
                 pipe,
                 waker: &self.statics.pipe_wakers[n as usize],
-                buffer,
+                max_packet_size,
+                data_toggle: false,
             }
         }
         .flatten_stream()
