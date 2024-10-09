@@ -84,7 +84,7 @@ impl<'a> Future for UsbFuture<'a> {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
-        if (intr.bits() & 0x409) != 0 {
+        if (intr.bits() & 0x449) != 0 {
             defmt::info!("ready {:x}", status.bits());
             regs.sie_status().write(|w| unsafe { w.bits(0xFF04_0000) });
             Poll::Ready(status)
@@ -98,6 +98,8 @@ impl<'a> Future for UsbFuture<'a> {
                 w.host_conn_dis()
                     .set_bit()
                     .stall()
+                    .set_bit()
+                    .error_rx_timeout()
                     .set_bit()
                     .trans_complete()
                     .set_bit()

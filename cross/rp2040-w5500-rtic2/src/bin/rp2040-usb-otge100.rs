@@ -14,8 +14,8 @@ mod app {
         parse_descriptors, HubDescriptor, ShowDescriptors, CLASS_REQUEST,
         CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
         GET_DESCRIPTOR, GET_STATUS, HOST_TO_DEVICE, HUB_DESCRIPTOR,
-        PORT_POWER, RECIPIENT_OTHER, SET_CONFIGURATION, SET_FEATURE,
-        VENDOR_REQUEST,
+        PORT_POWER, PORT_RESET, RECIPIENT_OTHER, SET_ADDRESS,
+        SET_CONFIGURATION, SET_FEATURE, VENDOR_REQUEST,
     };
     use cotton_usb_host::types::{SetupPacket, UsbDevice};
     use futures_util::StreamExt;
@@ -169,7 +169,9 @@ mod app {
         defmt::println!("{}-port hub", ports);
 
         // Ports are numbered from 1..=N (not 0..N)
-        for port in 1..=ports {
+        //        for port in 1..=ports {
+        {
+            let port = 2;
             let rc = stack
                 .control_transfer_out(
                     1,
@@ -251,6 +253,52 @@ mod app {
                                 "Clear port {} {} {}",
                                 port,
                                 16 + bit,
+                                rc
+                            );
+                        }
+
+                        if bit == 0 {
+                            // C_PORT_CONNECTION
+                            let rc = stack
+                                .control_transfer_out(
+                                    1,
+                                    device.packet_size_ep0,
+                                    SetupPacket {
+                                        bmRequestType: HOST_TO_DEVICE
+                                            | CLASS_REQUEST
+                                            | RECIPIENT_OTHER,
+                                        bRequest: SET_FEATURE,
+                                        wValue: PORT_RESET,
+                                        wIndex: port as u16,
+                                        wLength: 0,
+                                    },
+                                    &descriptors,
+                                )
+                                .await;
+                            defmt::println!("Set port reset {}", rc);
+                        }
+
+                        if bit == 4 {
+                            // C_PORT_RESET
+                            let address = device.address * 4 + port;
+                            let rc = stack
+                                .control_transfer_out(
+                                    0,
+                                    device.packet_size_ep0,
+                                    SetupPacket {
+                                        bmRequestType: HOST_TO_DEVICE,
+                                        bRequest: SET_ADDRESS,
+                                        wValue: address as u16,
+                                        wIndex: 0,
+                                        wLength: 0,
+                                    },
+                                    &descriptors,
+                                )
+                                .await;
+                            defmt::println!(
+                                "Set address port {} {} {}",
+                                port,
+                                address,
                                 rc
                             );
                         }

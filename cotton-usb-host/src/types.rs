@@ -280,7 +280,7 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
     extern crate alloc;
