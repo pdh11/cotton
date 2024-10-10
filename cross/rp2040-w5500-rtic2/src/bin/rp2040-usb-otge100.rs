@@ -168,10 +168,29 @@ mod app {
         };
         defmt::println!("{}-port hub", ports);
 
+        // Hub state machine: each hub must have each port powered,
+        // then reset. But only one hub port on the whole *bus* can be
+        // in reset at any one time, because it becomes sensitive to
+        // address zero. So there needs to be a bus-wide hub state
+        // machine.
+        //
+        // Idea: hubs get given addresses 1-15, so a bitmap of hubs
+        // fits in u16. Newly found hubs get their interrupt EP added
+        // to the waker, and all their ports powered. Ports that see a
+        // C_PORT_CONNECTION get the parent hub added to a bitmap of
+        // "hubs needing resetting". When no port is currently in
+        // reset, a hub is removed from the bitmap, and a port counter
+        // (1..=N) is set up; each port in turn has GetStatus called,
+        // and on returning CONNECTION but not ENABLE, the port is
+        // reset. (Not connected or already enabled means progress to
+        // the next port, then the next hub.)
+        //
+        // On a reset complete, give the new device an address (1-15
+        // if it, too, is a hub) and then again proceed to the next
+        // port, then the next hub.
+
         // Ports are numbered from 1..=N (not 0..N)
-        //        for port in 1..=ports {
-        {
-            let port = 2;
+        for port in 1..=ports {
             let rc = stack
                 .control_transfer_out(
                     1,
@@ -225,6 +244,7 @@ mod app {
                             port,
                             &descriptors[0..4]
                         );
+                        let state = descriptors[0];
 
                         let bit = descriptors[2].trailing_zeros() as u16;
                         // i.e. least set bit
@@ -259,23 +279,28 @@ mod app {
 
                         if bit == 0 {
                             // C_PORT_CONNECTION
-                            let rc = stack
-                                .control_transfer_out(
-                                    1,
-                                    device.packet_size_ep0,
-                                    SetupPacket {
-                                        bmRequestType: HOST_TO_DEVICE
-                                            | CLASS_REQUEST
-                                            | RECIPIENT_OTHER,
-                                        bRequest: SET_FEATURE,
-                                        wValue: PORT_RESET,
-                                        wIndex: port as u16,
-                                        wLength: 0,
-                                    },
-                                    &descriptors,
-                                )
+                            if (state & 1) == 0 {
+                                defmt::println!("port {} disconnect",
+                                                port);
+                            } else {
+                                let rc = stack
+                                    .control_transfer_out(
+                                        1,
+                                        device.packet_size_ep0,
+                                        SetupPacket {
+                                            bmRequestType: HOST_TO_DEVICE
+                                                | CLASS_REQUEST
+                                                | RECIPIENT_OTHER,
+                                            bRequest: SET_FEATURE,
+                                            wValue: PORT_RESET,
+                                            wIndex: port as u16,
+                                            wLength: 0,
+                                        },
+                                        &descriptors,
+                                    )
                                 .await;
-                            defmt::println!("Set port reset {}", rc);
+                                defmt::println!("Set port {} reset {}", port, rc);
+                            }
                         }
 
                         if bit == 4 {

@@ -10,9 +10,61 @@ use core::ops::Deref;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::future::FutureExt;
-use futures::stream::Stream;
 use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
+use futures::StreamExt;
+use futures::Stream;
+
+/// Future for the [`select_slice`] function.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct SelectSlice<'a, STR> {
+    inner: Pin<&'a mut [STR]>,
+}
+
+/// Creates a new future which will select over a slice of futures.
+///
+/// The returned future will wait for any future to be ready. Upon
+/// completion the item resolved will be returned, along with the index of the
+/// future that was ready.
+///
+/// If the slice is empty, the resulting future will be Pending forever.
+pub fn select_slice<Str: Stream>(slice: Pin<&mut [Str]>) -> SelectSlice<Str> {
+    SelectSlice { inner: slice }
+}
+
+impl<Str: Stream> Stream for SelectSlice<'_, Str> {
+    type Item = (Str::Item, usize);
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Safety: refer to
+        //   https://users.rust-lang.org/t/working-with-pinned-slices-are-there-any-structurally-pinning-vec-like-collection-types/50634/2
+        #[inline(always)]
+        fn pin_iter<T>(slice: Pin<&mut [T]>) -> impl Iterator<Item = Pin<&mut T>> {
+            unsafe { slice.get_unchecked_mut().iter_mut().map(|v| Pin::new_unchecked(v)) }
+        }
+        for (i, fut) in pin_iter(self.inner.as_mut()).enumerate() {
+            if let Poll::Ready(Some(res)) = fut.poll_next(cx) {
+                return Poll::Ready(Some((res, i)));
+            }
+        }
+
+        Poll::Pending
+    }
+}
+
+pub struct UsbDeviceSet(pub u32);
+
+impl UsbDeviceSet {
+    pub fn contains(&self, n: u8) -> bool {
+        (self.0 & (1<<n)) != 0
+    }
+}
+
+pub enum DeviceEvent {
+    Connect(UsbDevice),
+    Disconnect(UsbDeviceSet),
+}
 
 pub struct UsbStatics {
     device_waker: CriticalSectionWakerRegistration,
@@ -57,13 +109,22 @@ impl UsbStatics {
 }
 
 impl UsbStatics {
+    // Only exists so that we can initialise the array in a const way
+    #[allow(clippy::declare_interior_mutable_const)]
     const W: CriticalSectionWakerRegistration =
         CriticalSectionWakerRegistration::new();
+
     pub const fn new() -> Self {
         Self {
             device_waker: CriticalSectionWakerRegistration::new(),
             pipe_wakers: [Self::W; 16],
         }
+    }
+}
+
+impl Default for UsbStatics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -78,20 +139,24 @@ impl<'a> DeviceDetect<'a> {
     }
 }
 
-impl<'a> Future for DeviceDetect<'a> {
-    type Output = pac::usbctrl_regs::sie_status::R;
+impl Stream for DeviceDetect<'_> {
+    type Item = bool;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         defmt::trace!("DE register");
         self.waker.register(cx.waker());
 
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
-        if (intr.bits() & 0x1001) != 0 {
+        if (intr.bits() & 0x1) != 0 {
             defmt::info!("DE ready {:x}", status.bits());
             regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
-            Poll::Ready(status)
+            regs.inte().modify(|_, w| {
+                w.host_conn_dis()
+                    .set_bit()
+            });
+            Poll::Ready(Some(status.speed().bits() != 0))
         } else {
             defmt::trace!(
                 "DE pending intr={:x} st={:x}",
@@ -100,12 +165,6 @@ impl<'a> Future for DeviceDetect<'a> {
             );
             regs.inte().modify(|_, w| {
                 w.host_conn_dis()
-                    .set_bit()
-                    .stall()
-                    .set_bit()
-                    .error_rx_timeout()
-                    .set_bit()
-                    .trans_complete()
                     .set_bit()
             });
             Poll::Pending
@@ -123,7 +182,7 @@ impl<'a> ControlEndpoint<'a> {
     }
 }
 
-impl<'a> Future for ControlEndpoint<'a> {
+impl Future for ControlEndpoint<'_> {
     type Output = pac::usbctrl_regs::sie_status::R;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -287,7 +346,7 @@ impl<'a> OutPacketiser<'a> {
     }
 }
 
-impl<'a> Packetiser for OutPacketiser<'a> {
+impl Packetiser for OutPacketiser<'_> {
     fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
         let val = reg.read();
         match self.next_prep {
@@ -381,7 +440,7 @@ impl<'a> InDepacketiser<'a> {
     }
 }
 
-impl<'a> Depacketiser for InDepacketiser<'a> {
+impl Depacketiser for InDepacketiser<'_> {
     fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
         let val = reg.read();
         match self.next_retire {
@@ -498,7 +557,7 @@ struct InterruptEndpoint<'stack> {
     data_toggle: bool,
 }
 
-impl<'stack> Stream for InterruptEndpoint<'stack> {
+impl Stream for InterruptEndpoint<'_> {
     type Item = InterruptPacket;
 
     fn poll_next(
@@ -510,8 +569,10 @@ impl<'stack> Stream for InterruptEndpoint<'stack> {
         let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
         let bc = dpram.ep_buffer_control((self.pipe.n * 2) as usize).read();
         if bc.full_0().bit() {
-            let mut result = InterruptPacket::default();
-            result.size = core::cmp::min(bc.length_0().bits(), 64) as u8;
+            let mut result = InterruptPacket {
+                size: core::cmp::min(bc.length_0().bits(), 64) as u8,
+                ..Default::default()
+            };
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     (0x5010_0200 + (self.pipe.n as u32) * 64) as *const u8,
@@ -527,7 +588,7 @@ impl<'stack> Stream for InterruptEndpoint<'stack> {
                         .pid_0()
                         .bit(self.data_toggle)
                         .length_0()
-                        .bits(self.max_packet_size as u16)
+                        .bits(self.max_packet_size)
                         .last_0()
                         .set_bit()
                 },
@@ -577,6 +638,24 @@ impl<'stack> Stream for InterruptEndpoint<'stack> {
                 .write(|w| unsafe { w.bits(3 << (self.pipe.n * 2)) });
 
             Poll::Pending
+        }
+    }
+}
+
+#[derive(Default)]
+struct MaybeInterruptEndpoint<'a>(Option<InterruptEndpoint<'a>>);
+
+impl Stream for MaybeInterruptEndpoint<'_> {
+    type Item = InterruptPacket;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        // @todo This compiles without "unsafe" -- but is it right?
+        match &mut self.0 {
+            Some(ref mut ep) => ep.poll_next_unpin(cx),
+            None => Poll::Pending,
         }
     }
 }
@@ -646,9 +725,9 @@ impl<'a> UsbStack<'a> {
 
         self.regs.inte().write(|w| w.host_conn_dis().set_bit());
 
-        let f = DeviceDetect::new(&self.statics.device_waker);
+        let mut f = DeviceDetect::new(&self.statics.device_waker);
 
-        f.await;
+        f.next().await;
 
         let status = self.regs.sie_status().read();
         defmt::trace!("conn_dis awaited, sie_status=0x{:x}", status.bits());
@@ -800,7 +879,7 @@ impl<'a> UsbStack<'a> {
                 .sie_status()
                 .write(|w| unsafe { w.bits(0xFF00_0000) });
             self.regs.buff_status().write(|w| unsafe { w.bits(0x3) });
-            self.regs.inte().write(|w| {
+            self.regs.inte().modify(|_, w| {
                 if packets > 2 {
                     w.buff_status().set_bit();
                 }
@@ -855,7 +934,7 @@ impl<'a> UsbStack<'a> {
 
             self.regs.buff_status().write(|w| unsafe { w.bits(0x3) });
 
-            self.regs.inte().write(|w| {
+            self.regs.inte().modify(|_, w| {
                 w.trans_complete()
                     .clear_bit()
                     .error_data_seq()
@@ -869,8 +948,6 @@ impl<'a> UsbStack<'a> {
                     .error_bit_stuff()
                     .clear_bit()
                     .error_crc()
-                    .clear_bit()
-                    .buff_status()
                     .clear_bit()
             });
 
@@ -1055,4 +1132,25 @@ impl<'a> UsbStack<'a> {
         }
         .flatten_stream()
     }
+
+    /*
+    pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> {
+        const MAX_HUBS: usize = 15;
+
+        let mut topology = crate::core::bus::Bus::new();
+        let mut endpoints: [MaybeInterruptEndpoint; MAX_HUBS] = Default::default();
+        let mut hub_count = 0usize;
+        let mut root_device = DeviceDetect::new(&self.statics.device_waker);
+        let mut data_toggle = [false; MAX_HUBS];
+
+        let multistream = select_slice(
+            pin!(&mut endpoints[0..hub_count])
+        );
+
+        futures::stream::select(
+            root_device.map(|_| DeviceEvent::Disconnect(UsbDeviceSet(0))),
+            multistream.map(|_| DeviceEvent::Disconnect(UsbDeviceSet(1))),
+        )
+    }
+     */
 }
