@@ -119,7 +119,7 @@ impl<'a> MessageCursor<'a> {
     }
 }
 
-impl<'a> core::fmt::Write for MessageCursor<'a> {
+impl core::fmt::Write for MessageCursor<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let n = s.len();
         if n + self.offset > self.buf.len() {

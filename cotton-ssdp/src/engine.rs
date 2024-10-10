@@ -371,7 +371,7 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                     let mut reply_at = now;
                     reply_at +=
                         core::time::Duration::from_millis(delay_ms.into())
-                        .into();
+                            .into();
                     for value in self.advertisements.values_mut() {
                         if target_match(
                             &search_target,

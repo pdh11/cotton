@@ -235,7 +235,7 @@ impl<'a, D: Device> WrappedInterface<'a, D> {
     }
 }
 
-impl<'a, D: Device> super::Multicast for WrappedInterface<'a, D> {
+impl<D: Device> super::Multicast for WrappedInterface<'_, D> {
     fn join_multicast_group(
         &self,
         multicast_address: &no_std_net::IpAddr,
@@ -276,7 +276,7 @@ impl<'a, 'b> WrappedSocket<'a, 'b> {
     }
 }
 
-impl<'a, 'b> super::TargetedSend for WrappedSocket<'a, 'b> {
+impl super::TargetedSend for WrappedSocket<'_, '_> {
     fn send_with<F>(
         &self,
         size: usize,

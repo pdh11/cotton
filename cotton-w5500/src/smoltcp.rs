@@ -118,7 +118,7 @@ impl<Spi: w5500::bus::Bus> smoltcp::phy::Device for Device<Spi> {
     }
 }
 
-impl<'a> smoltcp::phy::RxToken for EthRxToken<'a> {
+impl smoltcp::phy::RxToken for EthRxToken<'_> {
     fn consume<R, F>(self, f: F) -> R
     where
         F: FnOnce(&mut [u8]) -> R,
@@ -127,7 +127,7 @@ impl<'a> smoltcp::phy::RxToken for EthRxToken<'a> {
     }
 }
 
-impl<'a, Spi: w5500::bus::Bus> smoltcp::phy::TxToken for EthTxToken<'a, Spi> {
+impl<Spi: w5500::bus::Bus> smoltcp::phy::TxToken for EthTxToken<'_, Spi> {
     fn consume<R, F>(self, len: usize, f: F) -> R
     where
         F: FnOnce(&mut [u8]) -> R,

@@ -11,7 +11,7 @@ echo "" > target/deps/index.htm
 
 for PKG in $PACKAGES ; do
     echo "<img src=$PKG-deps.png><pre>" >> target/deps/index.htm
-    cargo modules dependencies --package $PKG --lib \
+    cargo modules dependencies --package $PKG --lib --all-features \
           --no-externs --no-sysroot --no-fns --no-traits --no-types \
           --layout dot > target/$PKG-deps.dot
     sed -E -e 's/\[constraint=false\]//' -e 's/splines="line",//' \
