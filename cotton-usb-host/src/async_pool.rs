@@ -20,20 +20,20 @@ pub struct Pooled<'a> {
 }
 
 #[cfg(feature = "std")]
-impl<'a> Display for Pooled<'a> {
+impl Display for Pooled<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Pooled({})", self.n)
     }
 }
 
 #[cfg(feature = "defmt")]
-impl<'a> defmt::Format for Pooled<'a> {
+impl defmt::Format for Pooled<'_> {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "Pooled({})", self.n);
     }
 }
 
-impl<'a> Drop for Pooled<'a> {
+impl Drop for Pooled<'_> {
     fn drop(&mut self) {
         self.pool.dealloc_internal(self.n);
     }
