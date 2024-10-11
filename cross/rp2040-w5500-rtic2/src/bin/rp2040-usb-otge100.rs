@@ -317,7 +317,7 @@ mod app {
             cx.shared.statics,
         );
 
-        let device = stack.enumerate_root_device(Mono).await;
+        let device = stack.enumerate_root_device().await;
 
         defmt::println!("Got root device {:x}", device);
 

@@ -22,7 +22,6 @@ defmt = { version = "0.3.8", optional = true }
 rp2040-pac = { version = "0.6", optional = true }
 cortex-m = { version = "0.7.7", optional = true }
 rtic-common = { version = "1", optional = true } # For WakerRegistration
-embedded-hal-async = { version = "1", optional = true }
 critical-section = "1.1"
 
 [features]
@@ -36,6 +35,5 @@ rp2040 = [
   "dep:rp2040-pac",
   "dep:rtic-common",
   "dep:cortex-m",
-  "dep:embedded-hal-async",
 ]
 defmt = ["dep:defmt"]

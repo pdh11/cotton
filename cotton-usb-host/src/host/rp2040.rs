@@ -15,7 +15,7 @@ use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
 
 pub struct UsbStatics {
-    waker: CriticalSectionWakerRegistration,
+    device_waker: CriticalSectionWakerRegistration,
     pipe_wakers: [CriticalSectionWakerRegistration; 16],
 }
 
@@ -30,7 +30,7 @@ impl UsbStatics {
         );
         if ints.buff_status().bit() {
             let bs = regs.buff_status().read().bits();
-            for i in 1..15 {
+            for i in 0..15 {
                 if (bs & (3 << (i * 2))) != 0 {
                     defmt::println!("IRQ wakes {}", i);
                     self.pipe_wakers[i].wake();
@@ -47,7 +47,12 @@ impl UsbStatics {
             ints.bits(),
             regs.inte().read().bits()
         );
-        self.waker.wake();
+        if (ints.bits() & 0x1001) != 0 {
+            self.device_waker.wake();
+        }
+        if (ints.bits() & 0x448) != 0 {
+            self.pipe_wakers[0].wake();
+        }
     }
 }
 
@@ -56,41 +61,40 @@ impl UsbStatics {
         CriticalSectionWakerRegistration::new();
     pub const fn new() -> Self {
         Self {
-            waker: CriticalSectionWakerRegistration::new(),
+            device_waker: CriticalSectionWakerRegistration::new(),
             pipe_wakers: [Self::W; 16],
         }
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct UsbFuture<'a> {
+pub struct DeviceDetect<'a> {
     waker: &'a CriticalSectionWakerRegistration,
-    // pipe: u8
 }
 
-impl<'a> UsbFuture<'a> {
+impl<'a> DeviceDetect<'a> {
     fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
         Self { waker }
     }
 }
 
-impl<'a> Future for UsbFuture<'a> {
+impl<'a> Future for DeviceDetect<'a> {
     type Output = pac::usbctrl_regs::sie_status::R;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        defmt::trace!("register");
+        defmt::trace!("DE register");
         self.waker.register(cx.waker());
 
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
-        if (intr.bits() & 0x449) != 0 {
-            defmt::info!("ready {:x}", status.bits());
-            regs.sie_status().write(|w| unsafe { w.bits(0xFF04_0000) });
+        if (intr.bits() & 0x1001) != 0 {
+            defmt::info!("DE ready {:x}", status.bits());
+            regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
             Poll::Ready(status)
         } else {
             defmt::trace!(
-                "pending intr={:x} st={:x}",
+                "DE pending intr={:x} st={:x}",
                 intr.bits(),
                 status.bits()
             );
@@ -98,6 +102,49 @@ impl<'a> Future for UsbFuture<'a> {
                 w.host_conn_dis()
                     .set_bit()
                     .stall()
+                    .set_bit()
+                    .error_rx_timeout()
+                    .set_bit()
+                    .trans_complete()
+                    .set_bit()
+            });
+            Poll::Pending
+        }
+    }
+}
+
+pub struct ControlEndpoint<'a> {
+    waker: &'a CriticalSectionWakerRegistration,
+}
+
+impl<'a> ControlEndpoint<'a> {
+    fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
+        Self { waker }
+    }
+}
+
+impl<'a> Future for ControlEndpoint<'a> {
+    type Output = pac::usbctrl_regs::sie_status::R;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        defmt::trace!("CE register");
+        self.waker.register(cx.waker());
+
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let status = regs.sie_status().read();
+        let intr = regs.intr().read();
+        if (intr.bits() & 0x448) != 0 {
+            defmt::info!("CE ready {:x}", status.bits());
+            regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
+            Poll::Ready(status)
+        } else {
+            defmt::trace!(
+                "CE pending intr={:x} st={:x}",
+                intr.bits(),
+                status.bits()
+            );
+            regs.inte().modify(|_, w| {
+                w.stall()
                     .set_bit()
                     .error_rx_timeout()
                     .set_bit()
@@ -571,10 +618,7 @@ impl<'a> UsbStack<'a> {
         }
     }
 
-    pub async fn enumerate_root_device(
-        &self,
-        mut delay: impl embedded_hal_async::delay::DelayNs,
-    ) -> UsbDevice {
+    pub async fn enumerate_root_device(&self) -> UsbDevice {
         self.regs.usb_muxing().modify(|_, w| {
             w.to_phy().set_bit();
             w.softcon().set_bit()
@@ -602,12 +646,12 @@ impl<'a> UsbStack<'a> {
 
         self.regs.inte().write(|w| w.host_conn_dis().set_bit());
 
-        let f = UsbFuture::new(&self.statics.waker);
+        let f = DeviceDetect::new(&self.statics.device_waker);
 
         f.await;
 
         let status = self.regs.sie_status().read();
-        defmt::trace!("sie_status=0x{:x}", status.bits());
+        defmt::trace!("conn_dis awaited, sie_status=0x{:x}", status.bits());
         let speed = match status.speed().bits() {
             1 => {
                 defmt::println!("LS detected");
@@ -620,20 +664,16 @@ impl<'a> UsbStack<'a> {
             _ => UsbSpeed::Low1_1,
         };
 
+        // Clear interrupt
         unsafe { self.regs.sie_status().modify(|_, w| w.speed().bits(3)) };
+
+        /* RP2040 seems not to need the bus_reset() bit set at this point --
+         * perhaps it does it automatically? TinyUSB doesn't set it either.
+         *
         self.regs
             .inte()
-            .modify(|_, w| w.host_conn_dis().clear_bit());
-
-        self.regs.sie_ctrl().modify(|_, w| w.reset_bus().set_bit());
-
-        delay.delay_ms(50).await;
-
-        self.regs
-            .sie_ctrl()
-            .modify(|_, w| w.reset_bus().clear_bit());
-
-        delay.delay_ms(10).await;
+            .modify(|_, w| w.bus_reset().set_bit());
+         */
 
         // Read prefix of device descriptor
         let mut descriptors = [0u8; 18];
@@ -807,7 +847,7 @@ impl<'a> UsbStack<'a> {
                     .modify(|_, w| w.start_trans().set_bit());
             }
 
-            let f = UsbFuture::new(&self.statics.waker);
+            let f = ControlEndpoint::new(&self.statics.pipe_wakers[0]);
 
             let status = f.await;
 
