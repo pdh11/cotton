@@ -172,6 +172,7 @@ pub const PORT_POWER: u16 = 8;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UsbError {
     Nak,
     Stall,

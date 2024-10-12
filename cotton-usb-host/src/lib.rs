@@ -5,6 +5,7 @@
 #![cfg_attr(docsrs, doc(cfg_hide(doc)))]
 
 pub mod async_pool;
+pub mod core;
 mod debug;
 pub mod host;
 pub mod types;
