@@ -33,7 +33,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        statics: UsbStatics,
+        statics: &'static UsbStatics,
     }
 
     #[local]
@@ -103,9 +103,11 @@ mod app {
 
         usb_task::spawn().unwrap();
 
+        static USB_STATICS: UsbStatics = UsbStatics::new();
+
         (
             Shared {
-                statics: UsbStatics::new(),
+                statics: &USB_STATICS,
             },
             Local {
                 regs: Some(device.USBCTRL_REGS),

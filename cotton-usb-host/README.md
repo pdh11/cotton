@@ -10,7 +10,7 @@
 
 Part of the [Cotton](https://github.com/pdh11/cotton) project.
 
-## A USB host stack for embedded devices
+## A no-std, no-alloc USB host stack for embedded devices
 
 USB operation is _asynchronous_ and so this crate is suited for use
 with embedded asynchronous executors such as [RTIC
@@ -25,12 +25,23 @@ Currently supports:
  - rp2040-usb-otge100: identifying (not yet really "driving") a
    Plugable USB2-OTGE100 Ethernet adaptor (based on ASIX AX88772)
 
+The RP2040 support is in this repo to provide a convenient worked example;
+specific host-controller support for other microcontrollers probably
+belongs in those microcontrollers' HAL crates.
+
 TODO before merge:
 
  - [ ] Unit tests
+ - [ ] Bulk in/out
  - [ ] At least one real example (MSC?)
  - [x] Interlocking to avoid contending on pipe 0
  - [ ] STM32?
+
+TODO later:
+
+ - [ ] Non-async version?
+ - [ ] rp-pac vs rp2040-pac?
+ - [ ] More microcontrollers
 
 [^1]: The documentation describes this as "USB 2.0 LS and FS" (1.1 and
 12Mbits/s), but as the only changes in USB&nbsp;2.0 compared to 1.1 were

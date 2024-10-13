@@ -482,21 +482,14 @@ impl Depacketiser for OutDepacketiser {
 
 type Pipe<'a> = crate::async_pool::Pooled<'a>;
 
-pub struct InterruptPipe<'driver, 'statics>
-where
-    'statics: 'driver,
-{
-    driver: &'driver HostController<'statics>,
+pub struct InterruptPipe<'driver> {
+    driver: &'driver HostController,
     pipe: Pipe<'driver>,
     max_packet_size: u16,
     data_toggle: Cell<bool>,
 }
 
-impl<'driver, 'statics> driver::InterruptPipe
-    for InterruptPipe<'driver, 'statics>
-where
-    'statics: 'driver,
-{
+impl<'driver> driver::InterruptPipe for InterruptPipe<'driver> {
     fn set_waker(&self, waker: &core::task::Waker) {
         self.driver.statics.pipe_wakers[self.pipe.n as usize].register(waker);
     }
@@ -578,14 +571,14 @@ where
     }
 }
 
-pub struct HostController<'a> {
-    statics: &'a UsbStatics,
+pub struct HostController {
+    statics: &'static UsbStatics,
     //control_pipes: Pool,
     bulk_pipes: Pool,
 }
 
-impl<'statics> HostController<'statics> {
-    pub fn new(statics: &'statics UsbStatics) -> Self {
+impl HostController {
+    pub fn new(statics: &'static UsbStatics) -> Self {
         Self {
             statics,
             //control_pipes: Pool::new(1),
@@ -594,8 +587,8 @@ impl<'statics> HostController<'statics> {
     }
 }
 
-impl<'statics> Driver for HostController<'statics> {
-    type InterruptPipe<'driver> = InterruptPipe<'driver, 'statics> where Self: 'driver;
+impl Driver for HostController {
+    type InterruptPipe<'driver> = InterruptPipe<'driver> where Self: 'driver;
 
     // The trait defines this with "-> impl Future"-style syntax, but the one
     // is just sugar for the other according to Clippy.
@@ -605,7 +598,7 @@ impl<'statics> Driver for HostController<'statics> {
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
-    ) -> InterruptPipe<'driver, 'statics> {
+    ) -> InterruptPipe<'driver> {
         let mut pipe = self.bulk_pipes.alloc().await;
         pipe.n += 1;
         debug::println!("interrupt_endpoint on pipe {}", pipe.n);
@@ -652,7 +645,7 @@ impl<'statics> Driver for HostController<'statics> {
             .ep_buffer_control((n * 2) as usize)
             .modify(|_, w| w.available_0().set_bit());
 
-        InterruptPipe::<'driver, 'statics> {
+        InterruptPipe::<'driver> {
             driver: self,
             pipe,
             max_packet_size,
