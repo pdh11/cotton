@@ -1,6 +1,6 @@
 [package]
 name = "cotton-ssdp"
-version = "0.0.4"
+version = "0.0.5"
 description = "Implementing SSDP, the Simple Service Discovery Protocol"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
@@ -8,13 +8,13 @@ categories = ["network-programming"]
 edition = "2021"
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 license = "CC0-1.0"
-rust-version = "1.75"
+rust-version = "1.79"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-cotton-netif = { path = "../cotton-netif", version = "0.0.5", default-features = false }
+cotton-netif = { path = "../cotton-netif", version = "0.0.6", default-features = false }
 no-std-net = { version = "0.6", default-features = false }
 tokio = { version = "1.24", default-features = false, features = [
   "macros",

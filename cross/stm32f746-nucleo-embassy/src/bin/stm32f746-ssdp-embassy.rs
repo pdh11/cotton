@@ -118,8 +118,8 @@ impl<'a, D: embassy_net::driver::Driver> WrappedStack<'a, D> {
     }
 }
 
-impl<'a, D: embassy_net::driver::Driver> cotton_ssdp::udp::Multicast
-    for WrappedStack<'a, D>
+impl<D: embassy_net::driver::Driver> cotton_ssdp::udp::Multicast
+    for WrappedStack<'_, D>
 {
     fn join_multicast_group(
         &self,
@@ -159,7 +159,7 @@ impl<'a, 'b> WrappedSocket<'a, 'b> {
     }
 }
 
-impl<'a, 'b> cotton_ssdp::udp::TargetedSend for WrappedSocket<'a, 'b> {
+impl cotton_ssdp::udp::TargetedSend for WrappedSocket<'_, '_> {
     fn send_with<F>(
         &self,
         size: usize,

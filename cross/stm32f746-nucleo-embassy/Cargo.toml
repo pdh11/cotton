@@ -28,9 +28,7 @@ cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features =
   "smoltcp",
 ] }
 cotton-netif = { path = "../../cotton-netif", default-features = false }
-cotton-unique = { version = "0.1", path = "../../cotton-unique", features = [
-  "stm32",
-] }
+cotton-unique = { path = "../../cotton-unique", features = ["stm32"] }
 embassy-stm32 = { version = "0.1.0", features = [
   "defmt",
   "stm32f746zg",
@@ -39,7 +37,7 @@ embassy-stm32 = { version = "0.1.0", features = [
   "time-driver-any",
   "exti",
 ] }
-embassy-executor = { version = "0.6.0", features = [
+embassy-executor = { version = "0.6", features = [
   "task-arena-size-32768",
   "arch-cortex-m",
   "executor-thread",
