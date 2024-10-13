@@ -1,2 +1,2 @@
-msrv = "1.75"
+msrv = "1.79"
 doc-valid-idents = ["UPnP", ".."]
