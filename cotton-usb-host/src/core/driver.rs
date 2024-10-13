@@ -29,8 +29,8 @@ impl Deref for InterruptPacket {
 }
 
 pub trait InterruptPipe {
-    fn set_waker(&mut self, waker: &core::task::Waker);
-    fn poll(&mut self) -> Option<InterruptPacket>;
+    fn set_waker(&self, waker: &core::task::Waker);
+    fn poll(&self) -> Option<InterruptPacket>;
 }
 
 pub trait Driver {
@@ -39,7 +39,10 @@ pub trait Driver {
         Self: 'driver;
 
     fn alloc_interrupt_pipe(
-        &mut self,
+        &self,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u16,
+        interval_ms: u8,
     ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>>;
-    //    fn alloc_interrupt_pipe<'driver>(&'driver mut self) -> impl core::future::Future<Output = Self::InterruptPipe<'driver>>;
 }

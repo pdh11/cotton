@@ -6,6 +6,7 @@ use crate::types::{
     DEVICE_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR, HOST_TO_DEVICE,
     SET_ADDRESS,
 };
+use core::cell::Cell;
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
@@ -14,54 +15,6 @@ use futures::Stream;
 use futures::StreamExt;
 use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
-
-/// Future for the [`select_slice`] function.
-#[derive(Debug)]
-#[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct SelectSlice<'a, STR> {
-    inner: Pin<&'a mut [STR]>,
-}
-
-/// Creates a new future which will select over a slice of futures.
-///
-/// The returned future will wait for any future to be ready. Upon
-/// completion the item resolved will be returned, along with the index of the
-/// future that was ready.
-///
-/// If the slice is empty, the resulting future will be Pending forever.
-pub fn select_slice<Str: Stream>(slice: Pin<&mut [Str]>) -> SelectSlice<Str> {
-    SelectSlice { inner: slice }
-}
-
-impl<Str: Stream> Stream for SelectSlice<'_, Str> {
-    type Item = (Str::Item, usize);
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        // Safety: refer to
-        //   https://users.rust-lang.org/t/working-with-pinned-slices-are-there-any-structurally-pinning-vec-like-collection-types/50634/2
-        #[inline(always)]
-        fn pin_iter<T>(
-            slice: Pin<&mut [T]>,
-        ) -> impl Iterator<Item = Pin<&mut T>> {
-            unsafe {
-                slice
-                    .get_unchecked_mut()
-                    .iter_mut()
-                    .map(|v| Pin::new_unchecked(v))
-            }
-        }
-        for (i, fut) in pin_iter(self.inner.as_mut()).enumerate() {
-            if let Poll::Ready(Some(res)) = fut.poll_next(cx) {
-                return Poll::Ready(Some((res, i)));
-            }
-        }
-
-        Poll::Pending
-    }
-}
 
 pub struct UsbDeviceSet(pub u32);
 
@@ -529,22 +482,26 @@ impl Depacketiser for OutDepacketiser {
 
 type Pipe<'a> = crate::async_pool::Pooled<'a>;
 
-struct InterruptEndpoint<'stack> {
-    pipe: Pipe<'stack>,
-    waker: &'stack CriticalSectionWakerRegistration,
+pub struct InterruptPipe<'driver, 'statics>
+where
+    'statics: 'driver,
+{
+    driver: &'driver HostController<'statics>,
+    pipe: Pipe<'driver>,
     max_packet_size: u16,
-    data_toggle: bool,
+    data_toggle: Cell<bool>,
 }
 
-impl Stream for InterruptEndpoint<'_> {
-    type Item = InterruptPacket;
+impl<'driver, 'statics> driver::InterruptPipe
+    for InterruptPipe<'driver, 'statics>
+where
+    'statics: 'driver,
+{
+    fn set_waker(&self, waker: &core::task::Waker) {
+        self.driver.statics.pipe_wakers[self.pipe.n as usize].register(waker);
+    }
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        self.waker.register(cx.waker());
-
+    fn poll(&self) -> Option<InterruptPacket> {
         let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
         let bc = dpram.ep_buffer_control((self.pipe.n * 2) as usize).read();
         if bc.full_0().bit() {
@@ -559,13 +516,13 @@ impl Stream for InterruptEndpoint<'_> {
                     result.size as usize,
                 )
             };
-            self.data_toggle = !self.data_toggle;
+            self.data_toggle.set(!self.data_toggle.get());
             dpram.ep_buffer_control((self.pipe.n * 2) as usize).write(
                 |w| unsafe {
                     w.full_0()
                         .clear_bit()
                         .pid_0()
-                        .bit(self.data_toggle)
+                        .bit(self.data_toggle.get())
                         .length_0()
                         .bits(self.max_packet_size)
                         .last_0()
@@ -593,7 +550,7 @@ impl Stream for InterruptEndpoint<'_> {
                     .bits(),
             );
 
-            Poll::Ready(Some(result))
+            Some(result)
         } else {
             let regs = unsafe { pac::USBCTRL_REGS::steal() };
             regs.inte().modify(|_, w| w.buff_status().set_bit());
@@ -616,61 +573,23 @@ impl Stream for InterruptEndpoint<'_> {
             regs.ep_status_stall_nak()
                 .write(|w| unsafe { w.bits(3 << (self.pipe.n * 2)) });
 
-            Poll::Pending
+            None
         }
-    }
-}
-
-#[derive(Default)]
-struct MaybeInterruptEndpoint<'a>(Option<InterruptEndpoint<'a>>);
-
-impl Stream for MaybeInterruptEndpoint<'_> {
-    type Item = InterruptPacket;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        // @todo This compiles without "unsafe" -- but is it right?
-        match &mut self.0 {
-            Some(ref mut ep) => ep.poll_next_unpin(cx),
-            None => Poll::Pending,
-        }
-    }
-}
-
-pub struct InterruptPipe<'driver, 'statics>
-where
-    'statics: 'driver,
-{
-    driver: &'driver HostController<'statics>,
-    pipe: Pipe<'driver>,
-}
-
-impl<'driver, 'statics> driver::InterruptPipe
-    for InterruptPipe<'driver, 'statics>
-where
-    'statics: 'driver,
-{
-    fn set_waker(&mut self, waker: &core::task::Waker) {
-        self.driver.statics.pipe_wakers[self.pipe.n as usize].register(waker);
-    }
-
-    fn poll(&mut self) -> Option<InterruptPacket> {
-        None
     }
 }
 
 pub struct HostController<'a> {
     statics: &'a UsbStatics,
-    control_pipes: Pool,
+    //control_pipes: Pool,
+    bulk_pipes: Pool,
 }
 
 impl<'statics> HostController<'statics> {
     pub fn new(statics: &'statics UsbStatics) -> Self {
         Self {
             statics,
-            control_pipes: Pool::new(1),
+            //control_pipes: Pool::new(1),
+            bulk_pipes: Pool::new(15),
         }
     }
 }
@@ -678,13 +597,66 @@ impl<'statics> HostController<'statics> {
 impl<'statics> Driver for HostController<'statics> {
     type InterruptPipe<'driver> = InterruptPipe<'driver, 'statics> where Self: 'driver;
 
-    fn alloc_interrupt_pipe<'driver>(
-        &'driver mut self,
-    ) -> impl core::future::Future<Output = InterruptPipe<'driver, 'statics>>
-    {
-        async {
-            let pipe = self.control_pipes.alloc().await;
-            InterruptPipe::<'driver, 'statics> { driver: self, pipe }
+    // The trait defines this with "-> impl Future"-style syntax, but the one
+    // is just sugar for the other according to Clippy.
+    async fn alloc_interrupt_pipe<'driver>(
+        &'driver self,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u16,
+        interval_ms: u8,
+    ) -> InterruptPipe<'driver, 'statics> {
+        let mut pipe = self.bulk_pipes.alloc().await;
+        pipe.n += 1;
+        debug::println!("interrupt_endpoint on pipe {}", pipe.n);
+
+        let n = pipe.n;
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        regs.host_addr_endp((n - 1) as usize).write(|w| unsafe {
+            w.address()
+                .bits(address)
+                .endpoint()
+                .bits(endpoint)
+                .intep_dir()
+                .clear_bit() // IN
+        });
+
+        dpram.ep_control((n * 2 - 2) as usize).write(|w| unsafe {
+            w.enable()
+                .set_bit()
+                .interrupt_per_buff()
+                .set_bit()
+                .endpoint_type()
+                .interrupt()
+                .buffer_address()
+                .bits(0x200 + (n as u16) * 64)
+                .host_poll_interval()
+                .bits(core::cmp::min(interval_ms as u16, 9))
+        });
+
+        dpram.ep_buffer_control((n * 2) as usize).write(|w| unsafe {
+            w.full_0()
+                .clear_bit()
+                .length_0()
+                .bits(max_packet_size)
+                .pid_0()
+                .clear_bit()
+                .last_0()
+                .set_bit()
+        });
+
+        cortex_m::asm::delay(12);
+
+        dpram
+            .ep_buffer_control((n * 2) as usize)
+            .modify(|_, w| w.available_0().set_bit());
+
+        InterruptPipe::<'driver, 'statics> {
+            driver: self,
+            pipe,
+            max_packet_size,
+            data_toggle: Cell::new(false),
         }
     }
 }
@@ -717,12 +689,6 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             control_pipes: Pool::new(1),
             bulk_pipes: Pool::new(15),
         }
-    }
-
-    pub async fn alloc_interrupt_pipe<'b>(
-        &'b mut self,
-    ) -> D::InterruptPipe<'b> {
-        self.driver.alloc_interrupt_pipe().await
     }
 
     async fn alloc_pipe(&self, endpoint_type: EndpointType) -> Pipe {
@@ -1109,64 +1075,15 @@ impl<'a, D: Driver> UsbStack<'a, D> {
     where
         'a: 'b,
     {
+        let pipe = self.driver.alloc_interrupt_pipe(
+            address,
+            endpoint,
+            max_packet_size,
+            interval,
+        );
         async move {
-            let pipe = self.alloc_pipe(EndpointType::Interrupt).await;
-
-            let n = pipe.n;
-
-            debug::println!("interrupt_endpoint on pipe {}", n);
-
-            self.regs
-                .host_addr_endp((n - 1) as usize)
-                .write(|w| unsafe {
-                    w.address()
-                        .bits(address)
-                        .endpoint()
-                        .bits(endpoint)
-                        .intep_dir()
-                        .clear_bit() // IN
-                });
-
-            self.dpram
-                .ep_control((n * 2 - 2) as usize)
-                .write(|w| unsafe {
-                    w.enable()
-                        .set_bit()
-                        .interrupt_per_buff()
-                        .set_bit()
-                        .endpoint_type()
-                        .interrupt()
-                        .buffer_address()
-                        .bits(0x200 + (n as u16) * 64)
-                        .host_poll_interval()
-                        .bits(core::cmp::min(interval as u16, 9))
-                });
-
-            self.dpram
-                .ep_buffer_control((n * 2) as usize)
-                .write(|w| unsafe {
-                    w.full_0()
-                        .clear_bit()
-                        .length_0()
-                        .bits(max_packet_size)
-                        .pid_0()
-                        .clear_bit()
-                        .last_0()
-                        .set_bit()
-                });
-
-            cortex_m::asm::delay(12);
-
-            self.dpram
-                .ep_buffer_control((n * 2) as usize)
-                .modify(|_, w| w.available_0().set_bit());
-
-            InterruptEndpoint {
-                pipe,
-                waker: &self.statics.pipe_wakers[n as usize],
-                max_packet_size,
-                data_toggle: false,
-            }
+            let pipe = pipe.await;
+            crate::core::interrupt::InterruptStream::<D> { pipe }
         }
         .flatten_stream()
     }
