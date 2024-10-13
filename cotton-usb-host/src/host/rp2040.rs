@@ -1,4 +1,5 @@
 use crate::async_pool::Pool;
+use crate::core::driver::{self, Driver, InterruptPacket};
 use crate::debug;
 use crate::types::{EndpointType, SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use crate::types::{
@@ -6,14 +7,13 @@ use crate::types::{
     SET_ADDRESS,
 };
 use core::future::Future;
-use core::ops::Deref;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::future::FutureExt;
+use futures::Stream;
+use futures::StreamExt;
 use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
-use futures::StreamExt;
-use futures::Stream;
 
 /// Future for the [`select_slice`] function.
 #[derive(Debug)]
@@ -36,12 +36,22 @@ pub fn select_slice<Str: Stream>(slice: Pin<&mut [Str]>) -> SelectSlice<Str> {
 impl<Str: Stream> Stream for SelectSlice<'_, Str> {
     type Item = (Str::Item, usize);
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         // Safety: refer to
         //   https://users.rust-lang.org/t/working-with-pinned-slices-are-there-any-structurally-pinning-vec-like-collection-types/50634/2
         #[inline(always)]
-        fn pin_iter<T>(slice: Pin<&mut [T]>) -> impl Iterator<Item = Pin<&mut T>> {
-            unsafe { slice.get_unchecked_mut().iter_mut().map(|v| Pin::new_unchecked(v)) }
+        fn pin_iter<T>(
+            slice: Pin<&mut [T]>,
+        ) -> impl Iterator<Item = Pin<&mut T>> {
+            unsafe {
+                slice
+                    .get_unchecked_mut()
+                    .iter_mut()
+                    .map(|v| Pin::new_unchecked(v))
+            }
         }
         for (i, fut) in pin_iter(self.inner.as_mut()).enumerate() {
             if let Poll::Ready(Some(res)) = fut.poll_next(cx) {
@@ -57,7 +67,7 @@ pub struct UsbDeviceSet(pub u32);
 
 impl UsbDeviceSet {
     pub fn contains(&self, n: u8) -> bool {
-        (self.0 & (1<<n)) != 0
+        (self.0 & (1 << n)) != 0
     }
 }
 
@@ -142,7 +152,10 @@ impl<'a> DeviceDetect<'a> {
 impl Stream for DeviceDetect<'_> {
     type Item = bool;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         defmt::trace!("DE register");
         self.waker.register(cx.waker());
 
@@ -152,10 +165,7 @@ impl Stream for DeviceDetect<'_> {
         if (intr.bits() & 0x1) != 0 {
             defmt::info!("DE ready {:x}", status.bits());
             regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
-            regs.inte().modify(|_, w| {
-                w.host_conn_dis()
-                    .set_bit()
-            });
+            regs.inte().modify(|_, w| w.host_conn_dis().set_bit());
             Poll::Ready(Some(status.speed().bits() != 0))
         } else {
             defmt::trace!(
@@ -163,10 +173,7 @@ impl Stream for DeviceDetect<'_> {
                 intr.bits(),
                 status.bits()
             );
-            regs.inte().modify(|_, w| {
-                w.host_conn_dis()
-                    .set_bit()
-            });
+            regs.inte().modify(|_, w| w.host_conn_dis().set_bit());
             Poll::Pending
         }
     }
@@ -520,34 +527,6 @@ impl Depacketiser for OutDepacketiser {
     }
 }
 
-pub struct InterruptPacket {
-    pub size: u8,
-    pub data: [u8; 64],
-}
-
-impl Default for InterruptPacket {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InterruptPacket {
-    pub const fn new() -> Self {
-        Self {
-            size: 0,
-            data: [0u8; 64],
-        }
-    }
-}
-
-impl Deref for InterruptPacket {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.data[0..(self.size as usize)]
-    }
-}
-
 type Pipe<'a> = crate::async_pool::Pooled<'a>;
 
 struct InterruptEndpoint<'stack> {
@@ -660,7 +639,58 @@ impl Stream for MaybeInterruptEndpoint<'_> {
     }
 }
 
-pub struct UsbStack<'a> {
+pub struct InterruptPipe<'driver, 'statics>
+where
+    'statics: 'driver,
+{
+    driver: &'driver HostController<'statics>,
+    pipe: Pipe<'driver>,
+}
+
+impl<'driver, 'statics> driver::InterruptPipe
+    for InterruptPipe<'driver, 'statics>
+where
+    'statics: 'driver,
+{
+    fn set_waker(&mut self, waker: &core::task::Waker) {
+        self.driver.statics.pipe_wakers[self.pipe.n as usize].register(waker);
+    }
+
+    fn poll(&mut self) -> Option<InterruptPacket> {
+        None
+    }
+}
+
+pub struct HostController<'a> {
+    statics: &'a UsbStatics,
+    control_pipes: Pool,
+}
+
+impl<'statics> HostController<'statics> {
+    pub fn new(statics: &'statics UsbStatics) -> Self {
+        Self {
+            statics,
+            control_pipes: Pool::new(1),
+        }
+    }
+}
+
+impl<'statics> Driver for HostController<'statics> {
+    type InterruptPipe<'driver> = InterruptPipe<'driver, 'statics> where Self: 'driver;
+
+    fn alloc_interrupt_pipe<'driver>(
+        &'driver mut self,
+    ) -> impl core::future::Future<Output = InterruptPipe<'driver, 'statics>>
+    {
+        async {
+            let pipe = self.control_pipes.alloc().await;
+            InterruptPipe::<'driver, 'statics> { driver: self, pipe }
+        }
+    }
+}
+
+pub struct UsbStack<'a, D: Driver> {
+    driver: D,
     regs: pac::USBCTRL_REGS,
     dpram: pac::USBCTRL_DPRAM,
     statics: &'a UsbStatics,
@@ -668,8 +698,9 @@ pub struct UsbStack<'a> {
     bulk_pipes: Pool,
 }
 
-impl<'a> UsbStack<'a> {
+impl<'a, D: Driver> UsbStack<'a, D> {
     pub fn new(
+        driver: D,
         regs: pac::USBCTRL_REGS,
         dpram: pac::USBCTRL_DPRAM,
         resets: &mut pac::RESETS,
@@ -679,12 +710,19 @@ impl<'a> UsbStack<'a> {
         resets.reset().modify(|_, w| w.usbctrl().clear_bit());
 
         Self {
+            driver,
             regs,
             dpram,
             statics,
             control_pipes: Pool::new(1),
             bulk_pipes: Pool::new(15),
         }
+    }
+
+    pub async fn alloc_interrupt_pipe<'b>(
+        &'b mut self,
+    ) -> D::InterruptPipe<'b> {
+        self.driver.alloc_interrupt_pipe().await
     }
 
     async fn alloc_pipe(&self, endpoint_type: EndpointType) -> Pipe {

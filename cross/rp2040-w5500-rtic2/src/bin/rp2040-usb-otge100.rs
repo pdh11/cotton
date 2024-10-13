@@ -116,7 +116,10 @@ mod app {
     }
 
     #[inline(never)]
-    async fn hub_class(stack: &UsbStack<'_>, device: UsbDevice) {
+    async fn hub_class<HC: cotton_usb_host::core::driver::Driver>(
+        stack: &UsbStack<'_, HC>,
+        device: UsbDevice,
+    ) {
         let mut descriptors = [0u8; 64];
 
         let rc = stack
@@ -280,8 +283,7 @@ mod app {
                         if bit == 0 {
                             // C_PORT_CONNECTION
                             if (state & 1) == 0 {
-                                defmt::println!("port {} disconnect",
-                                                port);
+                                defmt::println!("port {} disconnect", port);
                             } else {
                                 let rc = stack
                                     .control_transfer_out(
@@ -298,8 +300,12 @@ mod app {
                                         },
                                         &descriptors,
                                     )
-                                .await;
-                                defmt::println!("Set port {} reset {}", port, rc);
+                                    .await;
+                                defmt::println!(
+                                    "Set port {} reset {}",
+                                    port,
+                                    rc
+                                );
                             }
                         }
 
@@ -335,7 +341,11 @@ mod app {
 
     #[task(local = [regs, dpram, resets], shared = [&statics], priority = 2)]
     async fn usb_task(cx: usb_task::Context) {
+        let driver = cotton_usb_host::host::rp2040::HostController::new(
+            cx.shared.statics,
+        );
         let stack = UsbStack::new(
+            driver,
             cx.local.regs.take().unwrap(),
             cx.local.dpram.take().unwrap(),
             cx.local.resets,
