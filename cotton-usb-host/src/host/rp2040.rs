@@ -5,9 +5,10 @@ use crate::types::{
     ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
     CONFIGURATION_DESCRIPTOR, DEVICE_DESCRIPTOR, DEVICE_TO_HOST,
     GET_DESCRIPTOR, HOST_TO_DEVICE, HUB_CLASSCODE, SET_ADDRESS,
+    SET_CONFIGURATION,
 };
 use crate::types::{EndpointType, SetupPacket, UsbDevice, UsbError, UsbSpeed};
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
@@ -593,6 +594,32 @@ impl driver::InterruptPipe for InterruptPipe<'_> {
     }
 }
 
+pub struct MultiInterruptPipe;
+
+impl driver::InterruptPipe for MultiInterruptPipe {
+    fn set_waker(&self, _waker: &core::task::Waker) {
+        todo!()
+    }
+    fn poll(&self) -> Option<InterruptPacket> {
+        todo!()
+    }
+}
+
+impl driver::MultiInterruptPipe for MultiInterruptPipe {
+    fn try_add(
+        &mut self,
+        _address: u8,
+        _endpoint: u8,
+        _max_packet_size: u8,
+        _interval_ms: u8,
+    ) -> Result<(), UsbError> {
+        todo!()
+    }
+    fn remove(&mut self, _address: u8) {
+        todo!()
+    }
+}
+
 pub struct HostController {
     statics: &'static UsbStatics,
     //control_pipes: Pool,
@@ -611,6 +638,7 @@ impl HostController {
 
 impl Driver for HostController {
     type InterruptPipe<'driver> = InterruptPipe<'driver> where Self: 'driver;
+    type MultiInterruptPipe = MultiInterruptPipe;
 
     // The trait defines this with "-> impl Future"-style syntax, but the one
     // is just sugar for the other according to Clippy.
@@ -674,6 +702,10 @@ impl Driver for HostController {
             data_toggle: Cell::new(false),
         }
     }
+
+    fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe {
+        MultiInterruptPipe
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -705,6 +737,7 @@ pub struct UsbStack<'a, D: Driver> {
     statics: &'a UsbStatics,
     control_pipes: Pool,
     bulk_pipes: Pool,
+    hub_pipes: RefCell<D::MultiInterruptPipe>,
 }
 
 impl<'a, D: Driver> UsbStack<'a, D> {
@@ -745,6 +778,8 @@ impl<'a, D: Driver> UsbStack<'a, D> {
 
         regs.inte().write(|w| w.host_conn_dis().set_bit());
 
+        let hp = driver.multi_interrupt_pipe();
+
         Self {
             driver,
             regs,
@@ -752,7 +787,28 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             statics,
             control_pipes: Pool::new(1),
             bulk_pipes: Pool::new(15),
+            hub_pipes: RefCell::new(hp),
         }
+    }
+
+    pub async fn configure(
+        &self,
+        device: &UsbDevice,
+        configuration_value: u8,
+    ) -> Result<(), UsbError> {
+        self.control_transfer_out(
+            device.address,
+            device.packet_size_ep0,
+            SetupPacket {
+                bmRequestType: HOST_TO_DEVICE,
+                bRequest: SET_CONFIGURATION,
+                wValue: configuration_value as u16,
+                wIndex: 0,
+                wLength: 0,
+            },
+            &[],
+        )
+        .await
     }
 
     async fn alloc_pipe(&self, endpoint_type: EndpointType) -> Pipe {
@@ -1134,23 +1190,46 @@ impl<'a, D: Driver> UsbStack<'a, D> {
         })
     }
 
+    pub fn example_method(&self) {}
+
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
         let root_device = DeviceDetect::new(&self.statics.device_waker);
-        root_device.then(move |status| async move {
-            if let DeviceStatus::Present(speed) = status {
-                let device = self.new_device(speed, 1).await;
-                if device.class == HUB_CLASSCODE {
-                    debug::println!("It's a hub");
-                    if let Ok(bc) = self.get_basic_configuration(&device).await
-                    {
-                        debug::println!("cfg: {:?}", &bc);
+        use crate::core::driver::MultiInterruptPipe;
+
+        futures::stream::select(
+            root_device.then(move |status| async move {
+                if let DeviceStatus::Present(speed) = status {
+                    let device = self.new_device(speed, 1).await;
+                    if device.class == HUB_CLASSCODE {
+                        debug::println!("It's a hub");
+                        if let Ok(bc) =
+                            self.get_basic_configuration(&device).await
+                        {
+                            debug::println!("cfg: {:?}", &bc);
+                            _ = self
+                                .configure(&device, bc.configuration_value)
+                                .await;
+                            let _ = self.hub_pipes.borrow_mut().try_add(
+                                device.address,
+                                bc.in_endpoints.trailing_zeros() as u8,
+                                device.packet_size_ep0,
+                                9,
+                            );
+                        }
                     }
+                    DeviceEvent::Connect(device)
+                } else {
+                    DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
                 }
-                DeviceEvent::Connect(device)
-            } else {
-                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+            }),
+            crate::core::interrupt::MultiInterruptStream::<D> {
+                pipe: &self.hub_pipes,
             }
-        })
+            .then(move |_packet| async move {
+                self.example_method();
+                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+            }),
+        )
     }
 
     /*

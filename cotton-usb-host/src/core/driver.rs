@@ -39,7 +39,7 @@ pub trait MultiInterruptPipe: InterruptPipe {
         &mut self,
         address: u8,
         endpoint: u8,
-        max_packet_size: u16,
+        max_packet_size: u8,
         interval_ms: u8,
     ) -> Result<(), UsbError>;
     fn remove(&mut self, address: u8);
@@ -49,6 +49,7 @@ pub trait Driver {
     type InterruptPipe<'driver>: InterruptPipe
     where
         Self: 'driver;
+    type MultiInterruptPipe: MultiInterruptPipe;
 
     fn alloc_interrupt_pipe(
         &self,
@@ -57,4 +58,6 @@ pub trait Driver {
         max_packet_size: u16,
         interval_ms: u8,
     ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>>;
+
+    fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe;
 }
