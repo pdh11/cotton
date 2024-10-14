@@ -4,7 +4,7 @@ use crate::debug;
 use crate::types::{
     ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
     CONFIGURATION_DESCRIPTOR, DEVICE_DESCRIPTOR, DEVICE_TO_HOST,
-    GET_DESCRIPTOR, HOST_TO_DEVICE, SET_ADDRESS,
+    GET_DESCRIPTOR, HOST_TO_DEVICE, HUB_CLASSCODE, SET_ADDRESS,
 };
 use crate::types::{EndpointType, SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use core::cell::Cell;
@@ -1124,46 +1124,34 @@ impl<'a, D: Driver> UsbStack<'a, D> {
         &self,
     ) -> impl Stream<Item = DeviceEvent> + '_ {
         let root_device = DeviceDetect::new(&self.statics.device_waker);
-        root_device.then(|status| {
+        root_device.then(move |status| async move {
             if let DeviceStatus::Present(speed) = status {
-                self.new_device(speed, 1)
-                    .map(DeviceEvent::Connect)
-                    .left_future()
+                let device = self.new_device(speed, 1).await;
+                DeviceEvent::Connect(device)
             } else {
-                core::future::ready(DeviceEvent::Disconnect(UsbDeviceSet(
-                    0xFFFF_FFFF,
-                )))
-                .right_future()
+                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
             }
         })
     }
 
-    /*
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
         let root_device = DeviceDetect::new(&self.statics.device_waker);
-        root_device.then(|status| {
+        root_device.then(move |status| async move {
             if let DeviceStatus::Present(speed) = status {
-                self.new_device(speed, 1)
-                    .then(|device| async move {
-                        if device.class == HUB_CLASSCODE {
-                            debug::println!("It's a hub");
-                            if let Ok(bc) = self.get_basic_configuration(&device)
-                                .await {
-                                    debug::println!("cfg: {:?}", &bc);
-                                }
-                        }
-                        device
-                    })
-                    .map(DeviceEvent::Connect)
-                    .left_future()
+                let device = self.new_device(speed, 1).await;
+                if device.class == HUB_CLASSCODE {
+                    debug::println!("It's a hub");
+                    if let Ok(bc) = self.get_basic_configuration(&device).await
+                    {
+                        debug::println!("cfg: {:?}", &bc);
+                    }
+                }
+                DeviceEvent::Connect(device)
             } else {
-                core::future::ready(DeviceEvent::Disconnect(UsbDeviceSet(
-                    0xFFFF_FFFF,
-                )))
-                .right_future()
+                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
             }
         })
-    }*/
+    }
 
     /*
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> {

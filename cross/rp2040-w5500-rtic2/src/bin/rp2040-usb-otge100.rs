@@ -355,7 +355,7 @@ mod app {
             cx.shared.statics,
         );
 
-        let mut p = pin!(stack.device_events_no_hubs());
+        let mut p = pin!(stack.device_events());
 
         let device = p.next().await;
 
