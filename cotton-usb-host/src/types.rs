@@ -188,7 +188,7 @@ pub enum UsbError {
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum UsbSpeed {
-    Low1_1,
+    Low1_5,
     Full12,
     High480,
 }

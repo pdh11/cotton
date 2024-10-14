@@ -35,6 +35,7 @@ TODO before merge:
  - [ ] Bulk in/out
  - [ ] At least one real example (MSC?)
  - [x] Interlocking to avoid contending on pipe 0
+ - [ ] Review register usage for contention (buff_status?)
  - [ ] STM32?
 
 TODO later:
@@ -43,10 +44,10 @@ TODO later:
  - [ ] rp-pac vs rp2040-pac?
  - [ ] More microcontrollers
 
-[^1]: The documentation describes this as "USB 2.0 LS and FS" (1.1 and
-12Mbits/s), but as the only changes in USB&nbsp;2.0 compared to 1.1 were
-related to the addition of HS (480Mbits/s), it seems more honest to
-describe it as USB 1.1.
+[^1]: The documentation describes this as "USB&nbsp;2.0 LS and FS" (1.5 and
+12Mbits/s), but as the _only_ changes in USB&nbsp;2.0 compared to 1.1
+were related to the addition of HS (480Mbits/s), it seems more honest
+to describe it as USB&nbsp;1.1.
 
 Library documentation is [on
 docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).

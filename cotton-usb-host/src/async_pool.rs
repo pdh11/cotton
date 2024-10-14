@@ -103,4 +103,11 @@ impl Pool {
         let fut = PoolFuture { pool: self };
         fut.await
     }
+
+    pub fn try_alloc(&self) -> Option<Pooled> {
+        Some(Pooled {
+            n: self.alloc_internal()?,
+            pool: self,
+        })
+    }
 }

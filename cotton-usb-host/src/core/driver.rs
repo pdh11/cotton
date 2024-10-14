@@ -33,6 +33,17 @@ pub trait InterruptPipe {
     fn poll(&self) -> Option<InterruptPacket>;
 }
 
+pub trait MultiInterruptPipe: InterruptPipe {
+    fn try_add(
+        &mut self,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u16,
+        interval_ms: u8,
+    ) -> Option<()>;
+    fn remove(&mut self, address: u8);
+}
+
 pub trait Driver {
     type InterruptPipe<'driver>: InterruptPipe
     where

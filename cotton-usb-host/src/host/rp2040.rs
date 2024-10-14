@@ -53,21 +53,25 @@ impl UsbStatics {
             }
             regs.buff_status().write(|w| unsafe { w.bits(0xFFFF_FFFC) });
         }
+        if (ints.bits() & 1) != 0 {
+            // This clears the interrupt but does NOT clear sie_status.speed!
+            unsafe { regs.sie_status().modify(|_, w| w.speed().bits(3)) };
+            self.device_waker.wake();
+        }
+        if (ints.bits() & 0x448) != 0 {
+            self.pipe_wakers[0].wake();
+        }
+
+        // Disable any remaining interrupts so we don't have an IRQ storm
         let bits = regs.ints().read().bits();
         unsafe {
             regs.inte().modify(|r, w| w.bits(r.bits() & !bits));
         }
         defmt::println!(
             "IRQ2 ints={:x} inte={:x}",
-            ints.bits(),
+            bits,
             regs.inte().read().bits()
         );
-        if (ints.bits() & 0x1001) != 0 {
-            self.device_waker.wake();
-        }
-        if (ints.bits() & 0x448) != 0 {
-            self.pipe_wakers[0].wake();
-        }
     }
 }
 
@@ -91,22 +95,34 @@ impl Default for UsbStatics {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum DeviceStatus {
+    Present(UsbSpeed),
+    Absent,
+}
+
 #[derive(Copy, Clone)]
 pub struct DeviceDetect<'a> {
     waker: &'a CriticalSectionWakerRegistration,
+    status: DeviceStatus,
 }
 
 impl<'a> DeviceDetect<'a> {
     fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
-        Self { waker }
+        Self {
+            waker,
+            status: DeviceStatus::Absent,
+        }
     }
 }
 
 impl Stream for DeviceDetect<'_> {
-    type Item = bool;
+    type Item = DeviceStatus;
 
     fn poll_next(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         defmt::trace!("DE register");
@@ -114,16 +130,21 @@ impl Stream for DeviceDetect<'_> {
 
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
-        let intr = regs.intr().read();
-        if (intr.bits() & 0x1) != 0 {
+        let device_status = match status.speed().bits() {
+            0 => DeviceStatus::Absent,
+            1 => DeviceStatus::Present(UsbSpeed::Low1_5),
+            _ => DeviceStatus::Present(UsbSpeed::Full12),
+        };
+
+        if device_status != self.status {
             defmt::info!("DE ready {:x}", status.bits());
-            regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
             regs.inte().modify(|_, w| w.host_conn_dis().set_bit());
-            Poll::Ready(Some(status.speed().bits() != 0))
+            self.status = device_status;
+            Poll::Ready(Some(device_status))
         } else {
             defmt::trace!(
                 "DE pending intr={:x} st={:x}",
-                intr.bits(),
+                regs.intr().read().bits(),
                 status.bits()
             );
             regs.inte().modify(|_, w| w.host_conn_dis().set_bit());
@@ -489,7 +510,7 @@ pub struct InterruptPipe<'driver> {
     data_toggle: Cell<bool>,
 }
 
-impl<'driver> driver::InterruptPipe for InterruptPipe<'driver> {
+impl driver::InterruptPipe for InterruptPipe<'_> {
     fn set_waker(&self, waker: &core::task::Waker) {
         self.driver.statics.pipe_wakers[self.pipe.n as usize].register(waker);
     }
@@ -592,13 +613,13 @@ impl Driver for HostController {
 
     // The trait defines this with "-> impl Future"-style syntax, but the one
     // is just sugar for the other according to Clippy.
-    async fn alloc_interrupt_pipe<'driver>(
-        &'driver self,
+    async fn alloc_interrupt_pipe(
+        &self,
         address: u8,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
-    ) -> InterruptPipe<'driver> {
+    ) -> InterruptPipe {
         let mut pipe = self.bulk_pipes.alloc().await;
         pipe.n += 1;
         debug::println!("interrupt_endpoint on pipe {}", pipe.n);
@@ -645,7 +666,7 @@ impl Driver for HostController {
             .ep_buffer_control((n * 2) as usize)
             .modify(|_, w| w.available_0().set_bit());
 
-        InterruptPipe::<'driver> {
+        InterruptPipe {
             driver: self,
             pipe,
             max_packet_size,
@@ -694,6 +715,75 @@ impl<'a, D: Driver> UsbStack<'a, D> {
         }
     }
 
+    async fn new_device(&self, speed: UsbSpeed, address: u8) -> UsbDevice {
+        // Read prefix of device descriptor
+        let mut descriptors = [0u8; 18];
+        let rc = self
+            .control_transfer_in(
+                0,
+                64,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
+                    wIndex: 0,
+                    wLength: 8,
+                },
+                &mut descriptors,
+            )
+            .await;
+
+        let packet_size_ep0 = if rc.is_ok() { descriptors[7] } else { 8 };
+
+        // Set address
+        let _ = self
+            .control_transfer_out(
+                0,
+                packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: HOST_TO_DEVICE,
+                    bRequest: SET_ADDRESS,
+                    wValue: address as u16,
+                    wIndex: 0,
+                    wLength: 0,
+                },
+                &descriptors,
+            )
+            .await;
+
+        // Fetch rest of device descriptor
+        let mut vid = 0;
+        let mut pid = 0;
+        let rc = self
+            .control_transfer_in(
+                1,
+                packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
+                    wIndex: 0,
+                    wLength: 18,
+                },
+                &mut descriptors,
+            )
+            .await;
+        if let Ok(_sz) = rc {
+            vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
+            pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
+        } else {
+            defmt::println!("Dtor fetch 2 {:?}", rc);
+        }
+
+        UsbDevice {
+            address,
+            packet_size_ep0,
+            vid,
+            pid,
+            speed,
+        }
+    }
+
     pub async fn enumerate_root_device(&self) -> UsbDevice {
         self.regs.usb_muxing().modify(|_, w| {
             w.to_phy().set_bit();
@@ -731,17 +821,22 @@ impl<'a, D: Driver> UsbStack<'a, D> {
         let speed = match status.speed().bits() {
             1 => {
                 defmt::println!("LS detected");
-                UsbSpeed::Low1_1
+                UsbSpeed::Low1_5
             }
             2 => {
                 defmt::println!("FS detected");
                 UsbSpeed::Full12
             }
-            _ => UsbSpeed::Low1_1,
+            _ => UsbSpeed::Low1_5,
         };
 
         // Clear interrupt
         unsafe { self.regs.sie_status().modify(|_, w| w.speed().bits(3)) };
+
+        defmt::trace!(
+            "conn_dis cleared, sie_status=0x{:x}",
+            self.regs.sie_status().read().bits()
+        );
 
         /* RP2040 seems not to need the bus_reset() bit set at this point --
          * perhaps it does it automatically? TinyUSB doesn't set it either.
@@ -750,73 +845,7 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             .inte()
             .modify(|_, w| w.bus_reset().set_bit());
          */
-
-        // Read prefix of device descriptor
-        let mut descriptors = [0u8; 18];
-        let rc = self
-            .control_transfer_in(
-                0,
-                64,
-                SetupPacket {
-                    bmRequestType: DEVICE_TO_HOST,
-                    bRequest: GET_DESCRIPTOR,
-                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
-                    wIndex: 0,
-                    wLength: 8,
-                },
-                &mut descriptors,
-            )
-            .await;
-
-        let packet_size_ep0 = if rc.is_ok() { descriptors[7] } else { 8 };
-
-        // Set address (root device always gets "1")
-        let _ = self
-            .control_transfer_out(
-                0,
-                packet_size_ep0,
-                SetupPacket {
-                    bmRequestType: HOST_TO_DEVICE,
-                    bRequest: SET_ADDRESS,
-                    wValue: 1,
-                    wIndex: 0,
-                    wLength: 0,
-                },
-                &descriptors,
-            )
-            .await;
-
-        // Fetch rest of device descriptor
-        let mut vid = 0;
-        let mut pid = 0;
-        let rc = self
-            .control_transfer_in(
-                1,
-                packet_size_ep0,
-                SetupPacket {
-                    bmRequestType: DEVICE_TO_HOST,
-                    bRequest: GET_DESCRIPTOR,
-                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
-                    wIndex: 0,
-                    wLength: 18,
-                },
-                &mut descriptors,
-            )
-            .await;
-        if let Ok(_sz) = rc {
-            vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
-            pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
-        } else {
-            defmt::println!("Dtor fetch 2 {:?}", rc);
-        }
-
-        UsbDevice {
-            address: 1,
-            packet_size_ep0,
-            vid,
-            pid,
-            speed,
-        }
+        self.new_device(speed, 1).await
     }
 
     async fn control_transfer_inner(
@@ -1079,6 +1108,24 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             crate::core::interrupt::InterruptStream::<D> { pipe }
         }
         .flatten_stream()
+    }
+
+    pub fn device_events_no_hubs(
+        &self,
+    ) -> impl Stream<Item = DeviceEvent> + '_ {
+        let root_device = DeviceDetect::new(&self.statics.device_waker);
+        root_device.then(|status| {
+            if let DeviceStatus::Present(speed) = status {
+                self.new_device(speed, 1)
+                    .map(DeviceEvent::Connect)
+                    .left_future()
+            } else {
+                core::future::ready(DeviceEvent::Disconnect(UsbDeviceSet(
+                    0xFFFF_FFFF,
+                )))
+                .right_future()
+            }
+        })
     }
 
     /*
