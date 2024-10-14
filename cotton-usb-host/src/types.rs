@@ -40,14 +40,14 @@ pub struct DeviceDescriptor {
 #[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-10
 pub struct ConfigurationDescriptor {
-    bLength: u8,
-    bDescriptorType: u8,
-    wTotalLength: [u8; 2],
-    bNumInterfaces: u8,
-    bConfigurationValue: u8,
-    iConfiguration: u8,
-    bmAttributes: u8,
-    bMaxPower: u8,
+    pub bLength: u8,
+    pub bDescriptorType: u8,
+    pub wTotalLength: [u8; 2],
+    pub bNumInterfaces: u8,
+    pub bConfigurationValue: u8,
+    pub iConfiguration: u8,
+    pub bmAttributes: u8,
+    pub bMaxPower: u8,
 }
 
 impl ConfigurationDescriptor {
@@ -66,15 +66,15 @@ impl ConfigurationDescriptor {
 #[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-12
 pub struct InterfaceDescriptor {
-    bLength: u8,
-    bDescriptorType: u8,
-    bInterfaceNumber: u8,
-    bAlternateSetting: u8,
-    bNumEndpoints: u8,
-    bInterfaceClass: u8,
-    bInterfaceSubClass: u8,
-    bInterfaceProtocol: u8,
-    iInterface: u8,
+    pub bLength: u8,
+    pub bDescriptorType: u8,
+    pub bInterfaceNumber: u8,
+    pub bAlternateSetting: u8,
+    pub bNumEndpoints: u8,
+    pub bInterfaceClass: u8,
+    pub bInterfaceSubClass: u8,
+    pub bInterfaceProtocol: u8,
+    pub iInterface: u8,
 }
 
 impl InterfaceDescriptor {
@@ -93,12 +93,12 @@ impl InterfaceDescriptor {
 #[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-13
 pub struct EndpointDescriptor {
-    bLength: u8,
-    bDescriptorType: u8,
-    bEndpointAddress: u8,
-    bmAttributes: u8,
-    wMaxPacketSize: [u8; 2],
-    bInterval: u8,
+    pub bLength: u8,
+    pub bDescriptorType: u8,
+    pub bEndpointAddress: u8,
+    pub bmAttributes: u8,
+    pub wMaxPacketSize: [u8; 2],
+    pub bInterval: u8,
 }
 
 impl EndpointDescriptor {
@@ -165,6 +165,9 @@ pub const INTERFACE_DESCRIPTOR: u8 = 4;
 pub const ENDPOINT_DESCRIPTOR: u8 = 5;
 pub const HUB_DESCRIPTOR: u8 = 0x29; // USB 2.0 table 11-13
 
+// Class codes (DeviceDescriptor.bDeviceClass)
+pub const HUB_CLASSCODE: u8 = 9;
+
 // Values for SET_FEATURE for hubs (USB 2.0 table 11-17)
 pub const PORT_RESET: u16 = 4;
 pub const PORT_POWER: u16 = 8;
@@ -182,6 +185,7 @@ pub enum UsbError {
     CrcError,
     DataSeqError,
     BufferTooSmall,
+    AllPipesInUse,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -212,13 +216,15 @@ pub struct UsbDevice {
     pub vid: u16,
     pub pid: u16,
     pub speed: UsbSpeed,
+    pub class: u8,
+    pub subclass: u8,
 }
 
 pub trait DescriptorVisitor {
-    fn on_configuration(&mut self, c: &ConfigurationDescriptor);
-    fn on_interface(&mut self, i: &InterfaceDescriptor);
-    fn on_endpoint(&mut self, i: &EndpointDescriptor);
-    fn on_other(&mut self, d: &[u8]);
+    fn on_configuration(&mut self, _c: &ConfigurationDescriptor) {}
+    fn on_interface(&mut self, _i: &InterfaceDescriptor) {}
+    fn on_endpoint(&mut self, _e: &EndpointDescriptor) {}
+    fn on_other(&mut self, _d: &[u8]) {}
 }
 
 pub struct ShowDescriptors;

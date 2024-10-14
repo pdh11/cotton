@@ -9,6 +9,7 @@ use rp_pico as _; // includes boot2
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
     use core::pin::pin;
+    use cotton_usb_host::host::rp2040::DeviceEvent;
     use cotton_usb_host::host::rp2040::{UsbStack, UsbStatics};
     use cotton_usb_host::types::{
         parse_descriptors, HubDescriptor, ShowDescriptors, CLASS_REQUEST,
@@ -354,58 +355,62 @@ mod app {
             cx.shared.statics,
         );
 
-        let device = stack.enumerate_root_device().await;
+        let mut p = pin!(stack.device_events_no_hubs());
 
-        defmt::println!("Got root device {:x}", device);
+        let device = p.next().await;
 
-        defmt::trace!("fetching2");
-        let mut descriptors = [0u8; 64];
-        let rc = stack
-            .control_transfer_in(
-                1,
-                device.packet_size_ep0,
-                SetupPacket {
-                    bmRequestType: DEVICE_TO_HOST,
-                    bRequest: GET_DESCRIPTOR,
-                    wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
-                    wIndex: 0,
-                    wLength: 64,
-                },
-                &mut descriptors,
-            )
-            .await;
-        if let Ok(sz) = rc {
-            parse_descriptors(&descriptors[0..sz], &mut ShowDescriptors);
-        } else {
-            defmt::println!("fetched {:?}", rc);
-        }
+        if let Some(DeviceEvent::Connect(device)) = device {
+            defmt::println!("Got root device {:x}", device);
 
-        if device.vid == 0x0B95 && device.pid == 0x7720 {
-            // ASIX AX88772
-            defmt::trace!("fetching4");
+            defmt::trace!("fetching2");
+            let mut descriptors = [0u8; 64];
             let rc = stack
                 .control_transfer_in(
                     1,
                     device.packet_size_ep0,
                     SetupPacket {
-                        bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
-                        bRequest: 0x13,
-                        wValue: 0,
+                        bmRequestType: DEVICE_TO_HOST,
+                        bRequest: GET_DESCRIPTOR,
+                        wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
                         wIndex: 0,
-                        wLength: 6,
+                        wLength: 64,
                     },
                     &mut descriptors,
                 )
                 .await;
-            if let Ok(_sz) = rc {
-                defmt::println!("AX88772 MAC {:x}", &descriptors[0..6]);
+            if let Ok(sz) = rc {
+                parse_descriptors(&descriptors[0..sz], &mut ShowDescriptors);
             } else {
                 defmt::println!("fetched {:?}", rc);
             }
-        }
 
-        if device.vid == 0x1A40 && device.pid == 0x0801 {
-            hub_class(&stack, device).await;
+            if device.vid == 0x0B95 && device.pid == 0x7720 {
+                // ASIX AX88772
+                defmt::trace!("fetching4");
+                let rc = stack
+                    .control_transfer_in(
+                        1,
+                        device.packet_size_ep0,
+                        SetupPacket {
+                            bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
+                            bRequest: 0x13,
+                            wValue: 0,
+                            wIndex: 0,
+                            wLength: 6,
+                        },
+                        &mut descriptors,
+                    )
+                    .await;
+                if let Ok(_sz) = rc {
+                    defmt::println!("AX88772 MAC {:x}", &descriptors[0..6]);
+                } else {
+                    defmt::println!("fetched {:?}", rc);
+                }
+            }
+
+            if device.vid == 0x1A40 && device.pid == 0x0801 {
+                hub_class(&stack, device).await;
+            }
         }
     }
 

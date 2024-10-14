@@ -1,4 +1,3 @@
-use crate::debug;
 use core::cell::RefCell;
 use core::cell::UnsafeCell;
 use core::future::Future;
@@ -69,7 +68,7 @@ impl Pool {
 
     fn alloc_internal(&self) -> Option<u8> {
         // @todo We're always in thread context here, probably don't need CS
-        let n = critical_section::with(|_| unsafe {
+        critical_section::with(|_| unsafe {
             let bits: u32 = *self.allocated.get();
             for i in 0..self.total {
                 if (bits & (1 << i)) == 0 {
@@ -78,21 +77,15 @@ impl Pool {
                 }
             }
             None
-        });
-
-        debug::println!("allocated {:?}", n);
-        n
+        })
     }
 
     fn dealloc_internal(&self, n: u8) {
-        let bits = critical_section::with(|_| unsafe {
+        critical_section::with(|_| unsafe {
             let mut bits = *self.allocated.get();
             bits &= !(1 << n);
             *self.allocated.get() = bits;
-            bits
         });
-
-        debug::println!("deallocated, bits now {}", bits);
 
         if let Some(w) = self.waker.take() {
             w.wake();

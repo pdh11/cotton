@@ -1,11 +1,12 @@
 use crate::async_pool::Pool;
 use crate::core::driver::{self, Driver, InterruptPacket};
 use crate::debug;
-use crate::types::{EndpointType, SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use crate::types::{
-    DEVICE_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR, HOST_TO_DEVICE,
-    SET_ADDRESS,
+    ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
+    CONFIGURATION_DESCRIPTOR, DEVICE_DESCRIPTOR, DEVICE_TO_HOST,
+    GET_DESCRIPTOR, HOST_TO_DEVICE, SET_ADDRESS,
 };
+use crate::types::{EndpointType, SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use core::cell::Cell;
 use core::future::Future;
 use core::pin::Pin;
@@ -675,6 +676,28 @@ impl Driver for HostController {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Default)]
+pub struct BasicConfiguration {
+    configuration_value: u8,
+    in_endpoints: u16,
+    out_endpoints: u16,
+}
+
+impl DescriptorVisitor for BasicConfiguration {
+    fn on_configuration(&mut self, c: &ConfigurationDescriptor) {
+        self.configuration_value = c.bConfigurationValue;
+    }
+    fn on_endpoint(&mut self, i: &EndpointDescriptor) {
+        if (i.bEndpointAddress & 0x80) == 0x80 {
+            self.in_endpoints |= 1 << (i.bEndpointAddress & 15);
+        } else {
+            self.out_endpoints |= 1 << (i.bEndpointAddress & 15);
+        }
+    }
+}
+
 pub struct UsbStack<'a, D: Driver> {
     driver: D,
     regs: pac::USBCTRL_REGS,
@@ -694,6 +717,33 @@ impl<'a, D: Driver> UsbStack<'a, D> {
     ) -> Self {
         resets.reset().modify(|_, w| w.usbctrl().set_bit());
         resets.reset().modify(|_, w| w.usbctrl().clear_bit());
+
+        regs.usb_muxing().modify(|_, w| {
+            w.to_phy().set_bit();
+            w.softcon().set_bit()
+        });
+        regs.usb_pwr().modify(|_, w| {
+            w.vbus_detect().set_bit();
+            w.vbus_detect_override_en().set_bit()
+        });
+        regs.main_ctrl().modify(|_, w| {
+            w.sim_timing().clear_bit();
+            w.host_ndevice().set_bit();
+            w.controller_en().set_bit()
+        });
+        regs.sie_ctrl().write(|w| {
+            w.pulldown_en().set_bit();
+            w.vbus_en().set_bit();
+            w.keep_alive_en().set_bit();
+            w.sof_en().set_bit()
+        });
+
+        unsafe {
+            pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
+            pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
+        }
+
+        regs.inte().write(|w| w.host_conn_dis().set_bit());
 
         Self {
             driver,
@@ -781,71 +831,9 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             vid,
             pid,
             speed,
+            class: descriptors[4],
+            subclass: descriptors[5],
         }
-    }
-
-    pub async fn enumerate_root_device(&self) -> UsbDevice {
-        self.regs.usb_muxing().modify(|_, w| {
-            w.to_phy().set_bit();
-            w.softcon().set_bit()
-        });
-        self.regs.usb_pwr().modify(|_, w| {
-            w.vbus_detect().set_bit();
-            w.vbus_detect_override_en().set_bit()
-        });
-        self.regs.main_ctrl().modify(|_, w| {
-            w.sim_timing().clear_bit();
-            w.host_ndevice().set_bit();
-            w.controller_en().set_bit()
-        });
-        self.regs.sie_ctrl().write(|w| {
-            w.pulldown_en().set_bit();
-            w.vbus_en().set_bit();
-            w.keep_alive_en().set_bit();
-            w.sof_en().set_bit()
-        });
-
-        unsafe {
-            pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
-            pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
-        }
-
-        self.regs.inte().write(|w| w.host_conn_dis().set_bit());
-
-        let mut f = DeviceDetect::new(&self.statics.device_waker);
-
-        f.next().await;
-
-        let status = self.regs.sie_status().read();
-        defmt::trace!("conn_dis awaited, sie_status=0x{:x}", status.bits());
-        let speed = match status.speed().bits() {
-            1 => {
-                defmt::println!("LS detected");
-                UsbSpeed::Low1_5
-            }
-            2 => {
-                defmt::println!("FS detected");
-                UsbSpeed::Full12
-            }
-            _ => UsbSpeed::Low1_5,
-        };
-
-        // Clear interrupt
-        unsafe { self.regs.sie_status().modify(|_, w| w.speed().bits(3)) };
-
-        defmt::trace!(
-            "conn_dis cleared, sie_status=0x{:x}",
-            self.regs.sie_status().read().bits()
-        );
-
-        /* RP2040 seems not to need the bus_reset() bit set at this point --
-         * perhaps it does it automatically? TinyUSB doesn't set it either.
-         *
-        self.regs
-            .inte()
-            .modify(|_, w| w.bus_reset().set_bit());
-         */
-        self.new_device(speed, 1).await
     }
 
     async fn control_transfer_inner(
@@ -1087,16 +1075,13 @@ impl<'a, D: Driver> UsbStack<'a, D> {
         Ok(())
     }
 
-    pub fn interrupt_endpoint_in<'b>(
-        &'b self,
+    pub fn interrupt_endpoint_in(
+        &self,
         address: u8,
         endpoint: u8,
         max_packet_size: u16,
         interval: u8,
-    ) -> impl Stream<Item = InterruptPacket> + 'b
-    where
-        'a: 'b,
-    {
+    ) -> impl Stream<Item = InterruptPacket> + '_ {
         let pipe = self.driver.alloc_interrupt_pipe(
             address,
             endpoint,
@@ -1108,6 +1093,31 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             crate::core::interrupt::InterruptStream::<D> { pipe }
         }
         .flatten_stream()
+    }
+
+    pub async fn get_basic_configuration(
+        &self,
+        device: &UsbDevice,
+    ) -> Result<BasicConfiguration, UsbError> {
+        // TODO: descriptor suites >64 byte (Ella!)
+        let mut buf = [0u8; 64];
+        let sz = self
+            .control_transfer_in(
+                device.address,
+                device.packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
+                    wIndex: 0,
+                    wLength: 64,
+                },
+                &mut buf,
+            )
+            .await?;
+        let mut bd = BasicConfiguration::default();
+        crate::types::parse_descriptors(&buf[0..sz], &mut bd);
+        Ok(bd)
     }
 
     pub fn device_events_no_hubs(
@@ -1127,6 +1137,33 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             }
         })
     }
+
+    /*
+    pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
+        let root_device = DeviceDetect::new(&self.statics.device_waker);
+        root_device.then(|status| {
+            if let DeviceStatus::Present(speed) = status {
+                self.new_device(speed, 1)
+                    .then(|device| async move {
+                        if device.class == HUB_CLASSCODE {
+                            debug::println!("It's a hub");
+                            if let Ok(bc) = self.get_basic_configuration(&device)
+                                .await {
+                                    debug::println!("cfg: {:?}", &bc);
+                                }
+                        }
+                        device
+                    })
+                    .map(DeviceEvent::Connect)
+                    .left_future()
+            } else {
+                core::future::ready(DeviceEvent::Disconnect(UsbDeviceSet(
+                    0xFFFF_FFFF,
+                )))
+                .right_future()
+            }
+        })
+    }*/
 
     /*
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> {

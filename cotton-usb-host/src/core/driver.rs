@@ -1,3 +1,4 @@
+use crate::types::UsbError;
 use core::ops::Deref;
 
 pub struct InterruptPacket {
@@ -40,7 +41,7 @@ pub trait MultiInterruptPipe: InterruptPipe {
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
-    ) -> Option<()>;
+    ) -> Result<(), UsbError>;
     fn remove(&mut self, address: u8);
 }
 
