@@ -120,7 +120,7 @@ mod app {
 
     #[inline(never)]
     async fn hub_class<HC: cotton_usb_host::core::driver::Driver>(
-        stack: &UsbStack<'_, HC>,
+        stack: &UsbStack<HC>,
         device: UsbDevice,
     ) {
         let mut descriptors = [0u8; 64];

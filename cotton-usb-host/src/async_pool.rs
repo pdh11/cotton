@@ -1,8 +1,8 @@
-use core::cell::RefCell;
 use core::cell::UnsafeCell;
 use core::future::Future;
 use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
+use core::task::{Context, Poll};
+use rtic_common::waker_registration::CriticalSectionWakerRegistration;
 #[cfg(feature = "std")]
 use std::fmt::{self, Display};
 
@@ -10,8 +10,10 @@ pub struct Pool {
     total: u8,
     // @todo This can probably just be a RefCell<u32>
     allocated: UnsafeCell<u32>,
-    waker: RefCell<Option<Waker>>,
+    waker: CriticalSectionWakerRegistration,
 }
+
+unsafe impl Sync for Pool {}
 
 pub struct Pooled<'a> {
     pub n: u8,
@@ -38,6 +40,57 @@ impl Drop for Pooled<'_> {
     }
 }
 
+struct BitIterator {
+    bitmap: u32,
+}
+
+impl Iterator for BitIterator {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.bitmap == 0 {
+            None
+        } else {
+            let n = self.bitmap.trailing_zeros();
+            self.bitmap &= !(1 << n);
+            Some(n as u8)
+        }
+    }
+}
+
+pub struct MultiPooled<'a> {
+    bitmap: u32,
+    pool: &'a Pool,
+}
+
+impl<'a> MultiPooled<'a> {
+    pub fn new(pool: &'a Pool) -> Self {
+        Self { bitmap: 0, pool }
+    }
+
+    pub fn try_alloc(&mut self) -> Option<u8> {
+        let n = self.pool.alloc_internal()?;
+        self.bitmap |= 1 << n;
+        Some(n)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = u8> {
+        BitIterator {
+            bitmap: self.bitmap,
+        }
+    }
+}
+
+impl Drop for MultiPooled<'_> {
+    fn drop(&mut self) {
+        while self.bitmap != 0 {
+            let n = self.bitmap.trailing_zeros();
+            self.pool.dealloc_internal(n as u8);
+            self.bitmap &= !(1 << n);
+        }
+    }
+}
+
 pub struct PoolFuture<'a> {
     pool: &'a Pool,
 }
@@ -46,7 +99,7 @@ impl<'a> Future for PoolFuture<'a> {
     type Output = Pooled<'a>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.pool.waker.replace(Some(cx.waker().clone()));
+        self.pool.waker.register(cx.waker());
 
         if let Some(n) = self.pool.alloc_internal() {
             Poll::Ready(Pooled { n, pool: self.pool })
@@ -57,12 +110,12 @@ impl<'a> Future for PoolFuture<'a> {
 }
 
 impl Pool {
-    pub fn new(total: u8) -> Self {
+    pub const fn new(total: u8) -> Self {
         assert!(total <= 32);
         Self {
             total,
             allocated: UnsafeCell::new(0),
-            waker: None.into(),
+            waker: CriticalSectionWakerRegistration::new(),
         }
     }
 
@@ -87,9 +140,7 @@ impl Pool {
             *self.allocated.get() = bits;
         });
 
-        if let Some(w) = self.waker.take() {
-            w.wake();
-        }
+        self.waker.wake();
     }
 
     pub async fn alloc(&self) -> Pooled {

@@ -34,6 +34,7 @@ pub enum DeviceEvent {
 pub struct UsbStatics {
     device_waker: CriticalSectionWakerRegistration,
     pipe_wakers: [CriticalSectionWakerRegistration; 16],
+    bulk_pipes: Pool,
 }
 
 impl UsbStatics {
@@ -87,6 +88,7 @@ impl UsbStatics {
         Self {
             device_waker: CriticalSectionWakerRegistration::new(),
             pipe_wakers: [Self::W; 16],
+            bulk_pipes: Pool::new(15),
         }
     }
 }
@@ -594,7 +596,33 @@ impl driver::InterruptPipe for InterruptPipe<'_> {
     }
 }
 
-pub struct MultiInterruptPipe;
+type MultiPooled<'a> = crate::async_pool::MultiPooled<'a>;
+
+#[allow(dead_code)]
+struct PipeInfo {
+    address: u8,
+    endpoint: u8,
+    max_packet_size: u8,
+    data_toggle: Cell<bool>,
+}
+
+#[allow(dead_code)]
+pub struct MultiInterruptPipe {
+    pipes: MultiPooled<'static>,
+    pipe_info: [Option<PipeInfo>; 16],
+}
+
+/*
+impl MultiInterruptPipe<'_> {
+    fn new(driver: &HostController) -> Self {
+        Self {
+            driver,
+            pipes: MultiPipe::new(driver),
+            pipe_info: [None; 16],
+        }
+    }
+}
+*/
 
 impl driver::InterruptPipe for MultiInterruptPipe {
     fn set_waker(&self, _waker: &core::task::Waker) {
@@ -608,11 +636,17 @@ impl driver::InterruptPipe for MultiInterruptPipe {
 impl driver::MultiInterruptPipe for MultiInterruptPipe {
     fn try_add(
         &mut self,
-        _address: u8,
-        _endpoint: u8,
-        _max_packet_size: u8,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u8,
         _interval_ms: u8,
     ) -> Result<(), UsbError> {
+        let _p = PipeInfo {
+            address,
+            endpoint,
+            max_packet_size,
+            data_toggle: Cell::new(false),
+        };
         todo!()
     }
     fn remove(&mut self, _address: u8) {
@@ -623,7 +657,6 @@ impl driver::MultiInterruptPipe for MultiInterruptPipe {
 pub struct HostController {
     statics: &'static UsbStatics,
     //control_pipes: Pool,
-    bulk_pipes: Pool,
 }
 
 impl HostController {
@@ -631,7 +664,6 @@ impl HostController {
         Self {
             statics,
             //control_pipes: Pool::new(1),
-            bulk_pipes: Pool::new(15),
         }
     }
 }
@@ -649,7 +681,7 @@ impl Driver for HostController {
         max_packet_size: u16,
         interval_ms: u8,
     ) -> InterruptPipe {
-        let mut pipe = self.bulk_pipes.alloc().await;
+        let mut pipe = self.statics.bulk_pipes.alloc().await;
         pipe.n += 1;
         debug::println!("interrupt_endpoint on pipe {}", pipe.n);
 
@@ -703,8 +735,12 @@ impl Driver for HostController {
         }
     }
 
-    fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe {
-        MultiInterruptPipe
+    fn multi_interrupt_pipe(&self) -> MultiInterruptPipe {
+        const N: Option<PipeInfo> = None;
+        MultiInterruptPipe {
+            pipes: MultiPooled::new(&self.statics.bulk_pipes),
+            pipe_info: [N; 16],
+        }
     }
 }
 
@@ -730,23 +766,22 @@ impl DescriptorVisitor for BasicConfiguration {
     }
 }
 
-pub struct UsbStack<'a, D: Driver> {
+pub struct UsbStack<D: Driver> {
     driver: D,
     regs: pac::USBCTRL_REGS,
     dpram: pac::USBCTRL_DPRAM,
-    statics: &'a UsbStatics,
+    statics: &'static UsbStatics,
     control_pipes: Pool,
-    bulk_pipes: Pool,
     hub_pipes: RefCell<D::MultiInterruptPipe>,
 }
 
-impl<'a, D: Driver> UsbStack<'a, D> {
+impl<D: Driver> UsbStack<D> {
     pub fn new(
         driver: D,
         regs: pac::USBCTRL_REGS,
         dpram: pac::USBCTRL_DPRAM,
         resets: &mut pac::RESETS,
-        statics: &'a UsbStatics,
+        statics: &'static UsbStatics,
     ) -> Self {
         resets.reset().modify(|_, w| w.usbctrl().set_bit());
         resets.reset().modify(|_, w| w.usbctrl().clear_bit());
@@ -786,7 +821,6 @@ impl<'a, D: Driver> UsbStack<'a, D> {
             dpram,
             statics,
             control_pipes: Pool::new(1),
-            bulk_pipes: Pool::new(15),
             hub_pipes: RefCell::new(hp),
         }
     }
@@ -806,7 +840,7 @@ impl<'a, D: Driver> UsbStack<'a, D> {
                 wIndex: 0,
                 wLength: 0,
             },
-            &[],
+            &[0],
         )
         .await
     }
@@ -815,7 +849,7 @@ impl<'a, D: Driver> UsbStack<'a, D> {
         if endpoint_type == EndpointType::Control {
             self.control_pipes.alloc().await
         } else {
-            let mut p = self.bulk_pipes.alloc().await;
+            let mut p = self.statics.bulk_pipes.alloc().await;
             p.n += 1;
             p
         }
@@ -1197,39 +1231,36 @@ impl<'a, D: Driver> UsbStack<'a, D> {
         use crate::core::driver::MultiInterruptPipe;
 
         futures::stream::select(
-            root_device.then(move |status| async move {
-                if let DeviceStatus::Present(speed) = status {
-                    let device = self.new_device(speed, 1).await;
-                    if device.class == HUB_CLASSCODE {
-                        debug::println!("It's a hub");
-                        if let Ok(bc) =
-                            self.get_basic_configuration(&device).await
-                        {
-                            debug::println!("cfg: {:?}", &bc);
-                            _ = self
-                                .configure(&device, bc.configuration_value)
-                                .await;
-                            let _ = self.hub_pipes.borrow_mut().try_add(
-                                device.address,
-                                bc.in_endpoints.trailing_zeros() as u8,
-                                device.packet_size_ep0,
-                                9,
-                            );
-                        }
-                    }
-                    DeviceEvent::Connect(device)
-                } else {
-                    DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
-                }
-            }),
+            root_device.map(|status| (None, Some(status))),
             crate::core::interrupt::MultiInterruptStream::<D> {
                 pipe: &self.hub_pipes,
             }
-            .then(move |_packet| async move {
-                self.example_method();
-                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
-            }),
+            .map(|packet| (Some(packet), None)),
         )
+        .then(move |(_packet, status)| async move {
+            if let Some(DeviceStatus::Present(speed)) = status {
+                let device = self.new_device(speed, 1).await;
+                if device.class == HUB_CLASSCODE {
+                    debug::println!("It's a hub");
+                    if let Ok(bc) = self.get_basic_configuration(&device).await
+                    {
+                        debug::println!("cfg: {:?}", &bc);
+                        _ = self
+                            .configure(&device, bc.configuration_value)
+                            .await;
+                        let _ = self.hub_pipes.borrow_mut().try_add(
+                            device.address,
+                            bc.in_endpoints.trailing_zeros() as u8,
+                            device.packet_size_ep0,
+                            9,
+                        );
+                    }
+                }
+                DeviceEvent::Connect(device)
+            } else {
+                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+            }
+        })
     }
 
     /*

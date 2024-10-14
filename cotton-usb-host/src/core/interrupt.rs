@@ -26,7 +26,7 @@ impl<D: Driver> Stream for InterruptStream<'_, D> {
     }
 }
 
-pub struct MultiInterruptStream<'stack, D: Driver> {
+pub struct MultiInterruptStream<'stack, D: Driver + 'stack> {
     pub pipe: &'stack RefCell<D::MultiInterruptPipe>,
 }
 
