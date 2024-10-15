@@ -1,4 +1,4 @@
-use crate::types::{UsbError, UsbSpeed};
+use crate::types::{SetupPacket, UsbError, UsbSpeed};
 use core::ops::Deref;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -7,6 +7,12 @@ use core::ops::Deref;
 pub enum DeviceStatus {
     Present(UsbSpeed),
     Absent,
+}
+
+pub enum DataPhase<'a> {
+    In(&'a mut [u8]),
+    Out(&'a [u8]),
+    None,
 }
 
 pub struct InterruptPacket {
@@ -62,6 +68,14 @@ pub trait HostController {
     where
         Self: 'driver;
     type MultiInterruptPipe: MultiInterruptPipe;
+
+    fn control_transfer<'a>(
+        &self,
+        address: u8,
+        packet_size: u8,
+        setup: SetupPacket,
+        data_phase: DataPhase<'a>,
+    ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
     fn alloc_interrupt_pipe(
         &self,

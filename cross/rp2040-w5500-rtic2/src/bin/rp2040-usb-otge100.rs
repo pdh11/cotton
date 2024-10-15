@@ -17,7 +17,7 @@ mod app {
         HUB_DESCRIPTOR, PORT_POWER, PORT_RESET, RECIPIENT_OTHER, SET_ADDRESS,
         SET_CONFIGURATION, SET_FEATURE, VENDOR_REQUEST,
     };
-    use cotton_usb_host::usb_bus::{DeviceEvent, UsbBus};
+    use cotton_usb_host::usb_bus::{DataPhase, DeviceEvent, UsbBus};
     use futures_util::StreamExt;
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
@@ -129,7 +129,7 @@ mod app {
         let mut descriptors = [0u8; 64];
 
         let rc = stack
-            .control_transfer_out(
+            .control_transfer(
                 1,
                 device.packet_size_ep0,
                 SetupPacket {
@@ -139,13 +139,13 @@ mod app {
                     wIndex: 0,
                     wLength: 0,
                 },
-                &descriptors,
+                DataPhase::None,
             )
             .await;
         defmt::println!("Set configuration: {}", rc);
 
         let rc = stack
-            .control_transfer_in(
+            .control_transfer(
                 1,
                 device.packet_size_ep0,
                 SetupPacket {
@@ -155,7 +155,7 @@ mod app {
                     wIndex: 0,
                     wLength: 64,
                 },
-                &mut descriptors,
+                DataPhase::In(&mut descriptors),
             )
             .await;
         defmt::println!("Get hub dtor: {}", rc);
@@ -201,7 +201,7 @@ mod app {
         // Ports are numbered from 1..=N (not 0..N)
         for port in 1..=ports {
             let rc = stack
-                .control_transfer_out(
+                .control_transfer(
                     1,
                     device.packet_size_ep0,
                     SetupPacket {
@@ -213,7 +213,7 @@ mod app {
                         wIndex: port as u16,
                         wLength: 0,
                     },
-                    &descriptors,
+                    DataPhase::None,
                 )
                 .await;
             defmt::println!("Set port power {}", rc);
@@ -230,7 +230,7 @@ mod app {
             for port in 1..4 {
                 if (data.data[0] & (1 << port)) != 0 {
                     let rc = stack
-                        .control_transfer_in(
+                        .control_transfer(
                             1,
                             device.packet_size_ep0,
                             SetupPacket {
@@ -242,7 +242,7 @@ mod app {
                                 wIndex: port as u16,
                                 wLength: 4,
                             },
-                            &mut descriptors,
+                            DataPhase::In(&mut descriptors),
                         )
                         .await;
 
@@ -263,7 +263,7 @@ mod app {
                             // status-change bit); see USB 2.0
                             // s11.24.2.7.2
                             let rc = stack
-                                .control_transfer_out(
+                                .control_transfer(
                                     1,
                                     device.packet_size_ep0,
                                     SetupPacket {
@@ -275,7 +275,7 @@ mod app {
                                         wIndex: port as u16,
                                         wLength: 0,
                                     },
-                                    &descriptors,
+                                    DataPhase::None,
                                 )
                                 .await;
                             defmt::println!(
@@ -292,7 +292,7 @@ mod app {
                                 defmt::println!("port {} disconnect", port);
                             } else {
                                 let rc = stack
-                                    .control_transfer_out(
+                                    .control_transfer(
                                         1,
                                         device.packet_size_ep0,
                                         SetupPacket {
@@ -304,7 +304,7 @@ mod app {
                                             wIndex: port as u16,
                                             wLength: 0,
                                         },
-                                        &descriptors,
+                                        DataPhase::None,
                                     )
                                     .await;
                                 defmt::println!(
@@ -319,7 +319,7 @@ mod app {
                             // C_PORT_RESET
                             let address = device.address * 4 + port;
                             let rc = stack
-                                .control_transfer_out(
+                                .control_transfer(
                                     0,
                                     device.packet_size_ep0,
                                     SetupPacket {
@@ -329,7 +329,7 @@ mod app {
                                         wIndex: 0,
                                         wLength: 0,
                                     },
-                                    &descriptors,
+                                    DataPhase::None,
                                 )
                                 .await;
                             defmt::println!(
@@ -352,17 +352,13 @@ mod app {
         let statics = USB_STATICS.take();
 
         let driver = cotton_usb_host::host::rp2040::Rp2040HostController::new(
-            cx.shared.shared,
-            statics,
-        );
-        let stack = UsbBus::new(
-            driver,
+            cx.local.resets,
             cx.local.regs.take().unwrap(),
             cx.local.dpram.take().unwrap(),
-            cx.local.resets,
             cx.shared.shared,
             statics,
         );
+        let stack = UsbBus::new(driver, cx.shared.shared);
 
         let mut p = pin!(stack.device_events());
 
@@ -375,7 +371,7 @@ mod app {
                 defmt::trace!("fetching2");
                 let mut descriptors = [0u8; 64];
                 let rc = stack
-                    .control_transfer_in(
+                    .control_transfer(
                         1,
                         device.packet_size_ep0,
                         SetupPacket {
@@ -385,7 +381,7 @@ mod app {
                             wIndex: 0,
                             wLength: 64,
                         },
-                        &mut descriptors,
+                        DataPhase::In(&mut descriptors),
                     )
                     .await;
                 if let Ok(sz) = rc {
@@ -401,7 +397,7 @@ mod app {
                     // ASIX AX88772
                     defmt::trace!("fetching4");
                     let rc = stack
-                        .control_transfer_in(
+                        .control_transfer(
                             1,
                             device.packet_size_ep0,
                             SetupPacket {
@@ -411,7 +407,7 @@ mod app {
                                 wIndex: 0,
                                 wLength: 6,
                             },
-                            &mut descriptors,
+                            DataPhase::In(&mut descriptors),
                         )
                         .await;
                     if let Ok(_sz) = rc {
