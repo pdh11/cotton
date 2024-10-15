@@ -325,6 +325,10 @@ mod tests {
         fn on_other(&mut self, _d: &[u8]) {}
     }
 
+    struct IgnoreVisitor;
+
+    impl DescriptorVisitor for IgnoreVisitor {}
+
     const ELLA: &[u8] = &[
         9, 2, 180, 1, 5, 1, 0, 128, 250, 9, 4, 0, 0, 4, 255, 0, 3, 0, 12, 95,
         1, 0, 10, 0, 4, 4, 1, 0, 4, 0, 7, 5, 2, 2, 0, 2, 0, 7, 5, 8, 2, 0, 2,
@@ -363,6 +367,11 @@ mod tests {
         assert_eq!(v.interfaces[0].descriptor.bInterfaceClass, 255);
         assert_eq!(v.interfaces[0].endpoints.len(), 4);
         assert_eq!(v.interfaces[0].endpoints[3].bmAttributes, 3);
+    }
+
+    #[test]
+    fn ignore_ella() {
+        parse_descriptors(ELLA, &mut IgnoreVisitor);
     }
 
     #[test]

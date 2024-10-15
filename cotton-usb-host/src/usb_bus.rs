@@ -2,7 +2,7 @@ use crate::async_pool::Pool;
 use crate::debug;
 use crate::host::rp2040::{
     DeviceDetect, Pipe, Rp2040ControlEndpoint, UsbShared, UsbStatics,
-};
+}; // fixme
 use crate::host_controller::{
     DeviceStatus, HostController, InterruptPacket, MultiInterruptPipe,
 };
@@ -54,6 +54,12 @@ impl DescriptorVisitor for BasicConfiguration {
             self.out_endpoints |= 1 << (i.bEndpointAddress & 15);
         }
     }
+}
+
+pub enum DataPhase<'a> {
+    In(&'a mut [u8]),
+    Out(&'a [u8]),
+    None,
 }
 
 trait Packetiser {
@@ -763,6 +769,27 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(())
     }
 
+    /*
+        pub async fn control_transfer2<'a>(
+            &self,
+            address: u8,
+            packet_size: u8,
+            setup: SetupPacket,
+            data_phase: DataPhase<'a>
+        ) -> Result<(), UsbError> {
+            match data_phase {
+                DataPhase::In(buf) => {
+                    self.control_transfer_in(address, packet_size, setup, buf).await
+                },
+                DataPhase::Out(buf) => {
+                    self.control_transfer_out(address, packet_size, setup, buf).await
+                },
+                DataPhase::None =>
+                    self.control_transfer_out(address, packet_size, setup, &[]).await
+            }
+        }
+    */
+
     pub fn interrupt_endpoint_in(
         &self,
         address: u8,
@@ -821,8 +848,6 @@ impl<HC: HostController> UsbBus<HC> {
             }
         })
     }
-
-    pub fn example_method(&self) {}
 
     async fn new_hub(&self, device: &UsbDevice) -> Result<(), UsbError> {
         let bc = self.get_basic_configuration(device).await?;
