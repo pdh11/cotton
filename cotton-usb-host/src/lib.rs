@@ -5,7 +5,10 @@
 #![cfg_attr(docsrs, doc(cfg_hide(doc)))]
 
 pub mod async_pool;
-pub mod core;
 mod debug;
 pub mod host;
+pub mod host_controller;
+pub mod interrupt;
+pub mod topology;
 pub mod types;
+pub mod usb_bus;

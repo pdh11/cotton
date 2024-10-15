@@ -1,5 +1,5 @@
-use crate::core::driver::{
-    Driver, InterruptPacket, InterruptPipe, MultiInterruptPipe,
+use crate::host_controller::{
+    HostController, InterruptPacket, InterruptPipe, MultiInterruptPipe,
 };
 use crate::types::UsbError;
 use core::cell::RefCell;
@@ -7,11 +7,11 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::Stream;
 
-pub struct InterruptStream<'driver, D: Driver + 'driver> {
-    pub pipe: D::InterruptPipe<'driver>,
+pub struct InterruptStream<'driver, HC: HostController + 'driver> {
+    pub pipe: HC::InterruptPipe<'driver>,
 }
 
-impl<D: Driver> Stream for InterruptStream<'_, D> {
+impl<HC: HostController> Stream for InterruptStream<'_, HC> {
     type Item = InterruptPacket;
 
     fn poll_next(
@@ -28,11 +28,11 @@ impl<D: Driver> Stream for InterruptStream<'_, D> {
     }
 }
 
-pub struct MultiInterruptStream<'stack, D: Driver + 'stack> {
-    pub pipe: &'stack RefCell<D::MultiInterruptPipe>,
+pub struct MultiInterruptStream<'stack, HC: HostController + 'stack> {
+    pub pipe: &'stack RefCell<HC::MultiInterruptPipe>,
 }
 
-impl<D: Driver> MultiInterruptStream<'_, D> {
+impl<HC: HostController> MultiInterruptStream<'_, HC> {
     pub fn try_add(
         &mut self,
         address: u8,
@@ -49,7 +49,7 @@ impl<D: Driver> MultiInterruptStream<'_, D> {
     }
 }
 
-impl<D: Driver> Stream for MultiInterruptStream<'_, D> {
+impl<HC: HostController> Stream for MultiInterruptStream<'_, HC> {
     type Item = InterruptPacket;
 
     fn poll_next(

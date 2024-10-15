@@ -9,16 +9,15 @@ use rp_pico as _; // includes boot2
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
     use core::pin::pin;
-    use cotton_usb_host::host::rp2040::DeviceEvent;
-    use cotton_usb_host::host::rp2040::{UsbShared, UsbStack, UsbStatics};
+    use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::types::{
-        parse_descriptors, HubDescriptor, ShowDescriptors, CLASS_REQUEST,
-        CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
-        GET_DESCRIPTOR, GET_STATUS, HOST_TO_DEVICE, HUB_DESCRIPTOR,
-        PORT_POWER, PORT_RESET, RECIPIENT_OTHER, SET_ADDRESS,
+        parse_descriptors, HubDescriptor, SetupPacket, ShowDescriptors,
+        UsbDevice, CLASS_REQUEST, CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR,
+        DEVICE_TO_HOST, GET_DESCRIPTOR, GET_STATUS, HOST_TO_DEVICE,
+        HUB_DESCRIPTOR, PORT_POWER, PORT_RESET, RECIPIENT_OTHER, SET_ADDRESS,
         SET_CONFIGURATION, SET_FEATURE, VENDOR_REQUEST,
     };
-    use cotton_usb_host::types::{SetupPacket, UsbDevice};
+    use cotton_usb_host::usb_bus::{DeviceEvent, UsbBus};
     use futures_util::StreamExt;
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
@@ -121,8 +120,10 @@ mod app {
 
     #[allow(dead_code)]
     #[inline(never)]
-    async fn hub_class<HC: cotton_usb_host::core::driver::Driver>(
-        stack: &UsbStack<HC>,
+    async fn hub_class<
+        HC: cotton_usb_host::host_controller::HostController,
+    >(
+        stack: &UsbBus<HC>,
         device: UsbDevice,
     ) {
         let mut descriptors = [0u8; 64];
@@ -350,11 +351,11 @@ mod app {
             ConstStaticCell::new(UsbStatics::new());
         let statics = USB_STATICS.take();
 
-        let driver = cotton_usb_host::host::rp2040::HostController::new(
+        let driver = cotton_usb_host::host::rp2040::Rp2040HostController::new(
             cx.shared.shared,
             statics,
         );
-        let stack = UsbStack::new(
+        let stack = UsbBus::new(
             driver,
             cx.local.regs.take().unwrap(),
             cx.local.dpram.take().unwrap(),

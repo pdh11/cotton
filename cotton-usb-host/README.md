@@ -29,8 +29,9 @@ The RP2040 support is in this repo to provide a convenient worked example;
 specific host-controller support for other microcontrollers probably
 belongs in those microcontrollers' HAL crates.
 
-TODO before merge:
+TODO before merge/0.1.0:
 
+ - [ ] Hub state machine
  - [ ] Unit tests
  - [ ] Bulk in/out
  - [ ] At least one real example (MSC?)
