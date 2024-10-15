@@ -87,3 +87,5 @@ rtic-monotonics = { version = "2.0.2", features = ["rp2040"] }
 rtic-sync = "1.0.2"
 rtic-common = "1"
 futures-util = { version = "0.3", default-features = false }
+static_cell = "2"
+portable-atomic = { version = "1", features = ["critical-section"] }

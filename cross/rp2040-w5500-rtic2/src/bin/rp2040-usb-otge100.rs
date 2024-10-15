@@ -10,7 +10,7 @@ use rp_pico as _; // includes boot2
 mod app {
     use core::pin::pin;
     use cotton_usb_host::host::rp2040::DeviceEvent;
-    use cotton_usb_host::host::rp2040::{UsbStack, UsbStatics};
+    use cotton_usb_host::host::rp2040::{UsbShared, UsbStack, UsbStatics};
     use cotton_usb_host::types::{
         parse_descriptors, HubDescriptor, ShowDescriptors, CLASS_REQUEST,
         CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
@@ -22,6 +22,7 @@ mod app {
     use futures_util::StreamExt;
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
+    use static_cell::ConstStaticCell;
 
     #[inline(never)]
     unsafe fn unique_flash_id() -> cotton_unique::UniqueId {
@@ -34,7 +35,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        statics: &'static UsbStatics,
+        shared: &'static UsbShared,
     }
 
     #[local]
@@ -104,11 +105,11 @@ mod app {
 
         usb_task::spawn().unwrap();
 
-        static USB_STATICS: UsbStatics = UsbStatics::new();
+        static USB_SHARED: UsbShared = UsbShared::new();
 
         (
             Shared {
-                statics: &USB_STATICS,
+                shared: &USB_SHARED,
             },
             Local {
                 regs: Some(device.USBCTRL_REGS),
@@ -342,17 +343,23 @@ mod app {
         }
     }
 
-    #[task(local = [regs, dpram, resets], shared = [&statics], priority = 2)]
+    #[task(local = [regs, dpram, resets], shared = [&shared], priority = 2)]
     async fn usb_task(cx: usb_task::Context) {
+        static USB_STATICS: ConstStaticCell<UsbStatics> =
+            ConstStaticCell::new(UsbStatics::new());
+        let statics = USB_STATICS.take();
+
         let driver = cotton_usb_host::host::rp2040::HostController::new(
-            cx.shared.statics,
+            cx.shared.shared,
+            statics,
         );
         let stack = UsbStack::new(
             driver,
             cx.local.regs.take().unwrap(),
             cx.local.dpram.take().unwrap(),
             cx.local.resets,
-            cx.shared.statics,
+            cx.shared.shared,
+            statics,
         );
 
         let mut p = pin!(stack.device_events());
@@ -414,8 +421,8 @@ mod app {
         }
     }
 
-    #[task(binds = USBCTRL_IRQ, shared = [&statics], priority = 2)]
+    #[task(binds = USBCTRL_IRQ, shared = [&shared], priority = 2)]
     fn usb_interrupt(cx: usb_interrupt::Context) {
-        cx.shared.statics.on_irq();
+        cx.shared.shared.on_irq();
     }
 }

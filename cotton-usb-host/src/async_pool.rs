@@ -1,19 +1,17 @@
+use core::cell::RefCell;
 use core::cell::UnsafeCell;
 use core::future::Future;
 use core::pin::Pin;
-use core::task::{Context, Poll};
-use rtic_common::waker_registration::CriticalSectionWakerRegistration;
+use core::task::{Context, Poll, Waker};
 #[cfg(feature = "std")]
 use std::fmt::{self, Display};
 
 pub struct Pool {
     total: u8,
-    // @todo This can probably just be a RefCell<u32>
+    // @todo This can probably just be a Cell<u32>
     allocated: UnsafeCell<u32>,
-    waker: CriticalSectionWakerRegistration,
+    waker: RefCell<Option<Waker>>,
 }
-
-unsafe impl Sync for Pool {}
 
 pub struct Pooled<'a> {
     pub n: u8,
@@ -99,7 +97,7 @@ impl<'a> Future for PoolFuture<'a> {
     type Output = Pooled<'a>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.pool.waker.register(cx.waker());
+        self.pool.waker.replace(Some(cx.waker().clone()));
 
         if let Some(n) = self.pool.alloc_internal() {
             Poll::Ready(Pooled { n, pool: self.pool })
@@ -115,7 +113,7 @@ impl Pool {
         Self {
             total,
             allocated: UnsafeCell::new(0),
-            waker: CriticalSectionWakerRegistration::new(),
+            waker: RefCell::new(None),
         }
     }
 
@@ -140,7 +138,9 @@ impl Pool {
             *self.allocated.get() = bits;
         });
 
-        self.waker.wake();
+        if let Some(w) = self.waker.take() {
+            w.wake();
+        }
     }
 
     pub async fn alloc(&self) -> Pooled {

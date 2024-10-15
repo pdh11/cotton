@@ -31,13 +31,12 @@ pub enum DeviceEvent {
     Disconnect(UsbDeviceSet),
 }
 
-pub struct UsbStatics {
+pub struct UsbShared {
     device_waker: CriticalSectionWakerRegistration,
     pipe_wakers: [CriticalSectionWakerRegistration; 16],
-    bulk_pipes: Pool,
 }
 
-impl UsbStatics {
+impl UsbShared {
     pub fn on_irq(&self) {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
@@ -78,7 +77,7 @@ impl UsbStatics {
     }
 }
 
-impl UsbStatics {
+impl UsbShared {
     // Only exists so that we can initialise the array in a const way
     #[allow(clippy::declare_interior_mutable_const)]
     const W: CriticalSectionWakerRegistration =
@@ -88,6 +87,23 @@ impl UsbStatics {
         Self {
             device_waker: CriticalSectionWakerRegistration::new(),
             pipe_wakers: [Self::W; 16],
+        }
+    }
+}
+
+impl Default for UsbShared {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct UsbStatics {
+    bulk_pipes: Pool,
+}
+
+impl UsbStatics {
+    pub const fn new() -> Self {
+        Self {
             bulk_pipes: Pool::new(15),
         }
     }
@@ -516,7 +532,7 @@ pub struct InterruptPipe<'driver> {
 
 impl driver::InterruptPipe for InterruptPipe<'_> {
     fn set_waker(&self, waker: &core::task::Waker) {
-        self.driver.statics.pipe_wakers[self.pipe.n as usize].register(waker);
+        self.driver.shared.pipe_wakers[self.pipe.n as usize].register(waker);
     }
 
     fn poll(&self) -> Option<InterruptPacket> {
@@ -655,13 +671,18 @@ impl driver::MultiInterruptPipe for MultiInterruptPipe {
 }
 
 pub struct HostController {
+    shared: &'static UsbShared,
     statics: &'static UsbStatics,
     //control_pipes: Pool,
 }
 
 impl HostController {
-    pub fn new(statics: &'static UsbStatics) -> Self {
+    pub fn new(
+        shared: &'static UsbShared,
+        statics: &'static UsbStatics,
+    ) -> Self {
         Self {
+            shared,
             statics,
             //control_pipes: Pool::new(1),
         }
@@ -770,6 +791,7 @@ pub struct UsbStack<D: Driver> {
     driver: D,
     regs: pac::USBCTRL_REGS,
     dpram: pac::USBCTRL_DPRAM,
+    shared: &'static UsbShared,
     statics: &'static UsbStatics,
     control_pipes: Pool,
     hub_pipes: RefCell<D::MultiInterruptPipe>,
@@ -781,6 +803,7 @@ impl<D: Driver> UsbStack<D> {
         regs: pac::USBCTRL_REGS,
         dpram: pac::USBCTRL_DPRAM,
         resets: &mut pac::RESETS,
+        shared: &'static UsbShared,
         statics: &'static UsbStatics,
     ) -> Self {
         resets.reset().modify(|_, w| w.usbctrl().set_bit());
@@ -820,6 +843,7 @@ impl<D: Driver> UsbStack<D> {
             regs,
             dpram,
             statics,
+            shared,
             control_pipes: Pool::new(1),
             hub_pipes: RefCell::new(hp),
         }
@@ -1030,7 +1054,7 @@ impl<D: Driver> UsbStack<D> {
                     .modify(|_, w| w.start_trans().set_bit());
             }
 
-            let f = ControlEndpoint::new(&self.statics.pipe_wakers[0]);
+            let f = ControlEndpoint::new(&self.shared.pipe_wakers[0]);
 
             let status = f.await;
 
@@ -1213,7 +1237,7 @@ impl<D: Driver> UsbStack<D> {
     pub fn device_events_no_hubs(
         &self,
     ) -> impl Stream<Item = DeviceEvent> + '_ {
-        let root_device = DeviceDetect::new(&self.statics.device_waker);
+        let root_device = DeviceDetect::new(&self.shared.device_waker);
         root_device.then(move |status| async move {
             if let DeviceStatus::Present(speed) = status {
                 let device = self.new_device(speed, 1).await;
@@ -1227,7 +1251,7 @@ impl<D: Driver> UsbStack<D> {
     pub fn example_method(&self) {}
 
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
-        let root_device = DeviceDetect::new(&self.statics.device_waker);
+        let root_device = DeviceDetect::new(&self.shared.device_waker);
         use crate::core::driver::MultiInterruptPipe;
 
         futures::stream::select(
@@ -1270,7 +1294,7 @@ impl<D: Driver> UsbStack<D> {
         let mut topology = crate::core::bus::Bus::new();
         let mut endpoints: [MaybeInterruptEndpoint; MAX_HUBS] = Default::default();
         let mut hub_count = 0usize;
-        let mut root_device = DeviceDetect::new(&self.statics.device_waker);
+        let mut root_device = DeviceDetect::new(&self.shared.device_waker);
         let mut data_toggle = [false; MAX_HUBS];
 
         let multistream = select_slice(
