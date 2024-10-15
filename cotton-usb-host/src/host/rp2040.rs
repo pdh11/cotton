@@ -3,9 +3,10 @@ use crate::core::driver::{self, Driver, InterruptPacket};
 use crate::debug;
 use crate::types::{
     ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
-    CONFIGURATION_DESCRIPTOR, DEVICE_DESCRIPTOR, DEVICE_TO_HOST,
-    GET_DESCRIPTOR, HOST_TO_DEVICE, HUB_CLASSCODE, SET_ADDRESS,
-    SET_CONFIGURATION,
+    HubDescriptor, CLASS_REQUEST, CONFIGURATION_DESCRIPTOR, DEVICE_DESCRIPTOR,
+    DEVICE_TO_HOST, GET_DESCRIPTOR, HOST_TO_DEVICE, HUB_CLASSCODE,
+    HUB_DESCRIPTOR, PORT_POWER, RECIPIENT_OTHER, SET_ADDRESS,
+    SET_CONFIGURATION, SET_FEATURE,
 };
 use crate::types::{EndpointType, SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use core::cell::{Cell, RefCell};
@@ -645,13 +646,14 @@ impl MultiInterruptPipe<'_> {
 impl driver::InterruptPipe for MultiInterruptPipe {
     fn set_waker(&self, waker: &core::task::Waker) {
         for i in self.pipes.iter() {
-            self.shared.pipe_wakers[i as usize].register(waker);
+            self.shared.pipe_wakers[(i + 1) as usize].register(waker);
         }
     }
 
     fn poll(&self) -> Option<InterruptPacket> {
         let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
-        for pipe in self.pipes.iter() {
+        for i in self.pipes.iter() {
+            let pipe = i + 1;
             let bc = dpram.ep_buffer_control((pipe * 2) as usize).read();
             if bc.full_0().bit() {
                 let mut result = InterruptPacket {
@@ -701,10 +703,13 @@ impl driver::InterruptPipe for MultiInterruptPipe {
 
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         regs.inte().modify(|_, w| w.buff_status().set_bit());
-        regs.int_ep_ctrl()
-            .modify(|r, w| unsafe { w.bits(r.bits() | self.pipes.bits()) });
+        // shift pipes.bits left because we don't use pipe 0
+        regs.int_ep_ctrl().modify(|r, w| unsafe {
+            w.bits(r.bits() | (self.pipes.bits() * 2))
+        });
         defmt::println!(
-            "ME pending inte {:x} iec {:x}",
+            "ME pending bits {:x} inte {:x} iec {:x}",
+            self.pipes.bits() * 2,
             regs.inte().read().bits(),
             regs.int_ep_ctrl().read().bits(),
         );
@@ -725,9 +730,10 @@ impl driver::MultiInterruptPipe for MultiInterruptPipe {
         address: u8,
         endpoint: u8,
         max_packet_size: u8,
-        _interval_ms: u8,
+        interval_ms: u8,
     ) -> Result<(), UsbError> {
-        let p = self.pipes.try_alloc().ok_or(UsbError::AllPipesInUse)?;
+        let p = self.pipes.try_alloc().ok_or(UsbError::AllPipesInUse)? + 1;
+        defmt::println!("ME got pipe {}", p);
         let pi = PipeInfo {
             address,
             endpoint,
@@ -736,6 +742,47 @@ impl driver::MultiInterruptPipe for MultiInterruptPipe {
         };
 
         self.pipe_info[p as usize] = Some(pi);
+
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        regs.host_addr_endp((p - 1) as usize).write(|w| unsafe {
+            w.address()
+                .bits(address)
+                .endpoint()
+                .bits(endpoint)
+                .intep_dir()
+                .clear_bit() // IN
+        });
+
+        dpram.ep_control((p * 2 - 2) as usize).write(|w| unsafe {
+            w.enable()
+                .set_bit()
+                .interrupt_per_buff()
+                .set_bit()
+                .endpoint_type()
+                .interrupt()
+                .buffer_address()
+                .bits(0x200 + (p as u16) * 64)
+                .host_poll_interval()
+                .bits(core::cmp::min(interval_ms as u16, 9))
+        });
+
+        dpram.ep_buffer_control((p * 2) as usize).write(|w| unsafe {
+            w.full_0()
+                .clear_bit()
+                .length_0()
+                .bits(max_packet_size as u16)
+                .pid_0()
+                .clear_bit()
+                .last_0()
+                .set_bit()
+        });
+
+        cortex_m::asm::delay(12);
+
+        dpram
+            .ep_buffer_control((p * 2) as usize)
+            .modify(|_, w| w.available_0().set_bit());
 
         Ok(())
     }
@@ -1327,9 +1374,71 @@ impl<D: Driver> UsbStack<D> {
 
     pub fn example_method(&self) {}
 
+    async fn new_hub(&self, device: &UsbDevice) -> Result<(), UsbError> {
+        // @todo Great Renaming
+        use crate::core::driver::MultiInterruptPipe;
+
+        let bc = self.get_basic_configuration(device).await?;
+        debug::println!("cfg: {:?}", &bc);
+        self.configure(device, bc.configuration_value).await?;
+        self.hub_pipes.borrow_mut().try_add(
+            device.address,
+            bc.in_endpoints.trailing_zeros() as u8,
+            device.packet_size_ep0,
+            9,
+        )?;
+
+        let mut descriptors = [0u8; 64];
+        let sz = self
+            .control_transfer_in(
+                device.address,
+                device.packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST | CLASS_REQUEST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: (HUB_DESCRIPTOR as u16) << 8,
+                    wIndex: 0,
+                    wLength: 64,
+                },
+                &mut descriptors,
+            )
+            .await?;
+
+        let ports = if sz >= core::mem::size_of::<HubDescriptor>() {
+            defmt::println!(
+                "{}",
+                &HubDescriptor::try_from_bytes(&descriptors[0..sz]).unwrap()
+            );
+            descriptors[2]
+        } else {
+            4
+        };
+        defmt::println!("{}-port hub", ports);
+
+        // Ports are numbered from 1..=N (not 0..N)
+        for port in 1..=ports {
+            self.control_transfer_out(
+                device.address,
+                device.packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: HOST_TO_DEVICE
+                        | CLASS_REQUEST
+                        | RECIPIENT_OTHER,
+                    bRequest: SET_FEATURE,
+                    wValue: PORT_POWER,
+                    wIndex: port as u16,
+                    wLength: 0,
+                },
+                &descriptors,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
         let root_device = DeviceDetect::new(&self.shared.device_waker);
-        use crate::core::driver::MultiInterruptPipe;
 
         enum InternalEvent {
             Root(DeviceStatus),
@@ -1350,20 +1459,8 @@ impl<D: Driver> UsbStack<D> {
                         let device = self.new_device(speed, 1).await;
                         if device.class == HUB_CLASSCODE {
                             debug::println!("It's a hub");
-                            if let Ok(bc) =
-                                self.get_basic_configuration(&device).await
-                            {
-                                debug::println!("cfg: {:?}", &bc);
-                                _ = self
-                                    .configure(&device, bc.configuration_value)
-                                    .await;
-                                let _ = self.hub_pipes.borrow_mut().try_add(
-                                    device.address,
-                                    bc.in_endpoints.trailing_zeros() as u8,
-                                    device.packet_size_ep0,
-                                    9,
-                                );
-                            }
+                            let rc = self.new_hub(&device).await;
+                            debug::println!("Hub startup: {:?}", rc);
                         }
                         DeviceEvent::Connect(device)
                     } else {

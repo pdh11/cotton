@@ -119,6 +119,7 @@ mod app {
         )
     }
 
+    #[allow(dead_code)]
     #[inline(never)]
     async fn hub_class<HC: cotton_usb_host::core::driver::Driver>(
         stack: &UsbStack<HC>,
@@ -364,59 +365,63 @@ mod app {
 
         let mut p = pin!(stack.device_events());
 
-        let device = p.next().await;
+        loop {
+            let device = p.next().await;
 
-        if let Some(DeviceEvent::Connect(device)) = device {
-            defmt::println!("Got root device {:x}", device);
+            if let Some(DeviceEvent::Connect(device)) = device {
+                defmt::println!("Got device {:x}", device);
 
-            defmt::trace!("fetching2");
-            let mut descriptors = [0u8; 64];
-            let rc = stack
-                .control_transfer_in(
-                    1,
-                    device.packet_size_ep0,
-                    SetupPacket {
-                        bmRequestType: DEVICE_TO_HOST,
-                        bRequest: GET_DESCRIPTOR,
-                        wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
-                        wIndex: 0,
-                        wLength: 64,
-                    },
-                    &mut descriptors,
-                )
-                .await;
-            if let Ok(sz) = rc {
-                parse_descriptors(&descriptors[0..sz], &mut ShowDescriptors);
-            } else {
-                defmt::println!("fetched {:?}", rc);
-            }
-
-            if device.vid == 0x0B95 && device.pid == 0x7720 {
-                // ASIX AX88772
-                defmt::trace!("fetching4");
+                defmt::trace!("fetching2");
+                let mut descriptors = [0u8; 64];
                 let rc = stack
                     .control_transfer_in(
                         1,
                         device.packet_size_ep0,
                         SetupPacket {
-                            bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
-                            bRequest: 0x13,
-                            wValue: 0,
+                            bmRequestType: DEVICE_TO_HOST,
+                            bRequest: GET_DESCRIPTOR,
+                            wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
                             wIndex: 0,
-                            wLength: 6,
+                            wLength: 64,
                         },
                         &mut descriptors,
                     )
                     .await;
-                if let Ok(_sz) = rc {
-                    defmt::println!("AX88772 MAC {:x}", &descriptors[0..6]);
+                if let Ok(sz) = rc {
+                    parse_descriptors(
+                        &descriptors[0..sz],
+                        &mut ShowDescriptors,
+                    );
                 } else {
                     defmt::println!("fetched {:?}", rc);
                 }
-            }
 
-            if device.vid == 0x1A40 && device.pid == 0x0801 {
-                hub_class(&stack, device).await;
+                if device.vid == 0x0B95 && device.pid == 0x7720 {
+                    // ASIX AX88772
+                    defmt::trace!("fetching4");
+                    let rc = stack
+                        .control_transfer_in(
+                            1,
+                            device.packet_size_ep0,
+                            SetupPacket {
+                                bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
+                                bRequest: 0x13,
+                                wValue: 0,
+                                wIndex: 0,
+                                wLength: 6,
+                            },
+                            &mut descriptors,
+                        )
+                        .await;
+                    if let Ok(_sz) = rc {
+                        defmt::println!(
+                            "AX88772 MAC {:x}",
+                            &descriptors[0..6]
+                        );
+                    } else {
+                        defmt::println!("fetched {:?}", rc);
+                    }
+                }
             }
         }
     }
