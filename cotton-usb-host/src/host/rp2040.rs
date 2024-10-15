@@ -624,6 +624,8 @@ struct PipeInfo {
 
 #[allow(dead_code)]
 pub struct MultiInterruptPipe {
+    shared: &'static UsbShared,
+    statics: &'static UsbStatics,
     pipes: MultiPooled<'static>,
     pipe_info: [Option<PipeInfo>; 16],
 }
@@ -641,11 +643,79 @@ impl MultiInterruptPipe<'_> {
 */
 
 impl driver::InterruptPipe for MultiInterruptPipe {
-    fn set_waker(&self, _waker: &core::task::Waker) {
-        todo!()
+    fn set_waker(&self, waker: &core::task::Waker) {
+        for i in self.pipes.iter() {
+            self.shared.pipe_wakers[i as usize].register(waker);
+        }
     }
+
     fn poll(&self) -> Option<InterruptPacket> {
-        todo!()
+        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        for pipe in self.pipes.iter() {
+            let bc = dpram.ep_buffer_control((pipe * 2) as usize).read();
+            if bc.full_0().bit() {
+                let mut result = InterruptPacket {
+                    size: core::cmp::min(bc.length_0().bits(), 64) as u8,
+                    ..Default::default()
+                };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        (0x5010_0200 + (pipe as u32) * 64) as *const u8,
+                        &mut result.data[0] as *mut u8,
+                        result.size as usize,
+                    )
+                };
+                if let Some(ref info) = self.pipe_info[pipe as usize] {
+                    info.data_toggle.set(!info.data_toggle.get());
+                    dpram.ep_buffer_control((pipe * 2) as usize).write(
+                        |w| unsafe {
+                            w.full_0()
+                                .clear_bit()
+                                .pid_0()
+                                .bit(info.data_toggle.get())
+                                .length_0()
+                                .bits(info.max_packet_size as u16)
+                                .last_0()
+                                .set_bit()
+                        },
+                    );
+
+                    cortex_m::asm::delay(12);
+
+                    dpram
+                        .ep_buffer_control((pipe * 2) as usize)
+                        .modify(|_, w| w.available_0().set_bit());
+                }
+                let regs = unsafe { pac::USBCTRL_REGS::steal() };
+                defmt::println!(
+                    "ME ready inte {:x} iec {:x} ecr {:x} epbc {:x}",
+                    regs.inte().read().bits(),
+                    regs.int_ep_ctrl().read().bits(),
+                    dpram.ep_control((pipe * 2) as usize - 2).read().bits(),
+                    dpram.ep_buffer_control((pipe * 2) as usize).read().bits(),
+                );
+
+                return Some(result);
+            }
+        }
+
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        regs.inte().modify(|_, w| w.buff_status().set_bit());
+        regs.int_ep_ctrl()
+            .modify(|r, w| unsafe { w.bits(r.bits() | self.pipes.bits()) });
+        defmt::println!(
+            "ME pending inte {:x} iec {:x}",
+            regs.inte().read().bits(),
+            regs.int_ep_ctrl().read().bits(),
+        );
+        let mut mask = 0;
+        for i in self.pipes.iter() {
+            mask |= 3 << (i * 2);
+        }
+        regs.ep_status_stall_nak()
+            .write(|w| unsafe { w.bits(mask) });
+
+        None
     }
 }
 
@@ -657,14 +727,19 @@ impl driver::MultiInterruptPipe for MultiInterruptPipe {
         max_packet_size: u8,
         _interval_ms: u8,
     ) -> Result<(), UsbError> {
-        let _p = PipeInfo {
+        let p = self.pipes.try_alloc().ok_or(UsbError::AllPipesInUse)?;
+        let pi = PipeInfo {
             address,
             endpoint,
             max_packet_size,
             data_toggle: Cell::new(false),
         };
-        todo!()
+
+        self.pipe_info[p as usize] = Some(pi);
+
+        Ok(())
     }
+
     fn remove(&mut self, _address: u8) {
         todo!()
     }
@@ -759,6 +834,8 @@ impl Driver for HostController {
     fn multi_interrupt_pipe(&self) -> MultiInterruptPipe {
         const N: Option<PipeInfo> = None;
         MultiInterruptPipe {
+            shared: self.shared,
+            statics: self.statics,
             pipes: MultiPooled::new(&self.statics.bulk_pipes),
             pipe_info: [N; 16],
         }
@@ -1254,35 +1331,48 @@ impl<D: Driver> UsbStack<D> {
         let root_device = DeviceDetect::new(&self.shared.device_waker);
         use crate::core::driver::MultiInterruptPipe;
 
+        enum InternalEvent {
+            Root(DeviceStatus),
+            Packet(InterruptPacket),
+        }
+
         futures::stream::select(
-            root_device.map(|status| (None, Some(status))),
+            root_device.map(InternalEvent::Root),
             crate::core::interrupt::MultiInterruptStream::<D> {
                 pipe: &self.hub_pipes,
             }
-            .map(|packet| (Some(packet), None)),
+            .map(InternalEvent::Packet),
         )
-        .then(move |(_packet, status)| async move {
-            if let Some(DeviceStatus::Present(speed)) = status {
-                let device = self.new_device(speed, 1).await;
-                if device.class == HUB_CLASSCODE {
-                    debug::println!("It's a hub");
-                    if let Ok(bc) = self.get_basic_configuration(&device).await
-                    {
-                        debug::println!("cfg: {:?}", &bc);
-                        _ = self
-                            .configure(&device, bc.configuration_value)
-                            .await;
-                        let _ = self.hub_pipes.borrow_mut().try_add(
-                            device.address,
-                            bc.in_endpoints.trailing_zeros() as u8,
-                            device.packet_size_ep0,
-                            9,
-                        );
+        .then(move |ev| async move {
+            match ev {
+                InternalEvent::Root(status) => {
+                    if let DeviceStatus::Present(speed) = status {
+                        let device = self.new_device(speed, 1).await;
+                        if device.class == HUB_CLASSCODE {
+                            debug::println!("It's a hub");
+                            if let Ok(bc) =
+                                self.get_basic_configuration(&device).await
+                            {
+                                debug::println!("cfg: {:?}", &bc);
+                                _ = self
+                                    .configure(&device, bc.configuration_value)
+                                    .await;
+                                let _ = self.hub_pipes.borrow_mut().try_add(
+                                    device.address,
+                                    bc.in_endpoints.trailing_zeros() as u8,
+                                    device.packet_size_ep0,
+                                    9,
+                                );
+                            }
+                        }
+                        DeviceEvent::Connect(device)
+                    } else {
+                        DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
                     }
                 }
-                DeviceEvent::Connect(device)
-            } else {
-                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+                InternalEvent::Packet(_packet) => {
+                    todo!();
+                }
             }
         })
     }

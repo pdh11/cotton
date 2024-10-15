@@ -1,4 +1,6 @@
-use crate::core::driver::{Driver, InterruptPacket, InterruptPipe};
+use crate::core::driver::{
+    Driver, InterruptPacket, InterruptPipe, MultiInterruptPipe,
+};
 use crate::types::UsbError;
 use core::cell::RefCell;
 use core::pin::Pin;
@@ -33,12 +35,17 @@ pub struct MultiInterruptStream<'stack, D: Driver + 'stack> {
 impl<D: Driver> MultiInterruptStream<'_, D> {
     pub fn try_add(
         &mut self,
-        _address: u8,
-        _endpoint: u8,
-        _max_packet_size: u8,
-        _interval_ms: u8,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u8,
+        interval_ms: u8,
     ) -> Result<(), UsbError> {
-        todo!();
+        self.pipe.borrow_mut().try_add(
+            address,
+            endpoint,
+            max_packet_size,
+            interval_ms,
+        )
     }
 }
 

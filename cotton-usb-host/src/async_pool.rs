@@ -77,6 +77,10 @@ impl<'a> MultiPooled<'a> {
             bitmap: self.bitmap,
         }
     }
+
+    pub fn bits(&self) -> u32 {
+        self.bitmap
+    }
 }
 
 impl Drop for MultiPooled<'_> {
