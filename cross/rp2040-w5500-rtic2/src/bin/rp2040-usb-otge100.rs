@@ -358,7 +358,7 @@ mod app {
             cx.shared.shared,
             statics,
         );
-        let stack = UsbBus::new(driver, cx.shared.shared);
+        let stack = UsbBus::new(driver);
 
         let mut p = pin!(stack.device_events());
 

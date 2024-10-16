@@ -102,13 +102,13 @@ impl Default for UsbStatics {
 }
 
 #[derive(Copy, Clone)]
-pub struct DeviceDetect<'a> {
-    waker: &'a CriticalSectionWakerRegistration,
+pub struct Rp2040DeviceDetect {
+    waker: &'static CriticalSectionWakerRegistration,
     status: DeviceStatus,
 }
 
-impl<'a> DeviceDetect<'a> {
-    pub fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
+impl Rp2040DeviceDetect {
+    pub fn new(waker: &'static CriticalSectionWakerRegistration) -> Self {
         Self {
             waker,
             status: DeviceStatus::Absent,
@@ -116,7 +116,7 @@ impl<'a> DeviceDetect<'a> {
     }
 }
 
-impl Stream for DeviceDetect<'_> {
+impl Stream for Rp2040DeviceDetect {
     type Item = DeviceStatus;
 
     fn poll_next(
@@ -1066,6 +1066,11 @@ impl Rp2040HostController {
 impl HostController for Rp2040HostController {
     type InterruptPipe<'driver> = Rp2040InterruptPipe<'driver> where Self: 'driver;
     type MultiInterruptPipe = Rp2040MultiInterruptPipe;
+    type DeviceDetect = Rp2040DeviceDetect;
+
+    fn device_detect(&self) -> Self::DeviceDetect {
+        Rp2040DeviceDetect::new(&self.shared.device_waker)
+    }
 
     async fn control_transfer<'a>(
         &self,

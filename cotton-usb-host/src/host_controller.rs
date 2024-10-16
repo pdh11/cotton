@@ -1,5 +1,6 @@
 use crate::types::{SetupPacket, UsbError, UsbSpeed};
 use core::ops::Deref;
+use futures::Stream;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
@@ -68,6 +69,9 @@ pub trait HostController {
     where
         Self: 'driver;
     type MultiInterruptPipe: MultiInterruptPipe;
+    type DeviceDetect: Stream<Item = DeviceStatus>;
+
+    fn device_detect(&self) -> Self::DeviceDetect;
 
     fn control_transfer<'a>(
         &self,

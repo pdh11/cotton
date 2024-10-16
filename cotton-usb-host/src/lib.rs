@@ -11,5 +11,4 @@ pub mod host_controller;
 pub mod interrupt;
 pub mod topology;
 pub mod types;
-#[cfg(feature = "rp2040")]
 pub mod usb_bus;

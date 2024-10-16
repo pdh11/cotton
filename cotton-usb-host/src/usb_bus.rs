@@ -1,5 +1,4 @@
 use crate::debug;
-use crate::host::rp2040::{DeviceDetect, UsbShared}; // fixme
 use crate::host_controller::{
     DeviceStatus, HostController, InterruptPacket, MultiInterruptPipe,
 };
@@ -56,17 +55,15 @@ impl DescriptorVisitor for BasicConfiguration {
 
 pub struct UsbBus<HC: HostController> {
     driver: HC,
-    shared: &'static UsbShared,
     hub_pipes: RefCell<HC::MultiInterruptPipe>,
 }
 
 impl<HC: HostController> UsbBus<HC> {
-    pub fn new(driver: HC, shared: &'static UsbShared) -> Self {
+    pub fn new(driver: HC) -> Self {
         let hp = driver.multi_interrupt_pipe();
 
         Self {
             driver,
-            shared,
             hub_pipes: RefCell::new(hp),
         }
     }
@@ -149,7 +146,7 @@ impl<HC: HostController> UsbBus<HC> {
             vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
             pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
         } else {
-            defmt::println!("Dtor fetch 2 {:?}", rc);
+            debug::println!("Dtor fetch 2 {:?}", rc);
         }
 
         UsbDevice {
@@ -223,7 +220,7 @@ impl<HC: HostController> UsbBus<HC> {
     pub fn device_events_no_hubs(
         &self,
     ) -> impl Stream<Item = DeviceEvent> + '_ {
-        let root_device = DeviceDetect::new(&self.shared.device_waker);
+        let root_device = self.driver.device_detect();
         root_device.then(move |status| async move {
             if let DeviceStatus::Present(speed) = status {
                 let device = self.new_device(speed, 1).await;
@@ -262,15 +259,15 @@ impl<HC: HostController> UsbBus<HC> {
             .await?;
 
         let ports = if sz >= core::mem::size_of::<HubDescriptor>() {
-            defmt::println!(
-                "{}",
+            debug::println!(
+                "{:?}",
                 &HubDescriptor::try_from_bytes(&descriptors[0..sz]).unwrap()
             );
             descriptors[2]
         } else {
             4
         };
-        defmt::println!("{}-port hub", ports);
+        debug::println!("{}-port hub", ports);
 
         // Ports are numbered from 1..=N (not 0..N)
         for port in 1..=ports {
@@ -295,7 +292,7 @@ impl<HC: HostController> UsbBus<HC> {
     }
 
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
-        let root_device = DeviceDetect::new(&self.shared.device_waker);
+        let root_device = self.driver.device_detect();
 
         enum InternalEvent {
             Root(DeviceStatus),
