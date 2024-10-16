@@ -19,13 +19,16 @@ etc.) to be connected directly to the RP2040 and controlled by it.
 USB operation is _asynchronous_ and so this crate is suited for use
 with embedded asynchronous executors such as
 [RTIC&nbsp;2](https://rtic.rs/2/book/en/) and
-[Embassy](https://embassy.dev).
+[Embassy](https://embassy.dev). The implementation uses no timers and
+never polls &mdash; it's wholly interrupt-driven &mdash; and so is, in
+theory, compatible with executors which put the microcontroller into
+low-power modes in-between interrupts.
 
 Includes:
 
  - control, interrupt, and bulk endpoint support;
  - hub support;
- - hot-plug, and hot-unplug, including hubs.
+ - hot-plug, and hot-unplug, including of hubs.
 
 Currently supports:
 
@@ -38,9 +41,9 @@ System-tests and examples:
 
 Limitations:
 
- - maximum of 31 devices;
+ - maximum of 31 devices total (including hubs);
  - maximum of 15 hubs;
- - maximum of 15 ports on any one hub;
+ - maximum of 15 ports on any one hub[^2];
  - supports Low Speed (1.5Mbits/s) and Full Speed (12Mbits/s)
    operation only -- not High Speed (480Mbits/s) or above.
 
@@ -48,6 +51,12 @@ Limitations:
 12Mbits/s), but as the _only_ changes in USB&nbsp;2.0 compared to 1.1
 were related to the addition of HS (480Mbits/s), it seems more honest
 to describe it as USB&nbsp;1.1.
+
+[^2]: USB&nbsp;3.0 explicitly limits hubs to 15 downstream ports;
+USB&nbsp;2.0 and earlier did not, but even for USB&nbsp;2.0 such wide
+hubs are either very rare or, quite possibly, non-existent. Most
+freestanding hubs which _appear_ to have more than about 7 downstream
+ports, are in fact multiple hubs in a trenchcoat.
 
 Library documentation is [on
 docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).
@@ -65,12 +74,13 @@ connection.)
 If your Raspberry&nbsp;Pi Pico is itself powered by USB (perhaps via a
 Pico Debug Probe), then it will not have enough power to reliably
 supply USB power to downstream devices unless you power your Pico's
-VUSB/GND pins from a separate 5V power supply. Alternatively, you
-could use a _powered_ hub. (Powered hubs with micro-USB plugs are
-often sold as "[OTG
+VUSB/GND pins from a separate 5V power supply &mdash; and perhaps not
+even then. For best results with multiple devices, you should use a
+_powered_ hub. (Powered hubs with micro-USB plugs, compatible with the
+Raspberry&nbsp;Pi Pico in host mode, are often sold as "[OTG
 hubs](https://www.amazon.co.uk/AuviPal-Adapter-Playstation-Classic-Raspberry-Black/dp/B083WML1XB/)".)
 
-The crate is split between a generic (hardware-agnostic) `UsbBus`
+The crate is split between a generic (hardware-agnostic) [`usb_bus::UsbBus`]
 class, and a host-controller driver specific to the RP2040. So the
 minimal code example would involve:
 
@@ -84,8 +94,8 @@ minimal code example would involve:
  - constructing a `UsbBus` from the host-controller driver;
  - obtaining a stream of device-status events from
    `UsbBus::device_events()` &mdash; or, alternatively,
-   `UsbBus::device_events_no_hubs()` for smaller code-size if USB hub
-   support isn't needed;
+   `UsbBus::device_events_no_hubs()` for smaller code-size if
+   supporting USB hubs isn't required;
  - waiting on the stream until it produces a `DeviceEvent::Connect`
    indicating that the device has been detected;
  - using APIs such as `UsbBus::control_transfer` to read descriptors,
@@ -126,6 +136,7 @@ TODO before merge/0.1.0:
  - [ ] Hub state machine
  - [ ] Unit tests
  - [ ] Bulk in/out
+ - [ ] doc-comments
  - [ ] At least one real example (MSC?)
  - [x] Interlocking to avoid contending on pipe 0
  - [ ] Review register usage for contention (buff_status?)

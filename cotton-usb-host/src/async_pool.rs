@@ -38,8 +38,14 @@ impl Drop for Pooled<'_> {
     }
 }
 
-struct BitIterator {
+pub struct BitIterator {
     bitmap: u32,
+}
+
+impl BitIterator {
+    pub const fn new(bitmap: u32) -> Self {
+        Self { bitmap }
+    }
 }
 
 impl Iterator for BitIterator {

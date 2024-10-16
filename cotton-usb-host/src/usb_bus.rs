@@ -3,12 +3,13 @@ use crate::host_controller::{
     DeviceStatus, HostController, InterruptPacket, MultiInterruptPipe,
 };
 use crate::interrupt::{InterruptStream, MultiInterruptStream};
+use crate::topology::Topology;
 use crate::types::{
     ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
-    HubDescriptor, CLASS_REQUEST, CONFIGURATION_DESCRIPTOR, DEVICE_DESCRIPTOR,
-    DEVICE_TO_HOST, GET_DESCRIPTOR, HOST_TO_DEVICE, HUB_CLASSCODE,
-    HUB_DESCRIPTOR, PORT_POWER, RECIPIENT_OTHER, SET_ADDRESS,
-    SET_CONFIGURATION, SET_FEATURE,
+    HubDescriptor, CLASS_REQUEST, CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR,
+    DEVICE_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR, GET_STATUS,
+    HOST_TO_DEVICE, HUB_CLASSCODE, HUB_DESCRIPTOR, PORT_POWER, PORT_RESET,
+    RECIPIENT_OTHER, SET_ADDRESS, SET_CONFIGURATION, SET_FEATURE,
 };
 use crate::types::{SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use core::cell::RefCell;
@@ -18,6 +19,7 @@ use futures::StreamExt;
 
 pub use crate::host_controller::DataPhase;
 
+#[derive(Default)]
 pub struct UsbDeviceSet(pub u32);
 
 impl UsbDeviceSet {
@@ -53,9 +55,17 @@ impl DescriptorVisitor for BasicConfiguration {
     }
 }
 
+#[derive(Default)]
+struct HubState {
+    topology: Topology,
+    currently_resetting: Option<(u8, u8)>,
+    //needs_reset: UsbDeviceSet,
+}
+
 pub struct UsbBus<HC: HostController> {
     driver: HC,
     hub_pipes: RefCell<HC::MultiInterruptPipe>,
+    hub_state: RefCell<HubState>,
 }
 
 impl<HC: HostController> UsbBus<HC> {
@@ -65,6 +75,7 @@ impl<HC: HostController> UsbBus<HC> {
         Self {
             driver,
             hub_pipes: RefCell::new(hp),
+            hub_state: Default::default(),
         }
     }
 
@@ -291,6 +302,179 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(())
     }
 
+    pub fn topology(&self) -> Topology {
+        self.hub_state.borrow().topology.clone()
+    }
+
+    async fn handle_hub_packet(
+        &self,
+        packet: &InterruptPacket,
+    ) -> Result<DeviceEvent, UsbError> {
+        // Hub state machine: each hub must have each port powered,
+        // then reset. But only one hub port on the whole *bus* can be
+        // in reset at any one time, because it becomes sensitive to
+        // address zero. So there needs to be a bus-wide hub state
+        // machine.
+        //
+        // Idea: hubs get given addresses 1-15, so a bitmap of hubs
+        // fits in u16. Newly found hubs get their interrupt EP added
+        // to the waker, and all their ports powered. Ports that see a
+        // C_PORT_CONNECTION get the parent hub added to a bitmap of
+        // "hubs needing resetting". When no port is currently in
+        // reset, a hub is removed from the bitmap, and a port counter
+        // (1..=N) is set up; each port in turn has GetStatus called,
+        // and on returning CONNECTION but not ENABLE, the port is
+        // reset. (Not connected or already enabled means progress to
+        // the next port, then the next hub.)
+        //
+        // On a reset complete, give the new device an address (1-15
+        // if it, too, is a hub) and then again proceed to the next
+        // port, then the next hub.
+
+        debug::println!(
+            "Hub int {} [{}; {}]",
+            packet.address,
+            packet.data[0],
+            packet.size
+        );
+
+        let mut data = [0u8; 8];
+        let sz = self
+            .control_transfer(
+                packet.address,
+                8,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST | CLASS_REQUEST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: (HUB_DESCRIPTOR as u16) << 8,
+                    wIndex: 0,
+                    wLength: 7,
+                },
+                DataPhase::In(&mut data),
+            )
+            .await?;
+
+        if sz < 3 {
+            return Err(UsbError::ProtocolError);
+        }
+
+        let mut port_bitmap = packet.data[0] as u32;
+        if packet.size > 1 {
+            port_bitmap |= (packet.data[1] as u32) << 8;
+        }
+        let port_bitmap = crate::async_pool::BitIterator::new(port_bitmap);
+        for port in port_bitmap {
+            debug::println!("I'm told to investigate port {}", port);
+
+            self.control_transfer(
+                packet.address,
+                8,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST
+                        | CLASS_REQUEST
+                        | RECIPIENT_OTHER,
+                    bRequest: GET_STATUS,
+                    wValue: 0,
+                    wIndex: port as u16,
+                    wLength: 4,
+                },
+                DataPhase::In(&mut data),
+            )
+            .await?;
+
+            let state = u16::from_le_bytes([data[0], data[1]]);
+            let changes = u16::from_le_bytes([data[2], data[3]]);
+
+            debug::println!(
+                "  port {} status3 {:x} {:x}",
+                port,
+                state,
+                changes
+            );
+
+            if changes != 0 {
+                let bit = changes.trailing_zeros(); // i.e., least_set_bit
+
+                if bit < 8 {
+                    // Clear C_PORT_CONNECTION (or similar
+                    // status-change bit); see USB 2.0 s11.24.2.7.2
+                    self.control_transfer(
+                        packet.address,
+                        8,
+                        SetupPacket {
+                            bmRequestType: HOST_TO_DEVICE
+                                | CLASS_REQUEST
+                                | RECIPIENT_OTHER,
+                            bRequest: CLEAR_FEATURE,
+                            wValue: (bit as u16) + 16,
+                            wIndex: port as u16,
+                            wLength: 0,
+                        },
+                        DataPhase::None,
+                    )
+                    .await?;
+                }
+                if bit == 0 {
+                    // C_PORT_CONNECTION
+                    if (state & 1) == 0 {
+                        // now disconnected
+                        let mask = self
+                            .hub_state
+                            .borrow_mut()
+                            .topology
+                            .device_disconnect(packet.address, port);
+                        return Ok(DeviceEvent::Disconnect(UsbDeviceSet(
+                            mask,
+                        )));
+                    }
+
+                    // now connected
+                    if self.hub_state.borrow().currently_resetting.is_none() {
+                        self.hub_state.borrow_mut().currently_resetting =
+                            Some((packet.address, port));
+                        self.control_transfer(
+                            packet.address,
+                            8,
+                            SetupPacket {
+                                bmRequestType: HOST_TO_DEVICE
+                                    | CLASS_REQUEST
+                                    | RECIPIENT_OTHER,
+                                bRequest: SET_FEATURE,
+                                wValue: PORT_RESET,
+                                wIndex: port as u16,
+                                wLength: 0,
+                            },
+                            DataPhase::None,
+                        )
+                        .await?;
+                        return Ok(DeviceEvent::Disconnect(UsbDeviceSet(0)));
+                    }
+                }
+                if bit == 4 {
+                    // C_PORT_RESET
+                    let address = {
+                        let mut state = self.hub_state.borrow_mut();
+                        state.currently_resetting = None;
+                        // @TODO: is it a hub?
+                        state.topology.device_connect(
+                            packet.address,
+                            port,
+                            false,
+                        )
+                    };
+                    // @TODO: speed
+                    if let Some(address) = address {
+                        return Ok(DeviceEvent::Connect(
+                            self.new_device(UsbSpeed::Low1_5, address).await,
+                        ));
+                    }
+                }
+            }
+        }
+        // TODO: if we get here, does some other port need resetting?
+        Ok(DeviceEvent::Disconnect(UsbDeviceSet(0)))
+    }
+
     pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
         let root_device = self.driver.device_detect();
 
@@ -311,19 +495,27 @@ impl<HC: HostController> UsbBus<HC> {
                 InternalEvent::Root(status) => {
                     if let DeviceStatus::Present(speed) = status {
                         let device = self.new_device(speed, 1).await;
-                        if device.class == HUB_CLASSCODE {
+                        let is_hub = device.class == HUB_CLASSCODE;
+                        self.hub_state
+                            .borrow_mut()
+                            .topology
+                            .device_connect(0, 1, is_hub);
+                        if is_hub {
                             debug::println!("It's a hub");
                             let rc = self.new_hub(&device).await;
                             debug::println!("Hub startup: {:?}", rc);
                         }
+                        // @TODO: add to topology
                         DeviceEvent::Connect(device)
                     } else {
+                        // @TODO: remove from topology
                         DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
                     }
                 }
-                InternalEvent::Packet(_packet) => {
-                    todo!();
-                }
+                InternalEvent::Packet(packet) => self
+                    .handle_hub_packet(&packet)
+                    .await
+                    .unwrap_or(DeviceEvent::Disconnect(UsbDeviceSet(0))),
             }
         })
     }

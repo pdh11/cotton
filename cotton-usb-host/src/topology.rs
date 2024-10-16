@@ -5,16 +5,16 @@ const MAX_DEVICES: u8 = 32;
 const MAX_PORTS: u8 = 16;
 const MAX_HUBS: u8 = 16;
 
-#[derive(Default)]
-pub struct Bus {
+#[derive(Default, Clone)]
+pub struct Topology {
     parent: [u8; MAX_DEVICES as usize],
 }
 
 #[cfg(feature = "std")]
-impl Debug for Bus {
+impl Debug for Topology {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         fn fmt_inner(
-            bus: &Bus,
+            bus: &Topology,
             i: usize,
             f: &mut Formatter<'_>,
         ) -> Result<(), Error> {
@@ -49,7 +49,41 @@ impl Debug for Bus {
     }
 }
 
-impl Bus {
+#[cfg(feature = "defmt")]
+impl defmt::Format for Topology {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        fn fmt_inner(bus: &Topology, i: usize, f: defmt::Formatter<'_>) {
+            defmt::write!(f, "{}", i);
+
+            let mut any = false;
+            for j in 1..(MAX_DEVICES as usize) {
+                let parent = bus.parent[j];
+                if parent != 0 && (parent & 15) == i as u8 {
+                    any = true;
+                }
+            }
+            if any {
+                defmt::write!(f, ":(");
+                any = false;
+                for j in 1..(MAX_DEVICES as usize) {
+                    let parent = bus.parent[j];
+                    if parent != 0 && (parent & 15) == i as u8 {
+                        if any {
+                            defmt::write!(f, " ");
+                        }
+                        fmt_inner(bus, j, f);
+                        any = true;
+                    }
+                }
+                defmt::write!(f, ")");
+            }
+        }
+
+        fmt_inner(self, 0, f)
+    }
+}
+
+impl Topology {
     pub fn new() -> Self {
         Self { parent: [0u8; 32] }
     }
@@ -67,6 +101,8 @@ impl Bus {
         if parent_hub >= MAX_HUBS || parent_port >= MAX_PORTS {
             return None;
         }
+
+        // @TODO: check for already present (possible if USB power glitches)
 
         if is_hub {
             for i in 1..MAX_HUBS {
@@ -133,14 +169,14 @@ mod tests {
 
     #[test]
     fn create() {
-        let bus = Bus::new();
+        let bus = Topology::new();
         let e = format!("{:?}", bus);
         assert_eq!(e, "0");
     }
 
     #[test]
     fn one_device() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let d = bus.device_connect(0, 1, false);
         assert_eq!(d, Some(31));
         assert!(bus.is_present(31));
@@ -151,7 +187,7 @@ mod tests {
 
     #[test]
     fn one_hub() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let d = bus.device_connect(0, 1, true);
         assert_eq!(d, Some(1));
         assert!(bus.is_present(1));
@@ -162,7 +198,7 @@ mod tests {
 
     #[test]
     fn child_device() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let d = bus.device_connect(0, 1, true).unwrap();
         assert_eq!(d, 1);
         let dd = bus.device_connect(1, 2, false).unwrap();
@@ -175,7 +211,7 @@ mod tests {
 
     #[test]
     fn one_device_disconnect() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let d = bus.device_connect(0, 1, false);
         assert_eq!(d, Some(31));
         assert!(bus.is_present(31));
@@ -188,7 +224,7 @@ mod tests {
 
     #[test]
     fn child_device_disconnect() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let d = bus.device_connect(0, 1, true).unwrap();
         assert_eq!(d, 1);
         let dd = bus.device_connect(1, 2, false).unwrap();
@@ -204,7 +240,7 @@ mod tests {
 
     #[test]
     fn child_device_root_disconnect() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let d = bus.device_connect(0, 1, true).unwrap();
         assert_eq!(d, 1);
         let dd = bus.device_connect(1, 2, false).unwrap();
@@ -219,7 +255,7 @@ mod tests {
 
     #[test]
     fn too_many_hubs() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let mut hubs = 0;
 
         loop {
@@ -238,7 +274,7 @@ mod tests {
 
     #[test]
     fn too_many_devices() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
         let mut devices = 0;
         bus.device_connect(0, 15, true);
 
@@ -257,7 +293,7 @@ mod tests {
 
     #[test]
     fn ludicrous_input_rejected() {
-        let mut bus = Bus::new();
+        let mut bus = Topology::new();
 
         assert!(bus.device_connect(100, 100, true).is_none());
         assert_eq!(bus.device_disconnect(100, 100), 0);

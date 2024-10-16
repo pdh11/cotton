@@ -186,6 +186,7 @@ pub enum UsbError {
     DataSeqError,
     BufferTooSmall,
     AllPipesInUse,
+    ProtocolError,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

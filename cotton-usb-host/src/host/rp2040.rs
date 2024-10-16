@@ -25,7 +25,7 @@ impl UsbShared {
     pub fn on_irq(&self) {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
-        defmt::println!(
+        defmt::info!(
             "IRQ ints={:x} inte={:x}",
             ints.bits(),
             regs.inte().read().bits()
@@ -34,7 +34,7 @@ impl UsbShared {
             let bs = regs.buff_status().read().bits();
             for i in 0..15 {
                 if (bs & (3 << (i * 2))) != 0 {
-                    defmt::println!("IRQ wakes {}", i);
+                    defmt::info!("IRQ wakes {}", i);
                     self.pipe_wakers[i].wake();
                 }
             }
@@ -54,7 +54,7 @@ impl UsbShared {
         unsafe {
             regs.inte().modify(|r, w| w.bits(r.bits() & !bits));
         }
-        defmt::println!(
+        defmt::info!(
             "IRQ2 ints={:x} inte={:x}",
             bits,
             regs.inte().read().bits()
@@ -135,7 +135,12 @@ impl Stream for Rp2040DeviceDetect {
         };
 
         if device_status != self.status {
-            defmt::info!("DE ready {:x}", status.bits());
+            defmt::println!(
+                "DE ready {:x} {}/{}",
+                status.bits(),
+                device_status,
+                self.status
+            );
             regs.inte().modify(|_, w| w.host_conn_dis().set_bit());
             self.status = device_status;
             Poll::Ready(Some(device_status))
@@ -264,7 +269,7 @@ impl InterruptPipe for Rp2040InterruptPipe<'_> {
             regs.int_ep_ctrl().modify(|r, w| unsafe {
                 w.bits(r.bits() | (1 << self.pipe.n))
             });
-            defmt::println!(
+            defmt::trace!(
                 "IE pending inte {:x} iec {:x} ecr {:x} epbc {:x}",
                 regs.inte().read().bits(),
                 regs.int_ep_ctrl().read().bits(),
@@ -366,7 +371,7 @@ impl InterruptPipe for Rp2040MultiInterruptPipe {
         regs.int_ep_ctrl().modify(|r, w| unsafe {
             w.bits(r.bits() | (self.pipes.bits() * 2))
         });
-        defmt::println!(
+        defmt::trace!(
             "ME pending bits {:x} inte {:x} iec {:x}",
             self.pipes.bits() * 2,
             regs.inte().read().bits(),
@@ -499,7 +504,7 @@ impl Packetiser for InPacketiser {
                 if !val.available_0().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
                         self.remain -= this_packet;
-                        defmt::println!("Prepared {}-byte space", this_packet);
+                        defmt::info!("Prepared {}-byte space", this_packet);
                         reg.modify(|_, w| {
                             w.full_0().clear_bit();
                             w.pid_0().set_bit();
@@ -521,7 +526,7 @@ impl Packetiser for InPacketiser {
                 if !val.available_1().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
                         self.remain -= this_packet;
-                        defmt::println!("Prepared {}-byte space", this_packet);
+                        defmt::info!("Prepared {}-byte space", this_packet);
                         reg.modify(|_, w| {
                             w.full_1().clear_bit();
                             w.pid_1().clear_bit();
@@ -684,7 +689,7 @@ impl Depacketiser for InDepacketiser<'_> {
         match self.next_retire {
             0 => {
                 if val.full_0().bit() {
-                    defmt::println!("Got {} bytes", val.length_0().bits());
+                    defmt::trace!("Got {} bytes", val.length_0().bits());
                     let this_packet = core::cmp::min(
                         self.remain,
                         val.length_0().bits() as usize,
@@ -706,7 +711,7 @@ impl Depacketiser for InDepacketiser<'_> {
             }
             _ => {
                 if val.full_1().bit() {
-                    defmt::println!("Got {} bytes", val.length_1().bits());
+                    defmt::trace!("Got {} bytes", val.length_1().bits());
                     let this_packet = core::cmp::min(
                         self.remain,
                         val.length_1().bits() as usize,
