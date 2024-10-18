@@ -29,3 +29,6 @@ default = ["std"]
 std = ["critical-section/std", "futures/std"]
 rp2040 = ["defmt", "dep:rp2040-pac", "dep:rtic-common", "dep:cortex-m"]
 defmt = ["dep:defmt"]
+
+[dev-dependencies]
+pollster = "0.3"  # For doc-tests

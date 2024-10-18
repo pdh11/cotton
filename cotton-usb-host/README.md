@@ -67,7 +67,7 @@ docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).
 This crate supports USB host mode _only_, and not USB device mode. So
 before running your code, make sure that the USB connector on your
 Raspberry&nbsp;Pi Pico is plugged into a USB device, and not into
-another USB host such as a laptop. (You can still use a SWD connection
+another USB host such as a laptop[^3]. (You can still use a SWD connection
 to program and debug your Raspberry&nbsp;Pi Pico, just not the USB
 connection.)
 
@@ -102,6 +102,17 @@ minimal code example would involve:
    `UsbBus::configure` to configure the device appropriately, and
    `UsbBus::interrupt_endpoint` to read data from the device.
 
+[^3]: The Raspberry&nbsp;Pi Pico (and the W5500-EVB-Pico for that
+matter) have USB Micro-B receptacles (sockets), capable of receiving
+Micro-B plugs only. Because they are capable of both USB device and
+USB host, they _should_ arguably have had USB Micro-AB receptacles,
+capable of receiving both Micro-A (rectangular) and Micro-B
+(trapezium) plugs. But USB cables and adaptors with Micro-B plugs for
+their _host_ side connection (instead of Micro-A which it [should
+technically be](https://en.wikipedia.org/wiki/USB_On-The-Go)) are
+common. Both ST and Renesas devboards get this right: they have Micro-AB
+receptacles (though the very newest ST ones have type-C instead).
+
 ## Writing drivers for USB devices
 
 This crate includes an example of identifying and communicating with
@@ -109,7 +120,7 @@ a Plugable USB2-OTGE100 Ethernet adaptor based on the ASIX&nbsp;AX88772
 chip.
 
 Once your code has successfully created the `UsbBus` object and has
-called `UsbBus::device_events()`, it will receive `UsbDevice` objects
+called `UsbBus::device_events()`, it will receive `DeviceInfo` objects
 which allow your code to identify relevant devices either by class
 code (for generic class drivers such as mass-storage or HID) or by VID
 and PID (for device-specific drivers).
@@ -133,7 +144,7 @@ belongs in those microcontrollers' HAL crates.
 
 TODO before merge/0.1.0:
 
- - [ ] Hub state machine
+ - [x] Hub state machine
  - [ ] Unit tests
  - [ ] Bulk in/out
  - [ ] doc-comments

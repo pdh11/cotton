@@ -19,7 +19,16 @@ use futures::StreamExt;
 
 pub use crate::host_controller::DataPhase;
 
+/// A set of active USB devices.
+///
+/// The devices are represented by a bitmap: bit N set means that USB
+/// device address N is part of this set.
+///
+/// (So bit zero is never set, because 0 is never a valid assigned USB
+/// device address.)
 #[derive(Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
 pub struct UsbDeviceSet(pub u32);
 
 impl UsbDeviceSet {
@@ -28,10 +37,45 @@ impl UsbDeviceSet {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+/// A device-related event has occurred.
+///
+/// This is the type of events returned from
+/// [`UsbBus::device_events()`] or [`UsbBus::device_events_no_hubs`].
+/// The important events are hot-plug ("`Connect`") and
+/// hot-unplug("`Disconnect`"). Device events are how your code can
+/// detect the presence of USB devices and start to communicate with
+/// them.
+///
 pub enum DeviceEvent {
+    /// A new device has been connected. It has been given an address,
+    /// but has not yet been configured (state "Address" in USB 2.0
+    /// figure 9-1). Your code can read the device's descriptors to
+    /// confirm its identity and figure out what to do with it, but
+    /// must then call [`UsbBus::configure()`] before communicating
+    /// with it "for real".
+    ///
+    /// The `UsbDevice` object encapsulates the newly-assigned USB device
+    /// address. Basic information about the device -- sufficient, perhaps, to
+    /// select an appropriate driver from those available -- is in the
+    /// supplied `DeviceInfo`.
     Connect(UsbDevice, DeviceInfo),
+
+    /// A previously-reported device has become disconnected. This event
+    /// includes a _set_ of affected devices -- if a hub has become
+    /// disconnected, then every device downstream of it has simultaneously
+    /// _also_ become disconnected.
     Disconnect(UsbDeviceSet),
+
+    /// A device appears to have been connected, but is not
+    /// successfully responding to the mandatory enumeration commands.
+    /// This usually indicates inadequate power supply, or perhaps
+    /// damaged cabling.
     EnumerationError(u8, u8, UsbError),
+
+    /// There is nothing currently to report. (This event is sometimes sent
+    /// for internal reasons, and can be ignored.)
     None,
 }
 
@@ -66,6 +110,20 @@ struct HubState {
     //needs_reset: UsbDeviceSet,
 }
 
+/// A USB host bus.
+///
+/// This object represents the (portable) concept of a host's view of
+/// a whole bus of USB devices. It is constructed from a
+/// [`HostController`] object which encapsulates the driver for
+/// specific USB-host-controller hardware.
+///
+/// Starting from a `UsbBus` object, you can obtain details of any USB
+/// devices attached to this host, and start communicating with them as
+/// needed.
+///
+/// Devices with multiple USB host controllers will require a `UsbBus`
+/// object for each of them.
+///
 pub struct UsbBus<HC: HostController> {
     driver: HC,
     hub_pipes: RefCell<HC::MultiInterruptPipe>,
@@ -73,6 +131,7 @@ pub struct UsbBus<HC: HostController> {
 }
 
 impl<HC: HostController> UsbBus<HC> {
+    /// Create a new USB host bus from a host-controller driver
     pub fn new(driver: HC) -> Self {
         let hp = driver.multi_interrupt_pipe();
 
@@ -81,6 +140,267 @@ impl<HC: HostController> UsbBus<HC> {
             hub_pipes: RefCell::new(hp),
             hub_state: Default::default(),
         }
+    }
+
+    /// Obtain a stream of hotplug/hot-unplug events
+    ///
+    /// This stream is how the USB host stack informs your code that a
+    /// USB device is available for use. Once you have [created a
+    /// `UsbBus` object](UsbBus::new()), you can call `device_events()` and
+    /// get a stream of [`DeviceEvent`] objects:
+    ///
+    /// ```no_run
+    /// # use cotton_usb_host::host_controller::HostController;
+    /// # use std::pin::{pin, Pin};
+    /// # use std::task::{Context, Poll, Waker};
+    /// # use cotton_usb_host::usb_bus::UsbBus;
+    /// # use cotton_usb_host::host_controller::{InterruptPipe, MultiInterruptPipe, DataPhase, DeviceStatus};
+    /// # use cotton_usb_host::host_controller::InterruptPacket;
+    /// # use cotton_usb_host::types::{SetupPacket, UsbError};
+    /// # use futures::{Stream, StreamExt};
+    /// # struct Driver;
+    /// # struct Foo;
+    /// # impl Stream for Foo {
+    /// # type Item = DeviceStatus;
+    /// # fn poll_next(
+    /// #       mut self: Pin<&mut Self>,
+    /// #       cx: &mut Context<'_>,
+    /// #   ) -> Poll<Option<Self::Item>> { todo!() }
+    /// # }
+    /// # impl<'a> InterruptPipe for &'a Foo {
+    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
+    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
+    /// # }
+    /// # impl InterruptPipe for Foo {
+    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
+    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
+    /// # }
+    /// # impl MultiInterruptPipe for Foo {
+    /// # fn try_add(
+    /// #  &mut self,
+    /// # address: u8,
+    /// # endpoint: u8,
+    /// #       max_packet_size: u8,
+    /// #    interval_ms: u8,
+    /// #   ) -> Result<(), UsbError> { todo!() }
+    /// # fn remove(&mut self, address: u8) { todo!() }
+    /// # }
+    /// # impl HostController for Driver {
+    /// #     type InterruptPipe<'driver> = &'driver Foo;
+    /// #     type MultiInterruptPipe = Foo; type DeviceDetect = Foo;
+    /// # fn device_detect(&self) -> Self::DeviceDetect { todo!() }
+    /// # fn control_transfer<'a>(&self,
+    /// #   address: u8,
+    /// #       packet_size: u8,
+    /// #       setup: SetupPacket,
+    /// #       data_phase: DataPhase<'a>,
+    /// #   ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
+    /// #  async { todo!() } }
+    /// # fn alloc_interrupt_pipe(
+    /// # &self,
+    /// #  address: u8,
+    /// #    endpoint: u8,
+    /// #   max_packet_size: u16,
+    /// #    interval_ms: u8,
+    /// # ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>> {
+    /// # async { todo!() } }
+    /// #
+    /// # fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe { todo!() }
+    /// # }
+    /// # let driver = Driver;
+    /// # pollster::block_on(async {
+    /// let bus = UsbBus::new(driver);
+    /// let mut device_stream = pin!(bus.device_events());
+    /// loop {
+    ///     let event = device_stream.next().await;
+    ///     // ... process the event ...
+    /// }
+    /// # });
+    /// ```
+    ///
+    /// When using this method, the cotton-usb-host crate itself takes
+    /// care of detecting and configuring hubs, and of detecting
+    /// devices downstream of hubs. At present, the hubs do themselves
+    /// appear as `DeviceEvent`s, but your code doesn't need to do
+    /// anything with them.
+    ///
+    /// If you know for a fact that your hardware setup does not
+    /// include any hubs (or if you wish to operate the hubs
+    /// yourself), you can use
+    /// [`device_events_no_hubs()`](`UsbBus::device_events_no_hubs()`)
+    /// instead of `device_events()` and get smaller, simpler code.
+    ///
+    pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
+        let root_device = self.driver.device_detect();
+
+        enum InternalEvent {
+            Root(DeviceStatus),
+            Packet(InterruptPacket),
+        }
+
+        futures::stream::select(
+            root_device.map(InternalEvent::Root),
+            MultiInterruptStream::<HC> {
+                pipe: &self.hub_pipes,
+            }
+            .map(InternalEvent::Packet),
+        )
+        .then(move |ev| async move {
+            match ev {
+                InternalEvent::Root(status) => {
+                    if let DeviceStatus::Present(speed) = status {
+                        let info = match self.new_device(speed).await {
+                            Ok(info) => info,
+                            Err(e) => {
+                                return DeviceEvent::EnumerationError(0, 1, e)
+                            }
+                        };
+                        let is_hub = info.class == HUB_CLASSCODE;
+                        let address = self
+                            .hub_state
+                            .borrow_mut()
+                            .topology
+                            .device_connect(0, 1, is_hub)
+                            .expect("Root connect should always succeed");
+                        let device = match self
+                            .set_address(address, &info)
+                            .await
+                        {
+                            Ok(device) => device,
+                            Err(e) => {
+                                return DeviceEvent::EnumerationError(0, 1, e)
+                            }
+                        };
+                        if is_hub {
+                            debug::println!("It's a hub");
+                            match self.new_hub(&device, &info).await {
+                                Ok(()) => (),
+                                Err(e) => {
+                                    return DeviceEvent::EnumerationError(
+                                        0, 1, e,
+                                    )
+                                }
+                            };
+                        }
+                        DeviceEvent::Connect(device, info)
+                    } else {
+                        self.hub_state
+                            .borrow_mut()
+                            .topology
+                            .device_disconnect(0, 1);
+                        DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+                    }
+                }
+                InternalEvent::Packet(packet) => self
+                    .handle_hub_packet(&packet)
+                    .await
+                    .unwrap_or(DeviceEvent::Disconnect(UsbDeviceSet(0))),
+            }
+        })
+    }
+
+    /// Obtain a stream of hotplug/hot-unplug events
+    ///
+    /// This stream is how the USB host stack informs your code that a
+    /// USB device is available for use. Once you have [created a
+    /// `UsbBus` object](UsbBus::new()), you can call `device_events()` and
+    /// get a stream of [`DeviceEvent`] objects:
+    ///
+    /// ```no_run
+    /// # use cotton_usb_host::host_controller::HostController;
+    /// # use std::pin::{pin, Pin};
+    /// # use std::task::{Context, Poll, Waker};
+    /// # use cotton_usb_host::usb_bus::UsbBus;
+    /// # use cotton_usb_host::host_controller::{InterruptPipe, MultiInterruptPipe, DataPhase, DeviceStatus};
+    /// # use cotton_usb_host::host_controller::InterruptPacket;
+    /// # use cotton_usb_host::types::{SetupPacket, UsbError};
+    /// # use futures::{Stream, StreamExt};
+    /// # struct Driver;
+    /// # struct Foo;
+    /// # impl Stream for Foo {
+    /// # type Item = DeviceStatus;
+    /// # fn poll_next(
+    /// #       mut self: Pin<&mut Self>,
+    /// #       cx: &mut Context<'_>,
+    /// #   ) -> Poll<Option<Self::Item>> { todo!() }
+    /// # }
+    /// # impl<'a> InterruptPipe for &'a Foo {
+    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
+    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
+    /// # }
+    /// # impl InterruptPipe for Foo {
+    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
+    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
+    /// # }
+    /// # impl MultiInterruptPipe for Foo {
+    /// # fn try_add(
+    /// #  &mut self,
+    /// # address: u8,
+    /// # endpoint: u8,
+    /// #       max_packet_size: u8,
+    /// #    interval_ms: u8,
+    /// #   ) -> Result<(), UsbError> { todo!() }
+    /// # fn remove(&mut self, address: u8) { todo!() }
+    /// # }
+    /// # impl HostController for Driver {
+    /// #     type InterruptPipe<'driver> = &'driver Foo;
+    /// #     type MultiInterruptPipe = Foo; type DeviceDetect = Foo;
+    /// # fn device_detect(&self) -> Self::DeviceDetect { todo!() }
+    /// # fn control_transfer<'a>(&self,
+    /// #   address: u8,
+    /// #       packet_size: u8,
+    /// #       setup: SetupPacket,
+    /// #       data_phase: DataPhase<'a>,
+    /// #   ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
+    /// #  async { todo!() } }
+    /// # fn alloc_interrupt_pipe(
+    /// # &self,
+    /// #  address: u8,
+    /// #    endpoint: u8,
+    /// #   max_packet_size: u16,
+    /// #    interval_ms: u8,
+    /// # ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>> {
+    /// # async { todo!() } }
+    /// #
+    /// # fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe { todo!() }
+    /// # }
+    /// # let driver = Driver;
+    /// # pollster::block_on(async {
+    /// let bus = UsbBus::new(driver);
+    /// let mut device_stream = pin!(bus.device_events_no_hubs());
+    /// loop {
+    ///     let event = device_stream.next().await;
+    ///     // ... process the event ...
+    /// }
+    /// # });
+    /// ```
+    ///
+    /// When using this method, the cotton-usb-host crate deals only with
+    /// a single USB device attached directly to the USB host controller,
+    /// i.e. that device is not treated specially if it is a hub.
+    ///
+    /// If you would rather let the cotton-usb-host crate take care of
+    /// hubs automatically, you can use
+    /// [`device_events()`](`UsbBus::device_events_no_hubs()`) instead
+    /// of `device_events_no_hubs()`.
+    ///
+    pub fn device_events_no_hubs(
+        &self,
+    ) -> impl Stream<Item = DeviceEvent> + '_ {
+        let root_device = self.driver.device_detect();
+        root_device.then(move |status| async move {
+            if let DeviceStatus::Present(speed) = status {
+                if let Ok(info) = self.new_device(speed).await {
+                    if let Ok(device) = self.set_address(1, &info).await {
+                        return DeviceEvent::Connect(device, info);
+                    }
+                }
+                // Can't enumerate device
+                DeviceEvent::Disconnect(UsbDeviceSet(0))
+            } else {
+                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+            }
+        })
     }
 
     pub async fn configure(
@@ -233,25 +553,6 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(bd)
     }
 
-    pub fn device_events_no_hubs(
-        &self,
-    ) -> impl Stream<Item = DeviceEvent> + '_ {
-        let root_device = self.driver.device_detect();
-        root_device.then(move |status| async move {
-            if let DeviceStatus::Present(speed) = status {
-                if let Ok(info) = self.new_device(speed).await {
-                    if let Ok(device) = self.set_address(1, &info).await {
-                        return DeviceEvent::Connect(device, info);
-                    }
-                }
-                // Can't enumerate device
-                DeviceEvent::Disconnect(UsbDeviceSet(0))
-            } else {
-                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
-            }
-        })
-    }
-
     async fn new_hub(
         &self,
         device: &UsbDevice,
@@ -316,6 +617,12 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(())
     }
 
+    /// Return a snapshot of the current physical bus layout
+    ///
+    /// This snapshot includes a representation of all the hubs and
+    /// devices currently detected, and how they are linked together.
+    ///
+    /// This is useful for logging/debugging.
     pub fn topology(&self) -> Topology {
         self.hub_state.borrow().topology.clone()
     }
@@ -501,74 +808,5 @@ impl<HC: HostController> UsbBus<HC> {
         }
         // TODO: if we get here, does some other port need resetting?
         Ok(DeviceEvent::Disconnect(UsbDeviceSet(0)))
-    }
-
-    pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
-        let root_device = self.driver.device_detect();
-
-        enum InternalEvent {
-            Root(DeviceStatus),
-            Packet(InterruptPacket),
-        }
-
-        futures::stream::select(
-            root_device.map(InternalEvent::Root),
-            MultiInterruptStream::<HC> {
-                pipe: &self.hub_pipes,
-            }
-            .map(InternalEvent::Packet),
-        )
-        .then(move |ev| async move {
-            match ev {
-                InternalEvent::Root(status) => {
-                    if let DeviceStatus::Present(speed) = status {
-                        let info = match self.new_device(speed).await {
-                            Ok(info) => info,
-                            Err(e) => {
-                                return DeviceEvent::EnumerationError(0, 1, e)
-                            }
-                        };
-                        let is_hub = info.class == HUB_CLASSCODE;
-                        let address = self
-                            .hub_state
-                            .borrow_mut()
-                            .topology
-                            .device_connect(0, 1, is_hub)
-                            .expect("Root connect should always succeed");
-                        let device = match self
-                            .set_address(address, &info)
-                            .await
-                        {
-                            Ok(device) => device,
-                            Err(e) => {
-                                return DeviceEvent::EnumerationError(0, 1, e)
-                            }
-                        };
-                        if is_hub {
-                            debug::println!("It's a hub");
-                            match self.new_hub(&device, &info).await {
-                                Ok(()) => (),
-                                Err(e) => {
-                                    return DeviceEvent::EnumerationError(
-                                        0, 1, e,
-                                    )
-                                }
-                            };
-                        }
-                        DeviceEvent::Connect(device, info)
-                    } else {
-                        self.hub_state
-                            .borrow_mut()
-                            .topology
-                            .device_disconnect(0, 1);
-                        DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
-                    }
-                }
-                InternalEvent::Packet(packet) => self
-                    .handle_hub_packet(&packet)
-                    .await
-                    .unwrap_or(DeviceEvent::Disconnect(UsbDeviceSet(0))),
-            }
-        })
     }
 }
