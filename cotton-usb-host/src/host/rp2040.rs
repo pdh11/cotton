@@ -176,15 +176,17 @@ impl Future for Rp2040ControlEndpoint<'_> {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
-        if (intr.bits() & 0x448) != 0 {
+        if (intr.bits() & 0x458) != 0 {
             defmt::info!("CE ready {:x}", status.bits());
             regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
             Poll::Ready(status)
         } else {
+            regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
             defmt::trace!(
-                "CE pending intr={:x} st={:x}",
+                "CE pending intr={:x} st={:x}->{:x}",
                 intr.bits(),
-                status.bits()
+                status.bits(),
+                regs.sie_status().read().bits(),
             );
             regs.inte().modify(|_, w| {
                 w.stall()
