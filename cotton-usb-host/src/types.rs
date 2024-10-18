@@ -187,6 +187,7 @@ pub enum UsbError {
     BufferTooSmall,
     AllPipesInUse,
     ProtocolError,
+    TooManyDevices,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -211,14 +212,20 @@ pub enum EndpointType {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone)]
-pub struct UsbDevice {
-    pub address: u8,
-    pub packet_size_ep0: u8,
+pub struct DeviceInfo {
     pub vid: u16,
     pub pid: u16,
-    pub speed: UsbSpeed,
     pub class: u8,
     pub subclass: u8,
+    pub speed: UsbSpeed,
+    pub packet_size_ep0: u8,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
+pub struct UsbDevice {
+    pub address: u8,
 }
 
 pub trait DescriptorVisitor {

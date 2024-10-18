@@ -136,17 +136,26 @@ mod app {
         loop {
             let device = p.next().await;
 
+            if let Some(DeviceEvent::EnumerationError(h, p, e)) = device {
+                defmt::println!(
+                    "Enumeration error {} on hub {} port {}",
+                    e,
+                    h,
+                    p
+                );
+            }
+
             defmt::println!("{:?}", stack.topology());
 
-            if let Some(DeviceEvent::Connect(device)) = device {
+            if let Some(DeviceEvent::Connect(device, info)) = device {
                 defmt::println!("Got device {:x}", device);
 
                 defmt::trace!("fetching2");
                 let mut descriptors = [0u8; 64];
                 let rc = stack
                     .control_transfer(
-                        1,
-                        device.packet_size_ep0,
+                        device.address,
+                        info.packet_size_ep0,
                         SetupPacket {
                             bmRequestType: DEVICE_TO_HOST,
                             bRequest: GET_DESCRIPTOR,
@@ -166,13 +175,13 @@ mod app {
                     defmt::println!("fetched {:?}", rc);
                 }
 
-                if device.vid == 0x0B95 && device.pid == 0x7720 {
+                if info.vid == 0x0B95 && info.pid == 0x7720 {
                     // ASIX AX88772
                     defmt::trace!("fetching4");
                     let rc = stack
                         .control_transfer(
-                            1,
-                            device.packet_size_ep0,
+                            device.address,
+                            info.packet_size_ep0,
                             SetupPacket {
                                 bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
                                 bRequest: 0x13,
