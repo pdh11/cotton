@@ -319,6 +319,14 @@ pub enum EndpointType {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Direction {
+    In,
+    Out,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone)]
 pub struct DeviceInfo {
     pub vid: u16,
@@ -375,7 +383,7 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
         let dlen = buf[index] as usize;
         let dtype = buf[index + 1];
 
-        if buf.len() < index + dlen {
+        if dlen < 2 || buf.len() < index + dlen {
             return;
         }
 

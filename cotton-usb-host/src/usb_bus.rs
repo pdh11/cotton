@@ -268,7 +268,7 @@ impl<HC: HostController> UsbBus<HC> {
                         {
                             Ok(device) => device,
                             Err(e) => {
-                                return DeviceEvent::EnumerationError(0, 1, e)
+                                return DeviceEvent::EnumerationError(0, 1, e);
                             }
                         };
                         if is_hub {

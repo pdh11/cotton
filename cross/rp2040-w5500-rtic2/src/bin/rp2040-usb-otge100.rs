@@ -11,9 +11,9 @@ mod app {
     use core::pin::pin;
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::types::{
-        parse_descriptors, SetupPacket, ShowDescriptors,
-        CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR,
-        VENDOR_REQUEST,
+        parse_descriptors, ConfigurationDescriptor, SetupPacket,
+        ShowDescriptors, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
+        GET_DESCRIPTOR, VENDOR_REQUEST,
     };
     use cotton_usb_host::usb_bus::{DataPhase, DeviceEvent, UsbBus};
     use futures_util::StreamExt;
@@ -148,7 +148,7 @@ mod app {
             defmt::println!("{:?}", stack.topology());
 
             if let Some(DeviceEvent::Connect(device, info)) = device {
-                defmt::println!("Got device {:x}", device);
+                defmt::println!("Got device {:x} {:x}", device, info);
 
                 defmt::trace!("fetching2");
                 let mut descriptors = [0u8; 64];
@@ -161,16 +161,42 @@ mod app {
                             bRequest: GET_DESCRIPTOR,
                             wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
                             wIndex: 0,
-                            wLength: 64,
+                            wLength: core::mem::size_of::<
+                                ConfigurationDescriptor,
+                            >() as u16,
                         },
                         DataPhase::In(&mut descriptors),
                     )
                     .await;
-                if let Ok(sz) = rc {
-                    parse_descriptors(
-                        &descriptors[0..sz],
-                        &mut ShowDescriptors,
+                if let Ok(_sz) = rc {
+                    let total_length =
+                        u16::from_be_bytes([descriptors[2], descriptors[3]]);
+                    defmt::println!(
+                        "{} bytes of configuration total",
+                        total_length
                     );
+                    let bytes = core::cmp::min(total_length, 64);
+                    let rc = stack
+                        .control_transfer(
+                            device.address,
+                            info.packet_size_ep0,
+                            SetupPacket {
+                                bmRequestType: DEVICE_TO_HOST,
+                                bRequest: GET_DESCRIPTOR,
+                                wValue: ((CONFIGURATION_DESCRIPTOR as u16)
+                                    << 8),
+                                wIndex: 0,
+                                wLength: bytes,
+                            },
+                            DataPhase::In(&mut descriptors),
+                        )
+                        .await;
+                    if rc.is_ok() {
+                        parse_descriptors(
+                            &descriptors[0..(bytes as usize)],
+                            &mut ShowDescriptors,
+                        );
+                    }
                 } else {
                     defmt::println!("fetched {:?}", rc);
                 }
