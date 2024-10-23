@@ -141,70 +141,16 @@ impl<HC: HostController> UsbBus<HC> {
     /// ```no_run
     /// # use cotton_usb_host::host_controller::HostController;
     /// # use std::pin::{pin, Pin};
-    /// # use std::task::{Context, Poll, Waker};
     /// # use cotton_usb_host::usb_bus::UsbBus;
-    /// # use cotton_usb_host::host_controller::{InterruptPipe, MultiInterruptPipe, DataPhase, DeviceStatus};
-    /// # use cotton_usb_host::host_controller::InterruptPacket;
-    /// # use cotton_usb_host::types::{SetupPacket, UsbError};
     /// # use futures::{Stream, StreamExt};
-    /// # struct Driver;
-    /// # struct Foo;
-    /// # impl Stream for Foo {
-    /// # type Item = DeviceStatus;
-    /// # fn poll_next(
-    /// #       mut self: Pin<&mut Self>,
-    /// #       cx: &mut Context<'_>,
-    /// #   ) -> Poll<Option<Self::Item>> { todo!() }
-    /// # }
-    /// # impl<'a> InterruptPipe for &'a Foo {
-    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
-    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
-    /// # }
-    /// # impl InterruptPipe for Foo {
-    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
-    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
-    /// # }
-    /// # impl MultiInterruptPipe for Foo {
-    /// # fn try_add(
-    /// #  &mut self,
-    /// # address: u8,
-    /// # endpoint: u8,
-    /// #       max_packet_size: u8,
-    /// #    interval_ms: u8,
-    /// #   ) -> Result<(), UsbError> { todo!() }
-    /// # fn remove(&mut self, address: u8) { todo!() }
-    /// # }
-    /// # impl HostController for Driver {
-    /// #     type InterruptPipe<'driver> = &'driver Foo;
-    /// #     type MultiInterruptPipe = Foo; type DeviceDetect = Foo;
-    /// # fn device_detect(&self) -> Self::DeviceDetect { todo!() }
-    /// # fn control_transfer<'a>(&self,
-    /// #   address: u8,
-    /// #       packet_size: u8,
-    /// #       setup: SetupPacket,
-    /// #       data_phase: DataPhase<'a>,
-    /// #   ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
-    /// #  async { todo!() } }
-    /// # fn alloc_interrupt_pipe(
-    /// # &self,
-    /// #  address: u8,
-    /// #    endpoint: u8,
-    /// #   max_packet_size: u16,
-    /// #    interval_ms: u8,
-    /// # ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>> {
-    /// # async { todo!() } }
-    /// #
-    /// # fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe { todo!() }
-    /// # }
-    /// # let driver = Driver;
-    /// # pollster::block_on(async {
+    /// # async fn foo<D: HostController>(driver: D) -> () {
     /// let bus = UsbBus::new(driver);
     /// let mut device_stream = pin!(bus.device_events());
     /// loop {
     ///     let event = device_stream.next().await;
     ///     // ... process the event ...
     /// }
-    /// # });
+    /// # }
     /// ```
     ///
     /// When using this method, the cotton-usb-host crate itself takes
@@ -299,70 +245,16 @@ impl<HC: HostController> UsbBus<HC> {
     /// ```no_run
     /// # use cotton_usb_host::host_controller::HostController;
     /// # use std::pin::{pin, Pin};
-    /// # use std::task::{Context, Poll, Waker};
     /// # use cotton_usb_host::usb_bus::UsbBus;
-    /// # use cotton_usb_host::host_controller::{InterruptPipe, MultiInterruptPipe, DataPhase, DeviceStatus};
-    /// # use cotton_usb_host::host_controller::InterruptPacket;
-    /// # use cotton_usb_host::types::{SetupPacket, UsbError};
     /// # use futures::{Stream, StreamExt};
-    /// # struct Driver;
-    /// # struct Foo;
-    /// # impl Stream for Foo {
-    /// # type Item = DeviceStatus;
-    /// # fn poll_next(
-    /// #       mut self: Pin<&mut Self>,
-    /// #       cx: &mut Context<'_>,
-    /// #   ) -> Poll<Option<Self::Item>> { todo!() }
-    /// # }
-    /// # impl<'a> InterruptPipe for &'a Foo {
-    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
-    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
-    /// # }
-    /// # impl InterruptPipe for Foo {
-    /// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
-    /// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
-    /// # }
-    /// # impl MultiInterruptPipe for Foo {
-    /// # fn try_add(
-    /// #  &mut self,
-    /// # address: u8,
-    /// # endpoint: u8,
-    /// #       max_packet_size: u8,
-    /// #    interval_ms: u8,
-    /// #   ) -> Result<(), UsbError> { todo!() }
-    /// # fn remove(&mut self, address: u8) { todo!() }
-    /// # }
-    /// # impl HostController for Driver {
-    /// #     type InterruptPipe<'driver> = &'driver Foo;
-    /// #     type MultiInterruptPipe = Foo; type DeviceDetect = Foo;
-    /// # fn device_detect(&self) -> Self::DeviceDetect { todo!() }
-    /// # fn control_transfer<'a>(&self,
-    /// #   address: u8,
-    /// #       packet_size: u8,
-    /// #       setup: SetupPacket,
-    /// #       data_phase: DataPhase<'a>,
-    /// #   ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
-    /// #  async { todo!() } }
-    /// # fn alloc_interrupt_pipe(
-    /// # &self,
-    /// #  address: u8,
-    /// #    endpoint: u8,
-    /// #   max_packet_size: u16,
-    /// #    interval_ms: u8,
-    /// # ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>> {
-    /// # async { todo!() } }
-    /// #
-    /// # fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe { todo!() }
-    /// # }
-    /// # let driver = Driver;
-    /// # pollster::block_on(async {
+    /// # async fn foo<D: HostController>(driver: D) -> () {
     /// let bus = UsbBus::new(driver);
     /// let mut device_stream = pin!(bus.device_events_no_hubs());
     /// loop {
     ///     let event = device_stream.next().await;
     ///     // ... process the event ...
     /// }
-    /// # });
+    /// # }
     /// ```
     ///
     /// When using this method, the cotton-usb-host crate deals only with

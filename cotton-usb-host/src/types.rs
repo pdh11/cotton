@@ -17,68 +17,11 @@ use crate::debug;
 /// For instance, here is how to read the MAC address of an AX88772 USB-to-Ethernet adaptor:
 ///
 /// ```no_run
-/// # use cotton_usb_host::host_controller::HostController;
-/// # use std::pin::{pin, Pin};
-/// # use std::task::{Context, Poll, Waker};
+/// # use cotton_usb_host::host_controller::{HostController, DataPhase};
 /// # use cotton_usb_host::usb_bus::UsbBus;
-/// # use cotton_usb_host::host_controller::{InterruptPipe, MultiInterruptPipe, DataPhase, DeviceStatus};
-/// # use cotton_usb_host::host_controller::InterruptPacket;
-/// # use cotton_usb_host::types::{SetupPacket, UsbError, UsbDevice, DEVICE_TO_HOST, VENDOR_REQUEST, DeviceInfo, UsbSpeed};
+/// # use cotton_usb_host::types::{SetupPacket, UsbError, UsbDevice, DEVICE_TO_HOST, VENDOR_REQUEST, DeviceInfo};
 /// # use futures::{Stream, StreamExt};
-/// # struct Driver;
-/// # struct Foo;
-/// # impl Stream for Foo {
-/// # type Item = DeviceStatus;
-/// # fn poll_next(
-/// #       mut self: Pin<&mut Self>,
-/// #       cx: &mut Context<'_>,
-/// #   ) -> Poll<Option<Self::Item>> { todo!() }
-/// # }
-/// # impl<'a> InterruptPipe for &'a Foo {
-/// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
-/// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
-/// # }
-/// # impl InterruptPipe for Foo {
-/// #     fn set_waker(&self, waker: &core::task::Waker) { todo!() }
-/// #     fn poll(&self) -> Option<InterruptPacket> { todo!() }
-/// # }
-/// # impl MultiInterruptPipe for Foo {
-/// # fn try_add(
-/// #  &mut self,
-/// # address: u8,
-/// # endpoint: u8,
-/// #       max_packet_size: u8,
-/// #    interval_ms: u8,
-/// #   ) -> Result<(), UsbError> { todo!() }
-/// # fn remove(&mut self, address: u8) { todo!() }
-/// # }
-/// # impl HostController for Driver {
-/// #     type InterruptPipe<'driver> = &'driver Foo;
-/// #     type MultiInterruptPipe = Foo; type DeviceDetect = Foo;
-/// # fn device_detect(&self) -> Self::DeviceDetect { todo!() }
-/// # fn control_transfer<'a>(&self,
-/// #   address: u8,
-/// #       packet_size: u8,
-/// #       setup: SetupPacket,
-/// #       data_phase: DataPhase<'a>,
-/// #   ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
-/// #  async { todo!() } }
-/// # fn alloc_interrupt_pipe(
-/// # &self,
-/// #  address: u8,
-/// #    endpoint: u8,
-/// #   max_packet_size: u16,
-/// #    interval_ms: u8,
-/// # ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>> {
-/// # async { todo!() } }
-/// #
-/// # fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe { todo!() }
-/// # }
-/// # let driver = Driver;
-/// # let bus = UsbBus::new(driver);
-/// # let device = UsbDevice { address: 1 };
-/// # let info = DeviceInfo { vid: 0, pid: 0, class: 0, subclass: 0, speed: UsbSpeed::Low1_5, packet_size_ep0: 8 };
-/// # pollster::block_on(async {
+/// # async fn foo<HC: HostController>(bus: UsbBus<HC>, device: UsbDevice, info: DeviceInfo) {
 /// let mut data = [0u8; 6];
 /// let rc = bus.control_transfer(
 ///         device.address,
@@ -93,7 +36,7 @@ use crate::debug;
 ///         DataPhase::In(&mut data),
 ///     )
 ///     .await;
-/// # });
+/// # }
 /// ```
 ///
 /// Here, the "Request Type" indicates a vendor-specific (AX88772-specific)
