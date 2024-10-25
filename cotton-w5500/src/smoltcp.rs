@@ -1,142 +1,147 @@
-struct Buffer {
-    bytes: [u8; 1536],
-}
-
-impl Buffer {
-    pub const fn new() -> Self {
-        Buffer { bytes: [0u8; 1536] }
+/// Smoltcp phy device
+pub mod device {
+    struct Buffer {
+        bytes: [u8; 1536],
     }
-}
 
-/// A W5500 driver for smoltcp
-///
-/// Implementing `smoltcp::phy::Device`.
-///
-/// This is a simple implementation that uses synchronous transfers, and
-/// so needs just one inbound and one outbound buffer.
-pub struct Device<Spi: w5500::bus::Bus> {
-    w5500: w5500::raw_device::RawDevice<Spi>,
-    rx: Buffer,
-    tx: Buffer,
-}
-
-impl<Spi: w5500::bus::Bus> Device<Spi> {
-    /// Create a new Device from a SPI abstraction and a MAC address
-    ///
-    /// See the `w5500` crate for what constitutes a SPI abstraction (it's
-    /// not just `embedded_hal::SpiDevice`). See the `cotton_unique` crate
-    /// for a good way to derive MAC addresses (or, for testing purposes,
-    /// just make one up if need be).
-    pub fn new(spi: Spi, mac_address: &[u8; 6]) -> Self {
-        let mac = w5500::net::MacAddress {
-            octets: *mac_address,
-        };
-        Self {
-            w5500: w5500::UninitializedDevice::new(spi)
-                .initialize_macraw(mac)
-                .unwrap(),
-            rx: Buffer::new(),
-            tx: Buffer::new(),
+    impl Buffer {
+        pub const fn new() -> Self {
+            Buffer { bytes: [0u8; 1536] }
         }
     }
 
-    /// Enable chip-level interrupts on pin INTn
-    pub fn enable_interrupt(&mut self) {
-        let _ = self.w5500.enable_interrupts(4); // RX interrupt
+    /// A W5500 driver for smoltcp
+    ///
+    /// Implementing `smoltcp::phy::Device`.
+    ///
+    /// This is a simple implementation that uses synchronous transfers, and
+    /// so needs just one inbound and one outbound buffer.
+    pub struct Device<Spi: w5500::bus::Bus> {
+        w5500: w5500::raw_device::RawDevice<Spi>,
+        rx: Buffer,
+        tx: Buffer,
     }
 
-    /// Clear pending interrupts
-    pub fn clear_interrupt(&mut self) {
-        let _ = self.w5500.clear_interrupts();
-    }
-}
-
-/// An `EthTxToken` represents permission to send one packet
-///
-/// The packet is not sent until the `consume` method is called on the
-/// token. Because both the SPI transfer and the Ethernet transmission
-/// are synchronous, consuming the token (assuming 10MHz SPI and 10Mbit
-/// Ethernet) may take up to 1500*8*2*0.1us or 2.4ms.
-pub struct EthTxToken<'a, Spi: w5500::bus::Bus> {
-    w5500: &'a mut w5500::raw_device::RawDevice<Spi>,
-    buffer: &'a mut Buffer,
-}
-
-/// An `EthRxToken` represents permission to receive one packet
-///
-/// The packet is copied from SPI in the `receive` call; consuming the
-/// token does no further copies.
-pub struct EthRxToken<'a> {
-    count: usize,
-    buffer: &'a mut Buffer,
-}
-
-impl<Spi: w5500::bus::Bus> smoltcp::phy::Device for Device<Spi> {
-    type RxToken<'token> = EthRxToken<'token> where Self: 'token;
-    type TxToken<'token> = EthTxToken<'token, Spi> where Self: 'token;
-
-    fn receive(
-        &mut self,
-        _timestamp: smoltcp::time::Instant,
-    ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        if let Ok(n) = self.w5500.read_frame(&mut self.rx.bytes) {
-            if n > 0 {
-                return Some((
-                    EthRxToken {
-                        count: n,
-                        buffer: &mut self.rx,
-                    },
-                    EthTxToken {
-                        w5500: &mut self.w5500,
-                        buffer: &mut self.tx,
-                    },
-                ));
+    impl<Spi: w5500::bus::Bus> Device<Spi> {
+        /// Create a new Device from a SPI abstraction and a MAC address
+        ///
+        /// See the `w5500` crate for what constitutes a SPI abstraction (it's
+        /// not just `embedded_hal::SpiDevice`). See the `cotton_unique` crate
+        /// for a good way to derive MAC addresses (or, for testing purposes,
+        /// just make one up if need be).
+        pub fn new(spi: Spi, mac_address: &[u8; 6]) -> Self {
+            let mac = w5500::net::MacAddress {
+                octets: *mac_address,
+            };
+            Self {
+                w5500: w5500::UninitializedDevice::new(spi)
+                    .initialize_macraw(mac)
+                    .unwrap(),
+                rx: Buffer::new(),
+                tx: Buffer::new(),
             }
         }
-        None
+
+        /// Enable chip-level interrupts on pin INTn
+        pub fn enable_interrupt(&mut self) {
+            let _ = self.w5500.enable_interrupts(4); // RX interrupt
+        }
+
+        /// Clear pending interrupts
+        pub fn clear_interrupt(&mut self) {
+            let _ = self.w5500.clear_interrupts();
+        }
     }
 
-    fn transmit(
-        &mut self,
-        _timestamp: smoltcp::time::Instant,
-    ) -> Option<Self::TxToken<'_>> {
-        // Because it returns a mutable reference, this cannot be
-        // called again until the previous token has been Dropped,
-        // so there's no need to reference-count the buffer.
-        Some(EthTxToken {
-            w5500: &mut self.w5500,
-            buffer: &mut self.tx,
-        })
+    /// An `EthTxToken` represents permission to send one packet
+    ///
+    /// The packet is not sent until the `consume` method is called on the
+    /// token. Because both the SPI transfer and the Ethernet transmission
+    /// are synchronous, consuming the token (assuming 10MHz SPI and 10Mbit
+    /// Ethernet) may take up to 1500*8*2*0.1us or 2.4ms.
+    pub struct EthTxToken<'a, Spi: w5500::bus::Bus> {
+        w5500: &'a mut w5500::raw_device::RawDevice<Spi>,
+        buffer: &'a mut Buffer,
     }
 
-    fn capabilities(&self) -> smoltcp::phy::DeviceCapabilities {
-        let mut caps = smoltcp::phy::DeviceCapabilities::default();
-        caps.max_transmission_unit = 1536;
-        caps.medium = smoltcp::phy::Medium::Ethernet;
-        caps.max_burst_size = Some(1);
-        caps
+    /// An `EthRxToken` represents permission to receive one packet
+    ///
+    /// The packet is copied from SPI in the `receive` call; consuming the
+    /// token does no further copies.
+    pub struct EthRxToken<'a> {
+        count: usize,
+        buffer: &'a mut Buffer,
+    }
+
+    impl<Spi: w5500::bus::Bus> smoltcp::phy::Device for Device<Spi> {
+        type RxToken<'token> = EthRxToken<'token> where Self: 'token;
+        type TxToken<'token> = EthTxToken<'token, Spi> where Self: 'token;
+
+        fn receive(
+            &mut self,
+            _timestamp: smoltcp::time::Instant,
+        ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+            if let Ok(n) = self.w5500.read_frame(&mut self.rx.bytes) {
+                if n > 0 {
+                    return Some((
+                        EthRxToken {
+                            count: n,
+                            buffer: &mut self.rx,
+                        },
+                        EthTxToken {
+                            w5500: &mut self.w5500,
+                            buffer: &mut self.tx,
+                        },
+                    ));
+                }
+            }
+            None
+        }
+
+        fn transmit(
+            &mut self,
+            _timestamp: smoltcp::time::Instant,
+        ) -> Option<Self::TxToken<'_>> {
+            // Because it returns a mutable reference, this cannot be
+            // called again until the previous token has been Dropped,
+            // so there's no need to reference-count the buffer.
+            Some(EthTxToken {
+                w5500: &mut self.w5500,
+                buffer: &mut self.tx,
+            })
+        }
+
+        fn capabilities(&self) -> smoltcp::phy::DeviceCapabilities {
+            let mut caps = smoltcp::phy::DeviceCapabilities::default();
+            caps.max_transmission_unit = 1536;
+            caps.medium = smoltcp::phy::Medium::Ethernet;
+            caps.max_burst_size = Some(1);
+            caps
+        }
+    }
+
+    impl smoltcp::phy::RxToken for EthRxToken<'_> {
+        fn consume<R, F>(self, f: F) -> R
+        where
+            F: FnOnce(&mut [u8]) -> R,
+        {
+            f(&mut self.buffer.bytes[0..self.count])
+        }
+    }
+
+    impl<Spi: w5500::bus::Bus> smoltcp::phy::TxToken for EthTxToken<'_, Spi> {
+        fn consume<R, F>(self, len: usize, f: F) -> R
+        where
+            F: FnOnce(&mut [u8]) -> R,
+        {
+            let result = f(&mut self.buffer.bytes[0..len]);
+            let _ = self.w5500.write_frame(&self.buffer.bytes[0..len]);
+            result
+        }
     }
 }
 
-impl smoltcp::phy::RxToken for EthRxToken<'_> {
-    fn consume<R, F>(self, f: F) -> R
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        f(&mut self.buffer.bytes[0..self.count])
-    }
-}
-
-impl<Spi: w5500::bus::Bus> smoltcp::phy::TxToken for EthTxToken<'_, Spi> {
-    fn consume<R, F>(self, len: usize, f: F) -> R
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        let result = f(&mut self.buffer.bytes[0..len]);
-        let _ = self.w5500.write_frame(&self.buffer.bytes[0..len]);
-        result
-    }
-}
+pub use device::*;
 
 /// For W5500-EVB-Pico
 #[cfg(feature = "w5500-evb-pico")]
@@ -176,7 +181,7 @@ pub mod w5500_evb_pico {
     type SpiBus = w5500::bus::FourWire<SpiDevice>;
 
     /// A W5500 driver specialised for the SPI setup on the W5500-EVB-Pico board
-    pub type Device = super::Device<SpiBus>;
+    pub type Device = super::device::Device<SpiBus>;
 
     /// The W5500 IRQ pin on the W5500-EVB-Pico board
     pub type IrqPin =
