@@ -34,80 +34,92 @@
 #![no_std]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
-use core::hash::Hasher;
 
-/// An object from which unique identifers can be obtained
-pub struct UniqueId {
-    id: [u64; 2],
-}
+/// Unique identifiers
+pub mod unique_id {
 
-impl UniqueId {
-    /// Create a new UniqueId object
-    ///
-    /// The `unique_bytes` can be a raw unique chip ID, as they are hashed
-    /// and salted before any client code sees them.
-    pub fn new(unique_bytes: &[u8; 16]) -> Self {
-        Self {
-            id: [
-                u64::from_le_bytes(unique_bytes[0..8].try_into().unwrap()),
-                u64::from_le_bytes(unique_bytes[8..16].try_into().unwrap()),
-            ],
+    use core::hash::Hasher;
+
+    /// An object from which unique identifers can be obtained
+    pub struct UniqueId {
+        id: [u64; 2],
+    }
+
+    impl UniqueId {
+        /// Create a new UniqueId object
+        ///
+        /// The `unique_bytes` can be a raw unique chip ID, as they are hashed
+        /// and salted before any client code sees them.
+        pub fn new(unique_bytes: &[u8; 16]) -> Self {
+            Self {
+                id: [
+                    u64::from_le_bytes(unique_bytes[0..8].try_into().unwrap()),
+                    u64::from_le_bytes(
+                        unique_bytes[8..16].try_into().unwrap(),
+                    ),
+                ],
+            }
+        }
+
+        /// Return a (statistically) unique identifier for a specific purpose
+        ///
+        /// The `salt` string should concisely express the purpose for which the
+        /// identifier is needed; i.e., identifiers for different purposes must
+        /// have different salts.
+        pub fn id(&self, salt: &[u8]) -> u64 {
+            let mut h = siphasher::sip::SipHasher::new_with_keys(
+                self.id[0], self.id[1],
+            );
+            h.write(salt);
+            h.finish()
+        }
+
+        /// Return a (statistically) unique identifier for a specific purpose
+        ///
+        /// This is very similar to `id` but takes two `salt` values, a string
+        /// and a u32. This is intended to be helpful when creating identifiers
+        /// larger than u64; see the implementation of `uuid()` for an example.
+        pub fn id2(&self, salt: &[u8], salt2: u32) -> u64 {
+            let mut h = siphasher::sip::SipHasher::new_with_keys(
+                self.id[0], self.id[1],
+            );
+            h.write(salt);
+            h.write_u32(salt2.to_le());
+            h.finish()
         }
     }
 
-    /// Return a (statistically) unique identifier for a specific purpose
+    /// Return a statistically-unique but consistent MAC address
     ///
-    /// The `salt` string should concisely express the purpose for which the
-    /// identifier is needed; i.e., identifiers for different purposes must
-    /// have different salts.
-    pub fn id(&self, salt: &[u8]) -> u64 {
-        let mut h =
-            siphasher::sip::SipHasher::new_with_keys(self.id[0], self.id[1]);
-        h.write(salt);
-        h.finish()
+    /// The recommendation is that the `salt` string encodes the network
+    /// address somehow (so that multi-homed hosts get different MAC
+    /// addresses on different interfaces); for instance b"stm32-eth" or
+    /// b"w5500-spi0".
+    pub fn mac_address(unique: &UniqueId, salt: &[u8]) -> [u8; 6] {
+        let mut mac_address = [0u8; 6];
+        let r = unique.id(salt).to_le_bytes();
+        mac_address.copy_from_slice(&r[0..6]);
+        mac_address[0] &= 0xFE; // clear multicast bit
+        mac_address[0] |= 2; // set local bit
+        mac_address
     }
 
-    /// Return a (statistically) unique identifier for a specific purpose
+    /// Return a statistically-unique but consistent UUID
     ///
-    /// This is very similar to `id` but takes two `salt` values, a string
-    /// and a u32. This is intended to be helpful when creating identifiers
-    /// larger than u64; see the implementation of `uuid()` for an example.
-    pub fn id2(&self, salt: &[u8], salt2: u32) -> u64 {
-        let mut h =
-            siphasher::sip::SipHasher::new_with_keys(self.id[0], self.id[1]);
-        h.write(salt);
-        h.write_u32(salt2.to_le());
-        h.finish()
+    /// The recommendation is that the `salt` string encodes the purpose of
+    /// the UUID somehow.
+    pub fn uuid(unique: &UniqueId, salt: &[u8]) -> uuid::Uuid {
+        let mut bytes = [0u8; 16];
+        let u1 = unique.id2(salt, 0).to_be_bytes();
+        bytes[0..8].copy_from_slice(&u1);
+        let u2 = unique.id2(salt, 1).to_be_bytes();
+        bytes[8..16].copy_from_slice(&u2);
+        uuid::Uuid::new_v8(bytes)
     }
 }
 
-/// Return a statistically-unique but consistent MAC address
-///
-/// The recommendation is that the `salt` string encodes the network
-/// address somehow (so that multi-homed hosts get different MAC
-/// addresses on different interfaces); for instance b"stm32-eth" or
-/// b"w5500-spi0".
-pub fn mac_address(unique: &UniqueId, salt: &[u8]) -> [u8; 6] {
-    let mut mac_address = [0u8; 6];
-    let r = unique.id(salt).to_le_bytes();
-    mac_address.copy_from_slice(&r[0..6]);
-    mac_address[0] &= 0xFE; // clear multicast bit
-    mac_address[0] |= 2; // set local bit
-    mac_address
-}
-
-/// Return a statistically-unique but consistent UUID
-///
-/// The recommendation is that the `salt` string encodes the purpose of
-/// the UUID somehow.
-pub fn uuid(unique: &UniqueId, salt: &[u8]) -> uuid::Uuid {
-    let mut bytes = [0u8; 16];
-    let u1 = unique.id2(salt, 0).to_be_bytes();
-    bytes[0..8].copy_from_slice(&u1);
-    let u2 = unique.id2(salt, 1).to_be_bytes();
-    bytes[8..16].copy_from_slice(&u2);
-    uuid::Uuid::new_v8(bytes)
-}
+#[doc(inline)]
+pub use unique_id::{mac_address, uuid, UniqueId};
 
 #[cfg(feature = "stm32")]
 /// Obtaining a UniqueId on STM32 platforms
