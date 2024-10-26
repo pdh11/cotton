@@ -1,5 +1,5 @@
-use core::cell::RefCell;
-use core::cell::UnsafeCell;
+use crate::bitset::BitSet;
+use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
@@ -8,8 +8,7 @@ use std::fmt::{self, Display};
 
 pub struct Pool {
     total: u8,
-    // @todo This can probably just be a Cell<u32>
-    allocated: UnsafeCell<u32>,
+    allocated: Cell<BitSet>,
     waker: RefCell<Option<Waker>>,
 }
 
@@ -38,63 +37,38 @@ impl Drop for Pooled<'_> {
     }
 }
 
-pub struct BitIterator {
-    bitmap: u32,
-}
-
-impl BitIterator {
-    pub const fn new(bitmap: u32) -> Self {
-        Self { bitmap }
-    }
-}
-
-impl Iterator for BitIterator {
-    type Item = u8;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.bitmap == 0 {
-            None
-        } else {
-            let n = self.bitmap.trailing_zeros();
-            self.bitmap &= !(1 << n);
-            Some(n as u8)
-        }
-    }
-}
-
 pub struct MultiPooled<'a> {
-    bitmap: u32,
+    bitmap: BitSet,
     pool: &'a Pool,
 }
 
 impl<'a> MultiPooled<'a> {
-    pub fn new(pool: &'a Pool) -> Self {
-        Self { bitmap: 0, pool }
+    pub const fn new(pool: &'a Pool) -> Self {
+        Self {
+            bitmap: BitSet::new(),
+            pool,
+        }
     }
 
     pub fn try_alloc(&mut self) -> Option<u8> {
         let n = self.pool.alloc_internal()?;
-        self.bitmap |= 1 << n;
+        self.bitmap.set(n);
         Some(n)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = u8> {
-        BitIterator {
-            bitmap: self.bitmap,
-        }
+        self.bitmap.iter()
     }
 
     pub fn bits(&self) -> u32 {
-        self.bitmap
+        self.bitmap.0
     }
 }
 
 impl Drop for MultiPooled<'_> {
     fn drop(&mut self) {
-        while self.bitmap != 0 {
-            let n = self.bitmap.trailing_zeros();
-            self.pool.dealloc_internal(n as u8);
-            self.bitmap &= !(1 << n);
+        for n in self.bitmap.iter() {
+            self.pool.dealloc_internal(n);
         }
     }
 }
@@ -122,31 +96,26 @@ impl Pool {
         assert!(total <= 32);
         Self {
             total,
-            allocated: UnsafeCell::new(0),
+            allocated: Cell::new(BitSet::new()),
             waker: RefCell::new(None),
         }
     }
 
     fn alloc_internal(&self) -> Option<u8> {
-        // @todo We're always in thread context here, probably don't need CS
-        critical_section::with(|_| unsafe {
-            let bits: u32 = *self.allocated.get();
-            for i in 0..self.total {
-                if (bits & (1 << i)) == 0 {
-                    *self.allocated.get() = bits | 1 << i;
-                    return Some(i);
-                }
-            }
+        let mut bits = self.allocated.get();
+        let n = bits.set_any()?;
+        if n >= self.total {
             None
-        })
+        } else {
+            self.allocated.replace(bits);
+            Some(n)
+        }
     }
 
     fn dealloc_internal(&self, n: u8) {
-        critical_section::with(|_| unsafe {
-            let mut bits = *self.allocated.get();
-            bits &= !(1 << n);
-            *self.allocated.get() = bits;
-        });
+        let mut bits = self.allocated.get();
+        bits.clear(n);
+        self.allocated.replace(bits);
 
         if let Some(w) = self.waker.take() {
             w.wake();
@@ -163,5 +132,111 @@ impl Pool {
             n: self.alloc_internal()?,
             pool: self,
         })
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+    use mockall::mock;
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::task::Wake;
+    extern crate alloc;
+
+    mock! {
+        TestWaker {}
+
+        impl Wake for TestWaker {
+            fn wake(self: Arc<Self>);
+        }
+    }
+
+    #[test]
+    fn alloc_dealloc() {
+        let p = Pool::new(2);
+        assert_eq!(p.allocated.get().0, 0);
+        {
+            let pp = p.try_alloc().unwrap();
+            assert_eq!(pp.n, 0);
+            assert_eq!(p.allocated.get().0, 1);
+        }
+        assert_eq!(p.allocated.get().0, 0);
+    }
+
+    #[test]
+    fn alloc_fails() {
+        let p = Pool::new(2);
+        let _p1 = p.try_alloc().unwrap();
+        let _p2 = p.try_alloc().unwrap();
+        let r = p.try_alloc();
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn display_pooled() {
+        let p = Pool::new(2);
+        let pp = p.try_alloc().unwrap();
+        assert_eq!(format!("{}", pp), "Pooled(0)");
+    }
+
+    #[test]
+    fn alloc_dealloc_multi() {
+        let p = Pool::new(4);
+        {
+            let mut m = MultiPooled::new(&p);
+            assert_eq!(m.bits(), 0);
+            assert_eq!(m.try_alloc().unwrap(), 0);
+            assert_eq!(m.try_alloc().unwrap(), 1);
+            assert_eq!(m.try_alloc().unwrap(), 2);
+            assert_eq!(m.try_alloc().unwrap(), 3);
+            assert_eq!(m.try_alloc(), None);
+            assert_eq!(m.bits(), 0b1111);
+
+            let mut i = m.iter();
+            assert_eq!(i.next(), Some(0));
+            assert_eq!(i.next(), Some(1));
+            assert_eq!(i.next(), Some(2));
+            assert_eq!(i.next(), Some(3));
+            assert_eq!(i.next(), None);
+
+            assert_eq!(m.bits(), 0b1111); // i.e. not changed by iterator
+
+            assert_eq!(p.allocated.get().0, 0b1111);
+        }
+        assert_eq!(p.allocated.get().0, 0);
+    }
+
+    #[test]
+    fn alloc_setany_fails() {
+        let p = Pool::new(32);
+        let mut m = MultiPooled::new(&p);
+        assert_eq!(m.bits(), 0);
+        for i in 0..32 {
+            assert_eq!(m.try_alloc().unwrap(), i);
+        }
+        assert_eq!(m.try_alloc(), None);
+    }
+
+    #[test]
+    fn dealloc_wakes_waker() {
+        let p = Pool::new(2);
+        let mut w = MockTestWaker::new();
+        w.expect_wake().return_const(());
+
+        let w = Waker::from(Arc::new(w));
+        let mut c = core::task::Context::from_waker(&w);
+
+        // We obtain the future but don't ".await" on it
+        let mut pf = pin!(p.alloc());
+        {
+            let _p1 = p.try_alloc().unwrap();
+            let _p2 = p.try_alloc().unwrap();
+            let r = pf.as_mut().poll(&mut c);
+            assert!(r.is_pending());
+        }
+
+        let r = pf.poll(&mut c);
+        assert!(r.is_ready());
     }
 }

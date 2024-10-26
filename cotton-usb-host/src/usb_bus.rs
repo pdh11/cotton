@@ -1,3 +1,4 @@
+use crate::bitset::BitIterator;
 use crate::debug;
 use crate::host_controller::{
     DeviceStatus, HostController, InterruptPacket, MultiInterruptPipe,
@@ -240,7 +241,7 @@ impl<HC: HostController> UsbBus<HC> {
 
         futures::stream::select(
             root_device.map(InternalEvent::Root),
-            MultiInterruptStream::<HC> {
+            MultiInterruptStream::<HC::MultiInterruptPipe> {
                 pipe: &self.hub_pipes,
             }
             .map(InternalEvent::Packet),
@@ -522,7 +523,7 @@ impl<HC: HostController> UsbBus<HC> {
         );
         async move {
             let pipe = pipe.await;
-            InterruptStream::<HC> { pipe }
+            InterruptStream::<HC::InterruptPipe<'_>> { pipe }
         }
         .flatten_stream()
     }
@@ -683,7 +684,7 @@ impl<HC: HostController> UsbBus<HC> {
         if packet.size > 1 {
             port_bitmap |= (packet.data[1] as u32) << 8;
         }
-        let port_bitmap = crate::async_pool::BitIterator::new(port_bitmap);
+        let port_bitmap = BitIterator::new(port_bitmap);
         for port in port_bitmap {
             debug::println!("I'm told to investigate port {}", port);
 

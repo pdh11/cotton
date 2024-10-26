@@ -142,14 +142,18 @@ belongs in those microcontrollers' HAL crates.
 
 ## TODO
 
-TODO before merge/0.1.0:
+TODO before merge
 
  - [x] Hub state machine
  - [ ] Unit tests
+ - [x] Interlocking to avoid contending on pipe 0
+
+TODO before 0.1.0:
+
+ - [ ] System test
  - [ ] Bulk in/out
  - [ ] doc-comments
  - [ ] At least one real example (MSC?)
- - [x] Interlocking to avoid contending on pipe 0
  - [ ] Review register usage for contention (buff_status?)
  - [ ] STM32?
 

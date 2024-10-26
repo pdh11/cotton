@@ -1,5 +1,5 @@
 use crate::host_controller::{
-    HostController, InterruptPacket, InterruptPipe, MultiInterruptPipe,
+    InterruptPacket, InterruptPipe, MultiInterruptPipe,
 };
 use crate::types::UsbError;
 use core::cell::RefCell;
@@ -7,11 +7,11 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::Stream;
 
-pub struct InterruptStream<'driver, HC: HostController + 'driver> {
-    pub pipe: HC::InterruptPipe<'driver>,
+pub struct InterruptStream<PIPE: InterruptPipe> {
+    pub pipe: PIPE,
 }
 
-impl<HC: HostController> Stream for InterruptStream<'_, HC> {
+impl<PIPE: InterruptPipe> Stream for InterruptStream<PIPE> {
     type Item = InterruptPacket;
 
     fn poll_next(
@@ -28,11 +28,11 @@ impl<HC: HostController> Stream for InterruptStream<'_, HC> {
     }
 }
 
-pub struct MultiInterruptStream<'stack, HC: HostController + 'stack> {
-    pub pipe: &'stack RefCell<HC::MultiInterruptPipe>,
+pub struct MultiInterruptStream<'stack, PIPE: MultiInterruptPipe + 'stack> {
+    pub pipe: &'stack RefCell<PIPE>,
 }
 
-impl<HC: HostController> MultiInterruptStream<'_, HC> {
+impl<PIPE: MultiInterruptPipe> MultiInterruptStream<'_, PIPE> {
     pub fn try_add(
         &mut self,
         address: u8,
@@ -49,7 +49,7 @@ impl<HC: HostController> MultiInterruptStream<'_, HC> {
     }
 }
 
-impl<HC: HostController> Stream for MultiInterruptStream<'_, HC> {
+impl<PIPE: MultiInterruptPipe> Stream for MultiInterruptStream<'_, PIPE> {
     type Item = InterruptPacket;
 
     fn poll_next(
@@ -63,5 +63,113 @@ impl<HC: HostController> Stream for MultiInterruptStream<'_, HC> {
         } else {
             Poll::Pending
         }
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+    use crate::host_controller::tests::{
+        MockInterruptPipe, MockMultiInterruptPipe,
+    };
+    use futures::Stream;
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::task::{Wake, Waker};
+    extern crate alloc;
+
+    struct NoOpWaker;
+
+    impl Wake for NoOpWaker {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    #[test]
+    fn interrupt_stream_pending() {
+        let mut ip = MockInterruptPipe::new();
+
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        ip.expect_set_waker().return_const(());
+        ip.expect_poll().returning(|| None);
+
+        let stm = InterruptStream { pipe: ip };
+
+        let stm = pin!(stm);
+        let r = stm.poll_next(&mut c);
+        assert!(r.is_pending());
+    }
+
+    #[test]
+    fn interrupt_stream_ready() {
+        let mut ip = MockInterruptPipe::new();
+
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        ip.expect_set_waker().return_const(());
+        ip.expect_poll()
+            .returning(|| Some(InterruptPacket::default()));
+
+        let stm = InterruptStream { pipe: ip };
+
+        let stm = pin!(stm);
+        c.waker().clone().wake();
+        let r = stm.poll_next(&mut c);
+        assert!(r.is_ready());
+    }
+
+    #[test]
+    fn multi_interrupt_stream_pending() {
+        let mut ip = MockMultiInterruptPipe::new();
+
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        ip.expect_set_waker().return_const(());
+        ip.expect_poll().returning(|| None);
+
+        let rc = RefCell::new(ip);
+
+        let stm = MultiInterruptStream { pipe: &rc };
+
+        let stm = pin!(stm);
+        let r = stm.poll_next(&mut c);
+        assert!(r.is_pending());
+    }
+
+    #[test]
+    fn multi_interrupt_stream_ready() {
+        let mut ip = MockMultiInterruptPipe::new();
+
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        ip.expect_set_waker().return_const(());
+        ip.expect_poll()
+            .returning(|| Some(InterruptPacket::default()));
+
+        let rc = RefCell::new(ip);
+
+        let stm = MultiInterruptStream { pipe: &rc };
+
+        let stm = pin!(stm);
+        let r = stm.poll_next(&mut c);
+        assert!(r.is_ready());
+    }
+
+    #[test]
+    fn multi_interrupt_stream_passes_on_add() {
+        let mut ip = MockMultiInterruptPipe::new();
+
+        ip.expect_try_add().returning(|_, _, _, _| Ok(()));
+
+        let rc = RefCell::new(ip);
+
+        let mut stm = MultiInterruptStream { pipe: &rc };
+
+        let r = stm.try_add(1, 2, 8, 10);
+        assert!(r.is_ok());
     }
 }
