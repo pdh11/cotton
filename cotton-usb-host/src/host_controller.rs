@@ -10,10 +10,32 @@ pub enum DeviceStatus {
     Absent,
 }
 
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
 pub enum DataPhase<'a> {
     In(&'a mut [u8]),
     Out(&'a [u8]),
     None,
+}
+
+impl DataPhase<'_> {
+    pub fn is_in(&self) -> bool {
+        matches!(self, DataPhase::In(_))
+    }
+
+    pub fn is_out(&self) -> bool {
+        matches!(self, DataPhase::Out(_))
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, DataPhase::None)
+    }
+
+    pub fn in_with<F: FnOnce(&mut [u8])>(&mut self, f: F) {
+        if let Self::In(x) = self {
+            f(x)
+        }
+    }
 }
 
 pub struct InterruptPacket {
@@ -97,9 +119,9 @@ pub trait HostController {
 pub mod tests {
     use super::*;
     use mockall::mock;
-    //use std::future::Future;
-    //use std::pin::Pin;
-    //use std::task::{Context, Poll};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
     extern crate alloc;
 
@@ -133,84 +155,100 @@ pub mod tests {
         }
     }
 
-    /*
-        mock! {
-            pub DeviceDetect {}
+    mock! {
+        pub DeviceDetect {}
 
-            impl Stream for DeviceDetect {
-                type Item = DeviceStatus;
+        impl Stream for DeviceDetect {
+            type Item = DeviceStatus;
 
-                fn poll_next<'a>(
-                    self: Pin<&mut Self>,
-                    cx: &mut Context<'a>
-                ) -> Poll<Option<<Self as Stream>::Item>>;
-            }
+            fn poll_next<'a>(
+                self: Pin<&mut Self>,
+                cx: &mut Context<'a>
+            ) -> Poll<Option<<Self as Stream>::Item>>;
         }
+    }
 
-        mock! {
-            pub HostControllerInner {
-                fn device_detect(&self) -> MockDeviceDetect;
+    mock! {
+        pub HostControllerInner {
+            pub fn device_detect(&self) -> MockDeviceDetect;
 
-                fn control_transfer<'a>(
-                    &self,
-                    address: u8,
-                    packet_size: u8,
-                    setup: SetupPacket,
-                    data_phase: DataPhase<'a>,
-                ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
-
-                fn alloc_interrupt_pipe(
-                    &self,
-                    address: u8,
-                    endpoint: u8,
-                    max_packet_size: u16,
-                    interval_ms: u8,
-                ) -> impl core::future::Future<Output = MockInterruptPipe>;
-
-                fn multi_interrupt_pipe(&self) -> MockMultiInterruptPipe;
-            }
-        }
-
-        pub struct MockHostController {
-            inner: MockHostControllerInner,
-        }
-
-        impl HostController for MockHostController {
-            type InterruptPipe<'hc> = MockInterruptPipe
-                where Self: 'hc;
-            type MultiInterruptPipe = MockMultiInterruptPipe;
-            type DeviceDetect = MockDeviceDetect;
-
-            fn device_detect(&self) -> Self::DeviceDetect {
-                self.inner.device_detect()
-            }
-
-            fn control_transfer<'a>(
+            pub fn control_transfer<'a>(
                 &self,
                 address: u8,
                 packet_size: u8,
                 setup: SetupPacket,
                 data_phase: DataPhase<'a>,
-            ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
-                self.inner.control_transfer(address, packet_size, setup, data_phase)
-            }
+            ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
-            fn alloc_interrupt_pipe(
+            pub fn alloc_interrupt_pipe(
                 &self,
                 address: u8,
                 endpoint: u8,
                 max_packet_size: u16,
-                interval_ms: u8) -> impl Future<Output = Self::InterruptPipe<'_>> {
-                self.inner.alloc_interrupt_pipe(address, endpoint, max_packet_size, interval_ms)
-            }
+                interval_ms: u8,
+            ) -> impl core::future::Future<Output = MockInterruptPipe>;
 
-            fn multi_interrupt_pipe(
-                &self,
-            ) -> MockMultiInterruptPipe {
-                self.inner.multi_interrupt_pipe()
+            pub fn multi_interrupt_pipe(&self) -> MockMultiInterruptPipe;
+        }
+    }
+
+    pub struct MockHostController {
+        pub inner: MockHostControllerInner,
+    }
+
+    impl Default for MockHostController {
+        fn default() -> Self {
+            Self {
+                inner: MockHostControllerInner::new(),
             }
         }
-    */
+    }
+
+    impl HostController for MockHostController {
+        type InterruptPipe<'hc> = MockInterruptPipe
+                where Self: 'hc;
+        type MultiInterruptPipe = MockMultiInterruptPipe;
+        type DeviceDetect = MockDeviceDetect;
+
+        fn device_detect(&self) -> Self::DeviceDetect {
+            self.inner.device_detect()
+        }
+
+        fn control_transfer<'a>(
+            &self,
+            address: u8,
+            packet_size: u8,
+            setup: SetupPacket,
+            data_phase: DataPhase<'a>,
+        ) -> impl core::future::Future<Output = Result<usize, UsbError>>
+        {
+            self.inner.control_transfer(
+                address,
+                packet_size,
+                setup,
+                data_phase,
+            )
+        }
+
+        fn alloc_interrupt_pipe(
+            &self,
+            address: u8,
+            endpoint: u8,
+            max_packet_size: u16,
+            interval_ms: u8,
+        ) -> impl Future<Output = Self::InterruptPipe<'_>> {
+            self.inner.alloc_interrupt_pipe(
+                address,
+                endpoint,
+                max_packet_size,
+                interval_ms,
+            )
+        }
+
+        fn multi_interrupt_pipe(&self) -> MockMultiInterruptPipe {
+            self.inner.multi_interrupt_pipe()
+        }
+    }
 
     #[test]
     fn packet_default() {
@@ -231,5 +269,28 @@ pub mod tests {
         p.data[9] = 1;
         assert_eq!((&p).len(), 10);
         assert_eq!((&p)[9], 1);
+    }
+
+    #[test]
+    fn dataphase_accessors() {
+        let mut b = [0u8; 1];
+        let mut d1 = DataPhase::In(&mut b);
+        assert!(d1.is_in());
+        assert!(!d1.is_out());
+        assert!(!d1.is_none());
+        d1.in_with(|s| s[0] = 2);
+        assert_eq!(b[0], 2);
+        let mut d1 = DataPhase::Out(&b);
+        assert!(!d1.is_in());
+        assert!(d1.is_out());
+        assert!(!d1.is_none());
+        d1.in_with(|s| s[0] = 3);
+        assert_eq!(b[0], 2);
+        let mut d1 = DataPhase::None;
+        assert!(!d1.is_in());
+        assert!(!d1.is_out());
+        assert!(d1.is_none());
+        d1.in_with(|s| s[0] = 4);
+        assert_eq!(b[0], 2);
     }
 }

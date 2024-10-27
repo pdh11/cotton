@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct BitSet(pub u32);
 
 impl BitSet {
@@ -33,12 +35,6 @@ impl BitSet {
     pub fn contains(&self, n: u8) -> bool {
         assert!(n < 32);
         (self.0 & (1 << n)) != 0
-    }
-}
-
-impl Default for BitSet {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

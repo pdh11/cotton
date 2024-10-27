@@ -1,4 +1,4 @@
-use crate::bitset::BitIterator;
+use crate::bitset::{BitIterator, BitSet};
 use crate::debug;
 use crate::host_controller::{
     DeviceStatus, HostController, InterruptPacket, MultiInterruptPipe,
@@ -6,37 +6,18 @@ use crate::host_controller::{
 use crate::interrupt::{InterruptStream, MultiInterruptStream};
 use crate::topology::Topology;
 use crate::types::{
-    ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
-    HubDescriptor, CLASS_REQUEST, CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR,
+    ConfigurationDescriptor, DescriptorVisitor, DeviceInfo,
+    EndpointDescriptor, HubDescriptor, SetupPacket, UsbDevice, UsbError,
+    UsbSpeed, CLASS_REQUEST, CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR,
     DEVICE_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR, GET_STATUS,
     HOST_TO_DEVICE, HUB_CLASSCODE, HUB_DESCRIPTOR, PORT_POWER, PORT_RESET,
     RECIPIENT_OTHER, SET_ADDRESS, SET_CONFIGURATION, SET_FEATURE,
 };
-use crate::types::{DeviceInfo, SetupPacket, UsbDevice, UsbError, UsbSpeed};
 use core::cell::RefCell;
 use futures::future::FutureExt;
-use futures::Stream;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 
 pub use crate::host_controller::DataPhase;
-
-/// A set of active USB devices.
-///
-/// The devices are represented by a bitmap: bit N set means that USB
-/// device address N is part of this set.
-///
-/// (So bit zero is never set, because 0 is never a valid assigned USB
-/// device address.)
-#[derive(Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "std", derive(Debug))]
-pub struct UsbDeviceSet(pub u32);
-
-impl UsbDeviceSet {
-    pub fn contains(&self, n: u8) -> bool {
-        (self.0 & (1 << n)) != 0
-    }
-}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
@@ -67,7 +48,13 @@ pub enum DeviceEvent {
     /// includes a _set_ of affected devices -- if a hub has become
     /// disconnected, then every device downstream of it has simultaneously
     /// _also_ become disconnected.
-    Disconnect(UsbDeviceSet),
+    ///
+    /// The devices are represented by a bitmap: bit N set means that USB
+    /// device address N is part of this set.
+    ///
+    /// (So bit zero is never set, because 0 is never a valid assigned USB
+    /// device address.)
+    Disconnect(BitSet),
 
     /// A device appears to have been connected, but is not
     /// successfully responding to the mandatory enumeration commands.
@@ -82,12 +69,12 @@ pub enum DeviceEvent {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub struct BasicConfiguration {
-    num_configurations: u8,
-    configuration_value: u8,
-    in_endpoints: u16,
-    out_endpoints: u16,
+    pub num_configurations: u8,
+    pub configuration_value: u8,
+    pub in_endpoints: u16,
+    pub out_endpoints: u16,
 }
 
 impl DescriptorVisitor for BasicConfiguration {
@@ -108,7 +95,7 @@ impl DescriptorVisitor for BasicConfiguration {
 struct HubState {
     topology: Topology,
     currently_resetting: Option<(u8, u8)>,
-    //needs_reset: UsbDeviceSet,
+    //needs_reset: BitSet,
 }
 
 /// A USB host bus.
@@ -289,13 +276,13 @@ impl<HC: HostController> UsbBus<HC> {
                             .borrow_mut()
                             .topology
                             .device_disconnect(0, 1);
-                        DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+                        DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                     }
                 }
                 InternalEvent::Packet(packet) => self
                     .handle_hub_packet(&packet)
                     .await
-                    .unwrap_or(DeviceEvent::Disconnect(UsbDeviceSet(0))),
+                    .unwrap_or(DeviceEvent::Disconnect(BitSet(0))),
             }
         })
     }
@@ -397,9 +384,9 @@ impl<HC: HostController> UsbBus<HC> {
                     }
                 }
                 // Can't enumerate device
-                DeviceEvent::Disconnect(UsbDeviceSet(0))
+                DeviceEvent::Disconnect(BitSet(0))
             } else {
-                DeviceEvent::Disconnect(UsbDeviceSet(0xFFFF_FFFF))
+                DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
             }
         })
     }
@@ -422,8 +409,8 @@ impl<HC: HostController> UsbBus<HC> {
             },
             DataPhase::None,
         )
-        .await?;
-        Ok(())
+        .map(|r| r.map(|_| ()))
+        .await
     }
 
     async fn new_device(
@@ -432,36 +419,45 @@ impl<HC: HostController> UsbBus<HC> {
     ) -> Result<DeviceInfo, UsbError> {
         // Read prefix of device descriptor
         let mut descriptors = [0u8; 18];
-        self.control_transfer(
-            0,
-            64,
-            SetupPacket {
-                bmRequestType: DEVICE_TO_HOST,
-                bRequest: GET_DESCRIPTOR,
-                wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
-                wIndex: 0,
-                wLength: 8,
-            },
-            DataPhase::In(&mut descriptors),
-        )
-        .await?;
+        let sz = self
+            .control_transfer(
+                0,
+                64,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
+                    wIndex: 0,
+                    wLength: 8,
+                },
+                DataPhase::In(&mut descriptors),
+            )
+            .await?;
+        if sz < 8 {
+            return Err(UsbError::ProtocolError);
+        }
 
         let packet_size_ep0 = descriptors[7];
 
         // Fetch rest of device descriptor
-        self.control_transfer(
-            0,
-            packet_size_ep0,
-            SetupPacket {
-                bmRequestType: DEVICE_TO_HOST,
-                bRequest: GET_DESCRIPTOR,
-                wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
-                wIndex: 0,
-                wLength: 18,
-            },
-            DataPhase::In(&mut descriptors),
-        )
-        .await?;
+        let sz = self
+            .control_transfer(
+                0,
+                packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST,
+                    bRequest: GET_DESCRIPTOR,
+                    wValue: ((DEVICE_DESCRIPTOR as u16) << 8),
+                    wIndex: 0,
+                    wLength: 18,
+                },
+                DataPhase::In(&mut descriptors),
+            )
+            .await?;
+        if sz < 18 {
+            return Err(UsbError::ProtocolError);
+        }
+
         let vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
         let pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
 
@@ -745,9 +741,7 @@ impl<HC: HostController> UsbBus<HC> {
                             .borrow_mut()
                             .topology
                             .device_disconnect(packet.address, port);
-                        return Ok(DeviceEvent::Disconnect(UsbDeviceSet(
-                            mask,
-                        )));
+                        return Ok(DeviceEvent::Disconnect(BitSet(mask)));
                     }
 
                     // now connected
@@ -769,7 +763,7 @@ impl<HC: HostController> UsbBus<HC> {
                             DataPhase::None,
                         )
                         .await?;
-                        return Ok(DeviceEvent::Disconnect(UsbDeviceSet(0)));
+                        return Ok(DeviceEvent::Disconnect(BitSet(0)));
                     } else {
                         // TODO: queue hub for future investigation
                     }
@@ -786,7 +780,7 @@ impl<HC: HostController> UsbBus<HC> {
                     };
 
                     let Ok(info) = self.new_device(speed).await else {
-                        return Ok(DeviceEvent::Disconnect(UsbDeviceSet(0)));
+                        return Ok(DeviceEvent::Disconnect(BitSet(0)));
                     };
                     let is_hub = info.class == HUB_CLASSCODE;
                     let address = {
@@ -808,6 +802,640 @@ impl<HC: HostController> UsbBus<HC> {
             }
         }
         // TODO: if we get here, does some other port need resetting?
-        Ok(DeviceEvent::Disconnect(UsbDeviceSet(0)))
+        Ok(DeviceEvent::Disconnect(BitSet(0)))
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+    use crate::host_controller::tests::{
+        MockHostController, MockInterruptPipe, MockMultiInterruptPipe,
+    };
+    use futures::{future, Future};
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::task::{Poll, Wake, Waker};
+    extern crate alloc;
+
+    struct NoOpWaker;
+
+    impl Wake for NoOpWaker {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    const ELLA: &[u8] = &[
+        9, 2, 180, 1, 5, 1, 0, 128, 250, 9, 4, 0, 0, 4, 255, 0, 3, 0, 12, 95,
+        1, 0, 10, 0, 4, 4, 1, 0, 4, 0, 7, 5, 2, 2, 0, 2, 0, 7, 5, 8, 2, 0, 2,
+        0, 7, 5, 132, 2, 0, 2, 0, 7, 5, 133, 3, 8, 0, 8, 9, 4, 1, 0, 0, 254,
+        1, 1, 0, 9, 33, 1, 200, 0, 0, 4, 1, 1, 16, 64, 8, 8, 11, 1, 1, 3, 69,
+        108, 108, 97, 68, 111, 99, 107, 8, 11, 2, 3, 1, 0, 32, 5, 9, 4, 2, 0,
+        1, 1, 1, 32, 5, 9, 36, 1, 0, 2, 11, 0, 1, 0, 12, 36, 3, 4, 2, 6, 0,
+        14, 11, 4, 0, 0, 8, 36, 10, 10, 1, 7, 0, 0, 8, 36, 10, 11, 1, 7, 0, 0,
+        9, 36, 11, 12, 2, 10, 11, 3, 0, 17, 36, 2, 13, 1, 1, 0, 10, 6, 63, 0,
+        0, 0, 0, 0, 0, 4, 34, 36, 6, 14, 13, 0, 0, 0, 0, 15, 0, 0, 0, 15, 0,
+        0, 0, 15, 0, 0, 0, 15, 0, 0, 0, 15, 0, 0, 0, 15, 0, 0, 0, 0, 64, 36,
+        9, 0, 0, 0, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 36, 9, 0, 0, 0,
+        49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 36, 9, 0, 0, 0, 16, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 5,
+        131, 3, 6, 0, 8, 9, 4, 3, 0, 0, 1, 2, 32, 5, 9, 4, 3, 1, 1, 1, 2, 32,
+        5, 16, 36, 1, 13, 0, 1, 1, 0, 0, 0, 6, 63, 0, 0, 0, 0, 6, 36, 2, 1, 2,
+        16, 7, 5, 9, 13, 64, 2, 4, 8, 37, 1, 0, 0, 1, 0, 0, 9, 4, 4, 0, 0, 1,
+        2, 32, 5,
+    ];
+
+    #[test]
+    fn basic_configuration() {
+        let mut bc = BasicConfiguration::default();
+        crate::types::parse_descriptors(ELLA, &mut bc);
+
+        assert_eq!(bc.configuration_value, 1);
+        assert_eq!(bc.num_configurations, 1);
+        assert_eq!(bc.in_endpoints, 0b111000);
+        assert_eq!(bc.out_endpoints, 0b1100000100);
+    }
+
+    #[test]
+    fn new_bus() {
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+        let _bus = UsbBus::new(hc);
+    }
+
+    #[test]
+    fn configure() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, SET_CONFIGURATION);
+                assert_eq!(s.wValue, 6);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 0);
+                assert_eq!(*d, DataPhase::None);
+                *a == 5 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
+            })
+            .returning(|_, _, _, _| Box::pin(future::ready(Ok(0))));
+
+        let bus = UsbBus::new(hc);
+
+        let device = UsbDevice { address: 5 };
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let r = pin!(bus.configure(&device, &info, 6));
+        let rr = r.poll(&mut c);
+        assert_eq!(rr, Poll::Ready(Ok(())));
+    }
+
+    #[test]
+    fn configure_pends() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, SET_CONFIGURATION);
+                assert_eq!(s.wValue, 6);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 0);
+                assert_eq!(*d, DataPhase::None);
+                *a == 5 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
+            })
+            .returning(|_, _, _, _| Box::pin(future::pending()));
+
+        let bus = UsbBus::new(hc);
+
+        let device = UsbDevice { address: 5 };
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let mut r = pin!(bus.configure(&device, &info, 6));
+        let rr = r.as_mut().poll(&mut c);
+        assert_eq!(rr, Poll::Pending);
+        let rr = r.as_mut().poll(&mut c);
+        assert_eq!(rr, Poll::Pending);
+    }
+
+    #[test]
+    fn configure_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, SET_CONFIGURATION);
+                assert_eq!(s.wValue, 6);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 0);
+                assert_eq!(*d, DataPhase::None);
+                *a == 5 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
+            })
+            .returning(|_, _, _, _| {
+                Box::pin(future::ready(Err(UsbError::Timeout)))
+            });
+
+        let bus = UsbBus::new(hc);
+
+        let device = UsbDevice { address: 5 };
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let r = pin!(bus.configure(&device, &info, 6));
+        let rr = r.poll(&mut c);
+        assert_eq!(rr, Poll::Ready(Err(UsbError::Timeout)));
+    }
+
+    #[test]
+    fn get_basic_configuration() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, GET_DESCRIPTOR);
+                assert_eq!(s.wValue, 0x200);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 64);
+                assert!(d.is_in());
+                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
+            })
+            .returning(|_, _, _, _| Box::pin(future::ready(Ok(63))));
+
+        let bus = UsbBus::new(hc);
+
+        let device = UsbDevice { address: 5 };
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let r = pin!(bus.get_basic_configuration(&device, &info));
+        let rr = r.poll(&mut c);
+        assert!(rr.is_ready());
+    }
+
+    #[test]
+    fn get_basic_configuration_pends() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, GET_DESCRIPTOR);
+                assert_eq!(s.wValue, 0x200);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 64);
+                assert!(d.is_in());
+                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
+            })
+            .returning(|_, _, _, _| Box::pin(future::pending()));
+
+        let bus = UsbBus::new(hc);
+
+        let device = UsbDevice { address: 5 };
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let mut r = pin!(bus.get_basic_configuration(&device, &info));
+        let rr = r.as_mut().poll(&mut c);
+        assert!(rr.is_pending());
+        let rr = r.as_mut().poll(&mut c);
+        assert!(rr.is_pending());
+    }
+
+    #[test]
+    fn get_basic_configuration_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, GET_DESCRIPTOR);
+                assert_eq!(s.wValue, 0x200);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 64);
+                assert!(d.is_in());
+                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
+            })
+            .returning(|_, _, _, _| {
+                Box::pin(future::ready(Err(UsbError::Timeout)))
+            });
+
+        let bus = UsbBus::new(hc);
+
+        let device = UsbDevice { address: 5 };
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let mut r = pin!(bus.get_basic_configuration(&device, &info));
+        let rr = r.as_mut().poll(&mut c);
+        assert_eq!(rr, Poll::Ready(Err(UsbError::Timeout)));
+    }
+
+    #[test]
+    fn set_address() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, SET_ADDRESS);
+                assert_eq!(s.wValue, 5);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 0);
+                assert!(d.is_none());
+                *a == 0 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
+            })
+            .returning(|_, _, _, _| Box::pin(future::ready(Ok(0))));
+
+        let bus = UsbBus::new(hc);
+
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let r = pin!(bus.set_address(5, &info));
+        let rr = r.poll(&mut c);
+        assert!(rr.is_ready());
+        assert!(rr == Poll::Ready(Ok(UsbDevice { address: 5 })));
+    }
+
+    #[test]
+    fn set_address_pends() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, SET_ADDRESS);
+                assert_eq!(s.wValue, 5);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 0);
+                assert!(d.is_none());
+                *a == 0 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
+            })
+            .returning(|_, _, _, _| Box::pin(future::pending()));
+
+        let bus = UsbBus::new(hc);
+
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let mut r = pin!(bus.set_address(5, &info));
+        let rr = r.as_mut().poll(&mut c);
+        assert!(rr.is_pending());
+        let rr = r.as_mut().poll(&mut c);
+        assert!(rr.is_pending());
+    }
+
+    #[test]
+    fn set_address_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.bRequest, SET_ADDRESS);
+                assert_eq!(s.wValue, 5);
+                assert_eq!(s.wIndex, 0);
+                assert_eq!(s.wLength, 0);
+                assert!(d.is_none());
+                *a == 0 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
+            })
+            .returning(|_, _, _, _| {
+                Box::pin(future::ready(Err(UsbError::Stall)))
+            });
+
+        let bus = UsbBus::new(hc);
+
+        let info = DeviceInfo {
+            vid: 1,
+            pid: 2,
+            class: 3,
+            subclass: 4,
+            speed: UsbSpeed::Full12,
+            packet_size_ep0: 8,
+        };
+
+        let r = pin!(bus.set_address(5, &info));
+        let rr = r.poll(&mut c);
+        assert!(rr.is_ready());
+        assert!(rr == Poll::Ready(Err(UsbError::Stall)));
+    }
+
+    #[test]
+    fn interrupt_endpoint_in() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+        hc.inner
+            .expect_alloc_interrupt_pipe()
+            .withf(|a, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
+            .returning(|_, _, _, _| {
+                Box::pin(future::ready({
+                    let mut ip = MockInterruptPipe::new();
+                    ip.expect_set_waker().return_const(());
+                    ip.expect_poll()
+                        .returning(|| Some(InterruptPacket::default()));
+                    ip
+                }))
+            });
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.interrupt_endpoint_in(5, 2, 8, 10));
+        let rr = r.poll_next(&mut c);
+        assert!(rr.is_ready());
+    }
+
+    #[test]
+    fn interrupt_endpoint_in_pends() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+        hc.inner
+            .expect_alloc_interrupt_pipe()
+            .withf(|a, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
+            .returning(|_, _, _, _| Box::pin(future::pending()));
+        let bus = UsbBus::new(hc);
+
+        let mut r = pin!(bus.interrupt_endpoint_in(5, 2, 8, 10));
+        let rr = r.as_mut().poll_next(&mut c);
+        assert!(rr.is_pending());
+        let rr = r.as_mut().poll_next(&mut c);
+        assert!(rr.is_pending());
+    }
+
+    // Not sure why this isn't in the standard library
+    fn unwrap_poll<T>(p: Poll<T>) -> Option<T> {
+        match p {
+            Poll::Ready(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn unwrap_good_poll() {
+        let p = Poll::Ready(1);
+        assert!(unwrap_poll(p).is_some());
+    }
+
+    #[test]
+    fn unwrap_bad_poll() {
+        let p = Poll::<u32>::Pending;
+        assert!(unwrap_poll(p).is_none());
+    }
+
+    #[test]
+    fn new_device() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        // First call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, _, s, d| {
+                assert_eq!(s.wIndex, 0);
+                assert!(d.is_in());
+                s.bRequest == GET_DESCRIPTOR
+                    && s.wValue == 0x100
+                    && *a == 0
+                    && s.bmRequestType == DEVICE_TO_HOST
+                    && s.wLength == 8
+            })
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| bytes[7] = 8);
+                Box::pin(future::ready(Ok(8)))
+            });
+
+        // Second call (wLength == 18)
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, p, s, d| {
+                assert_eq!(s.wIndex, 0);
+                assert!(d.is_in());
+                s.bRequest == GET_DESCRIPTOR
+                    && s.wValue == 0x100
+                    && *a == 0
+                    && *p == 8
+                    && s.bmRequestType == DEVICE_TO_HOST
+                    && s.wLength == 18
+            })
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| {
+                    bytes[7] = 8;
+                    bytes[8] = 0x34;
+                    bytes[9] = 0x12;
+                    bytes[10] = 0x78;
+                    bytes[11] = 0x56;
+                });
+                Box::pin(future::ready(Ok(18)))
+            });
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_device(UsbSpeed::Full12));
+        let rr = dbg!(r.poll(&mut c));
+        assert!(rr.is_ready());
+        let di = unwrap_poll(rr).unwrap().unwrap();
+        assert_eq!(di.vid, 0x1234);
+        assert_eq!(di.pid, 0x5678);
+    }
+
+    #[test]
+    fn new_device_first_call_errors() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        // First call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, _, s, d| {
+                assert_eq!(s.wIndex, 0);
+                assert!(d.is_in());
+                s.bRequest == GET_DESCRIPTOR
+                    && s.wValue == 0x100
+                    && *a == 0
+                    && s.bmRequestType == DEVICE_TO_HOST
+                    && s.wLength == 8
+            })
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| bytes[7] = 8);
+                Box::pin(future::ready(Err(UsbError::CrcError)))
+            });
+
+        // No second call!
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_device(UsbSpeed::Full12));
+        let rr = dbg!(r.poll(&mut c));
+        assert!(rr.is_ready());
+        let rc = unwrap_poll(rr).unwrap();
+        assert!(rc.is_err());
+        assert_eq!(rc.unwrap_err(), UsbError::CrcError);
+    }
+
+    #[test]
+    fn new_device_first_call_short() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(|| MockMultiInterruptPipe::new());
+
+        // First call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .withf(|a, _, s, d| {
+                assert_eq!(s.wIndex, 0);
+                assert!(d.is_in());
+                s.bRequest == GET_DESCRIPTOR
+                    && s.wValue == 0x100
+                    && *a == 0
+                    && s.bmRequestType == DEVICE_TO_HOST
+                    && s.wLength == 8
+            })
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| bytes[7] = 8);
+                Box::pin(future::ready(Ok(7)))
+            });
+
+        // No second call!
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_device(UsbSpeed::Full12));
+        let rr = dbg!(r.poll(&mut c));
+        assert!(rr.is_ready());
+        let rc = unwrap_poll(rr).unwrap();
+        assert!(rc.is_err());
+        assert_eq!(rc.unwrap_err(), UsbError::ProtocolError);
     }
 }
