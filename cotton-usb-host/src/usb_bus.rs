@@ -422,7 +422,7 @@ impl<HC: HostController> UsbBus<HC> {
         let sz = self
             .control_transfer(
                 0,
-                64,
+                8,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
                     bRequest: GET_DESCRIPTOR,
@@ -821,7 +821,7 @@ mod tests {
         INTERFACE_DESCRIPTOR,
     };
     use futures::{future, Future};
-    use std::pin::pin;
+    use std::pin::{pin, Pin};
     use std::sync::Arc;
     use std::task::{Poll, Wake, Waker};
     use zerocopy::IntoBytes;
@@ -857,7 +857,7 @@ mod tests {
         2, 32, 5,
     ];
 
-    fn example_config_descriptor(buf: &mut [u8]) -> usize {
+    fn example_config_descriptor(buf: &mut [u8]) {
         let total_length = (core::mem::size_of::<ConfigurationDescriptor>()
             + core::mem::size_of::<InterfaceDescriptor>()
             + core::mem::size_of::<EndpointDescriptor>())
@@ -900,8 +900,17 @@ mod tests {
         };
 
         e.write_to(&mut buf[18..25]).unwrap();
-        25
     }
+
+    const EXAMPLE_DEVICE: UsbDevice = UsbDevice { address: 5 };
+    const EXAMPLE_INFO: DeviceInfo = DeviceInfo {
+        vid: 1,
+        pid: 2,
+        class: 3,
+        subclass: 4,
+        speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+    };
 
     // Not sure why this isn't in the standard library
     fn unwrap_poll<T>(p: Poll<T>) -> Option<T> {
@@ -943,6 +952,67 @@ mod tests {
         let _bus = UsbBus::new(hc);
     }
 
+    fn is_set_configuration<const N: u16>(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 5
+            && *p == 8
+            && s.bmRequestType == HOST_TO_DEVICE
+            && s.bRequest == SET_CONFIGURATION
+            && s.wValue == N
+            && s.wIndex == 0
+            && s.wLength == 0
+            && d.is_none()
+    }
+
+    fn control_transfer_ok<const N: usize>(
+        _: u8,
+        _: u8,
+        _: SetupPacket,
+        _: DataPhase,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+        Box::pin(future::ready(Ok(N)))
+    }
+
+    // This is by some margin the most insane function signature I have yet
+    // written in Rust -- but it does make its call sites neater!
+    #[rustfmt::skip]
+    fn control_transfer_ok_with<F: FnMut(&mut [u8]) -> usize>(
+        mut f: F,
+    ) -> impl FnMut(
+        u8,
+        u8,
+        SetupPacket,
+        DataPhase,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+        move |_, _, _, mut d| {
+            let mut n = 0;
+            d.in_with(|bytes| n = f(bytes));
+            Box::pin(future::ready(Ok(n)))
+        }
+    }
+
+    fn control_transfer_pending(
+        _: u8,
+        _: u8,
+        _: SetupPacket,
+        _: DataPhase,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+        Box::pin(future::pending())
+    }
+
+    fn control_transfer_timeout(
+        _: u8,
+        _: u8,
+        _: SetupPacket,
+        _: DataPhase,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+        Box::pin(future::ready(Err(UsbError::Timeout)))
+    }
+
     #[test]
     fn configure() {
         let w = Waker::from(Arc::new(NoOpWaker));
@@ -955,29 +1025,12 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, SET_CONFIGURATION);
-                assert_eq!(s.wValue, 6);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 0);
-                assert_eq!(*d, DataPhase::None);
-                *a == 5 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
-            })
-            .returning(|_, _, _, _| Box::pin(future::ready(Ok(0))));
+            .withf(is_set_configuration::<6>)
+            .returning(control_transfer_ok::<0>);
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.configure(&device, &info, 6));
+        let r = pin!(bus.configure(&EXAMPLE_DEVICE, &EXAMPLE_INFO, 6));
         let rr = r.poll(&mut c);
         assert_eq!(rr, Poll::Ready(Ok(())));
     }
@@ -994,29 +1047,12 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, SET_CONFIGURATION);
-                assert_eq!(s.wValue, 6);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 0);
-                assert_eq!(*d, DataPhase::None);
-                *a == 5 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
-            })
-            .returning(|_, _, _, _| Box::pin(future::pending()));
+            .withf(is_set_configuration::<6>)
+            .returning(control_transfer_pending);
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let mut r = pin!(bus.configure(&device, &info, 6));
+        let mut r = pin!(bus.configure(&EXAMPLE_DEVICE, &EXAMPLE_INFO, 6));
         let rr = r.as_mut().poll(&mut c);
         assert_eq!(rr, Poll::Pending);
         let rr = r.as_mut().poll(&mut c);
@@ -1035,33 +1071,30 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, SET_CONFIGURATION);
-                assert_eq!(s.wValue, 6);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 0);
-                assert_eq!(*d, DataPhase::None);
-                *a == 5 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
-            })
-            .returning(|_, _, _, _| {
-                Box::pin(future::ready(Err(UsbError::Timeout)))
-            });
+            .withf(is_set_configuration::<6>)
+            .returning(control_transfer_timeout);
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.configure(&device, &info, 6));
+        let r = pin!(bus.configure(&EXAMPLE_DEVICE, &EXAMPLE_INFO, 6));
         let rr = r.poll(&mut c);
         assert_eq!(rr, Poll::Ready(Err(UsbError::Timeout)));
+    }
+
+    fn is_get_configuration_descriptor(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 5
+            && *p == 8
+            && s.bmRequestType == DEVICE_TO_HOST
+            && s.bRequest == GET_DESCRIPTOR
+            && s.wValue == 0x200
+            && s.wIndex == 0
+            && s.wLength > 0
+            && d.is_in()
     }
 
     #[test]
@@ -1076,36 +1109,17 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, GET_DESCRIPTOR);
-                assert_eq!(s.wValue, 0x200);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 64);
-                assert!(d.is_in());
-                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
-            })
+            .withf(is_get_configuration_descriptor)
             .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| {
-                    example_config_descriptor(bytes);
-                });
+                d.in_with(example_config_descriptor);
                 Box::pin(future::ready(Ok(25)))
             });
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.get_basic_configuration(&device, &info));
+        let r =
+            pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
         let rr = r.poll(&mut c);
-        assert!(rr.is_ready());
         let rc = unwrap_poll(rr).unwrap();
         assert!(rc.is_ok());
     }
@@ -1122,31 +1136,14 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, GET_DESCRIPTOR);
-                assert_eq!(s.wValue, 0x200);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 64);
-                assert!(d.is_in());
-                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
-            })
-            .returning(|_, _, _, _| Box::pin(future::ready(Ok(25))));
+            .withf(is_get_configuration_descriptor)
+            .returning(control_transfer_ok::<25>);
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.get_basic_configuration(&device, &info));
+        let r =
+            pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
         let rr = r.poll(&mut c);
-        assert!(rr.is_ready());
         assert_eq!(rr, Poll::Ready(Err(UsbError::ProtocolError)));
     }
 
@@ -1162,37 +1159,18 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, GET_DESCRIPTOR);
-                assert_eq!(s.wValue, 0x200);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 64);
-                assert!(d.is_in());
-                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| {
-                    example_config_descriptor(bytes);
-                    bytes[5] = 0; // nobble bConfigurationValue
-                });
-                Box::pin(future::ready(Ok(25)))
-            });
+            .withf(is_get_configuration_descriptor)
+            .returning(control_transfer_ok_with(|bytes| {
+                example_config_descriptor(bytes);
+                bytes[5] = 0; // nobble bConfigurationValue
+                25
+            }));
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.get_basic_configuration(&device, &info));
+        let r =
+            pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
         let rr = r.poll(&mut c);
-        assert!(rr.is_ready());
         assert_eq!(rr, Poll::Ready(Err(UsbError::ProtocolError)));
     }
 
@@ -1208,29 +1186,13 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, GET_DESCRIPTOR);
-                assert_eq!(s.wValue, 0x200);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 64);
-                assert!(d.is_in());
-                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
-            })
-            .returning(|_, _, _, _| Box::pin(future::pending()));
+            .withf(is_get_configuration_descriptor)
+            .returning(control_transfer_pending);
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let mut r = pin!(bus.get_basic_configuration(&device, &info));
+        let mut r =
+            pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
         let rr = r.as_mut().poll(&mut c);
         assert!(rr.is_pending());
         let rr = r.as_mut().poll(&mut c);
@@ -1249,33 +1211,31 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, GET_DESCRIPTOR);
-                assert_eq!(s.wValue, 0x200);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 64);
-                assert!(d.is_in());
-                *a == 5 && *p == 8 && s.bmRequestType == DEVICE_TO_HOST
-            })
-            .returning(|_, _, _, _| {
-                Box::pin(future::ready(Err(UsbError::Timeout)))
-            });
+            .withf(is_get_configuration_descriptor)
+            .returning(control_transfer_timeout);
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let mut r = pin!(bus.get_basic_configuration(&device, &info));
+        let mut r =
+            pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
         let rr = r.as_mut().poll(&mut c);
         assert_eq!(rr, Poll::Ready(Err(UsbError::Timeout)));
+    }
+
+    fn is_set_address<const N: u8>(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 0
+            && *p == 8
+            && s.bmRequestType == HOST_TO_DEVICE
+            && s.bRequest == SET_ADDRESS
+            && s.wValue == N as u16
+            && s.wIndex == 0
+            && s.wLength == 0
+            && d.is_none()
     }
 
     #[test]
@@ -1290,30 +1250,13 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, SET_ADDRESS);
-                assert_eq!(s.wValue, 5);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 0);
-                assert!(d.is_none());
-                *a == 0 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
-            })
-            .returning(|_, _, _, _| Box::pin(future::ready(Ok(0))));
+            .withf(is_set_address::<5>)
+            .returning(control_transfer_ok::<0>);
 
         let bus = UsbBus::new(hc);
 
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.set_address(5, &info));
+        let r = pin!(bus.set_address(5, &EXAMPLE_INFO));
         let rr = r.poll(&mut c);
-        assert!(rr.is_ready());
         assert!(rr == Poll::Ready(Ok(UsbDevice { address: 5 })));
     }
 
@@ -1329,28 +1272,12 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, SET_ADDRESS);
-                assert_eq!(s.wValue, 5);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 0);
-                assert!(d.is_none());
-                *a == 0 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
-            })
-            .returning(|_, _, _, _| Box::pin(future::pending()));
+            .withf(is_set_address::<5>)
+            .returning(control_transfer_pending);
 
         let bus = UsbBus::new(hc);
 
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let mut r = pin!(bus.set_address(5, &info));
+        let mut r = pin!(bus.set_address(5, &EXAMPLE_INFO));
         let rr = r.as_mut().poll(&mut c);
         assert!(rr.is_pending());
         let rr = r.as_mut().poll(&mut c);
@@ -1369,33 +1296,15 @@ mod tests {
 
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.bRequest, SET_ADDRESS);
-                assert_eq!(s.wValue, 5);
-                assert_eq!(s.wIndex, 0);
-                assert_eq!(s.wLength, 0);
-                assert!(d.is_none());
-                *a == 0 && *p == 8 && s.bmRequestType == HOST_TO_DEVICE
-            })
-            .returning(|_, _, _, _| {
-                Box::pin(future::ready(Err(UsbError::Stall)))
-            });
+            .withf(is_set_address::<5>)
+            .returning(control_transfer_timeout);
 
         let bus = UsbBus::new(hc);
 
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.set_address(5, &info));
+        let r = pin!(bus.set_address(5, &EXAMPLE_INFO));
         let rr = r.poll(&mut c);
         assert!(rr.is_ready());
-        assert!(rr == Poll::Ready(Err(UsbError::Stall)));
+        assert!(rr == Poll::Ready(Err(UsbError::Timeout)));
     }
 
     #[test]
@@ -1448,6 +1357,38 @@ mod tests {
         assert!(rr.is_pending());
     }
 
+    fn is_get_device_descriptor<const N: u16>(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 0
+            && *p == 8
+            && s.bmRequestType == DEVICE_TO_HOST
+            && s.bRequest == GET_DESCRIPTOR
+            && s.wValue == 0x100
+            && s.wIndex == 0
+            && s.wLength == N
+            && d.is_in()
+    }
+
+    fn device_descriptor_prefix(bytes: &mut [u8]) -> usize {
+        bytes[0] = 18;
+        bytes[1] = DEVICE_DESCRIPTOR;
+        bytes[7] = 8;
+        8
+    }
+
+    fn device_descriptor(bytes: &mut [u8]) -> usize {
+        device_descriptor_prefix(bytes);
+        bytes[8] = 0x34;
+        bytes[9] = 0x12;
+        bytes[10] = 0x78;
+        bytes[11] = 0x56;
+        18
+    }
+
     #[test]
     fn new_device() {
         let w = Waker::from(Arc::new(NoOpWaker));
@@ -1461,49 +1402,19 @@ mod tests {
         // First call (wLength == 8)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, _, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 8
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| bytes[7] = 8);
-                Box::pin(future::ready(Ok(8)))
-            });
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_ok_with(device_descriptor_prefix));
 
         // Second call (wLength == 18)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && *p == 8
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 18
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| {
-                    bytes[7] = 8;
-                    bytes[8] = 0x34;
-                    bytes[9] = 0x12;
-                    bytes[10] = 0x78;
-                    bytes[11] = 0x56;
-                });
-                Box::pin(future::ready(Ok(18)))
-            });
+            .withf(is_get_device_descriptor::<18>)
+            .returning(control_transfer_ok_with(device_descriptor));
 
         let bus = UsbBus::new(hc);
 
         let r = pin!(bus.new_device(UsbSpeed::Full12));
-        let rr = dbg!(r.poll(&mut c));
-        assert!(rr.is_ready());
+        let rr = r.poll(&mut c);
         let di = unwrap_poll(rr).unwrap().unwrap();
         assert_eq!(di.vid, 0x1234);
         assert_eq!(di.pid, 0x5678);
@@ -1522,30 +1433,17 @@ mod tests {
         // First call (wLength == 8)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, _, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 8
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| bytes[7] = 8);
-                Box::pin(future::ready(Err(UsbError::CrcError)))
-            });
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_timeout);
 
         // No second call!
 
         let bus = UsbBus::new(hc);
 
         let r = pin!(bus.new_device(UsbSpeed::Full12));
-        let rr = dbg!(r.poll(&mut c));
-        assert!(rr.is_ready());
+        let rr = r.poll(&mut c);
         let rc = unwrap_poll(rr).unwrap();
-        assert!(rc.is_err());
-        assert_eq!(rc.unwrap_err(), UsbError::CrcError);
+        assert_eq!(rc.unwrap_err(), UsbError::Timeout);
     }
 
     #[test]
@@ -1561,29 +1459,16 @@ mod tests {
         // First call (wLength == 8)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, _, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 8
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| bytes[7] = 8);
-                Box::pin(future::ready(Ok(7)))
-            });
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_ok::<7>);
 
         // No second call!
 
         let bus = UsbBus::new(hc);
 
         let r = pin!(bus.new_device(UsbSpeed::Full12));
-        let rr = dbg!(r.poll(&mut c));
-        assert!(rr.is_ready());
+        let rr = r.poll(&mut c);
         let rc = unwrap_poll(rr).unwrap();
-        assert!(rc.is_err());
         assert_eq!(rc.unwrap_err(), UsbError::ProtocolError);
     }
 
@@ -1600,51 +1485,20 @@ mod tests {
         // First call (wLength == 8)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, _, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 8
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| bytes[7] = 8);
-                Box::pin(future::ready(Ok(8)))
-            });
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_ok_with(device_descriptor_prefix));
 
         // Second call (wLength == 18)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && *p == 8
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 18
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| {
-                    bytes[7] = 8;
-                    bytes[8] = 0x34;
-                    bytes[9] = 0x12;
-                    bytes[10] = 0x78;
-                    bytes[11] = 0x56;
-                });
-                Box::pin(future::ready(Err(UsbError::Timeout)))
-            });
+            .withf(is_get_device_descriptor::<18>)
+            .returning(control_transfer_timeout);
 
         let bus = UsbBus::new(hc);
 
         let r = pin!(bus.new_device(UsbSpeed::Full12));
-        let rr = dbg!(r.poll(&mut c));
-        assert!(rr.is_ready());
+        let rr = r.poll(&mut c);
         let rc = unwrap_poll(rr).unwrap();
-        assert!(rc.is_err());
         assert_eq!(rc.unwrap_err(), UsbError::Timeout);
     }
 
@@ -1661,52 +1515,61 @@ mod tests {
         // First call (wLength == 8)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, _, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 8
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| bytes[7] = 8);
-                Box::pin(future::ready(Ok(8)))
-            });
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_ok_with(device_descriptor_prefix));
 
         // Second call (wLength == 18)
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                assert_eq!(s.wIndex, 0);
-                assert!(d.is_in());
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x100
-                    && *a == 0
-                    && *p == 8
-                    && s.bmRequestType == DEVICE_TO_HOST
-                    && s.wLength == 18
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| {
-                    bytes[7] = 8;
-                    bytes[8] = 0x34;
-                    bytes[9] = 0x12;
-                    bytes[10] = 0x78;
-                    bytes[11] = 0x56;
-                });
-                Box::pin(future::ready(Ok(17)))
-            });
+            .withf(is_get_device_descriptor::<18>)
+            .returning(control_transfer_ok::<17>);
 
         let bus = UsbBus::new(hc);
 
         let r = pin!(bus.new_device(UsbSpeed::Full12));
-        let rr = dbg!(r.poll(&mut c));
-        assert!(rr.is_ready());
+        let rr = r.poll(&mut c);
         let rc = unwrap_poll(rr).unwrap();
-        assert!(rc.is_err());
         assert_eq!(rc.unwrap_err(), UsbError::ProtocolError);
+    }
+
+    fn is_get_hub_descriptor(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 5
+            && *p == 8
+            && s.bmRequestType == DEVICE_TO_HOST | CLASS_REQUEST
+            && s.bRequest == GET_DESCRIPTOR
+            && s.wValue == 0x2900
+            && s.wIndex == 0
+            && s.wLength >= 9
+            && d.is_in()
+    }
+
+    fn hub_descriptor(bytes: &mut [u8]) -> usize {
+        bytes[0] = 9;
+        bytes[1] = HUB_DESCRIPTOR;
+        bytes[2] = 2; // 2-port hub
+        9
+    }
+
+    fn is_set_port_power<const N: u8>(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 5
+            && *p == 8
+            && s.bmRequestType
+                == HOST_TO_DEVICE | CLASS_REQUEST | RECIPIENT_OTHER
+            && s.bRequest == SET_FEATURE
+            && s.wValue == PORT_POWER
+            && s.wIndex == N.into()
+            && s.wLength == 0
+            && d.is_none()
     }
 
     #[test]
@@ -1724,16 +1587,7 @@ mod tests {
         // Call to get_basic_configuration
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x200
-                    && s.wIndex == 0
-                    && s.wLength == 64
-                    && d.is_in()
-                    && *a == 5
-                    && *p == 8
-                    && s.bmRequestType == DEVICE_TO_HOST
-            })
+            .withf(is_get_configuration_descriptor)
             .returning(|_, _, _, mut d| {
                 d.in_with(|bytes| {
                     example_config_descriptor(bytes);
@@ -1744,66 +1598,29 @@ mod tests {
         // Call to configure
         hc.inner
             .expect_control_transfer()
-            .withf(|a, p, s, d| {
-                s.bRequest == SET_CONFIGURATION
-                    && s.wValue == 1
-                    && s.wIndex == 0
-                    && s.wLength == 0
-                    && d.is_none()
-                    && *a == 5
-                    && *p == 8
-                    && s.bmRequestType == HOST_TO_DEVICE
-            })
-            .returning(|_, _, _, _| Box::pin(future::ready(Ok(0))));
+            .withf(is_set_configuration::<1>)
+            .returning(control_transfer_ok::<0>);
 
         // Get hub descriptor
         hc.inner
             .expect_control_transfer()
-            .withf(|a, _, s, d| {
-                s.wIndex == 0
-                    && d.is_in()
-                    && s.bRequest == GET_DESCRIPTOR
-                    && s.wValue == 0x2900
-                    && *a == 5
-                    && s.bmRequestType == DEVICE_TO_HOST | CLASS_REQUEST
-                    && s.wLength >= 9
-                    && d.is_in()
-            })
-            .returning(|_, _, _, mut d| {
-                d.in_with(|bytes| bytes[2] = 1); // One-port hub for simplicity!
-                Box::pin(future::ready(Ok(9)))
-            });
+            .withf(is_get_hub_descriptor)
+            .returning(control_transfer_ok_with(hub_descriptor));
 
         // Set port power
         hc.inner
             .expect_control_transfer()
-            .withf(|a, _, s, d| {
-                s.bmRequestType
-                    == HOST_TO_DEVICE | CLASS_REQUEST | RECIPIENT_OTHER
-                    && s.bRequest == SET_FEATURE
-                    && s.wValue == PORT_POWER
-                    && s.wIndex == 1
-                    && *a == 5
-                    && s.wLength == 0
-                    && d.is_none()
-            })
-            .returning(|_, _, _, _| Box::pin(future::ready(Ok(0))));
+            .withf(is_set_port_power::<1>)
+            .returning(control_transfer_ok::<0>);
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_port_power::<2>)
+            .returning(control_transfer_ok::<0>);
 
         let bus = UsbBus::new(hc);
 
-        let device = UsbDevice { address: 5 };
-        let info = DeviceInfo {
-            vid: 1,
-            pid: 2,
-            class: 3,
-            subclass: 4,
-            speed: UsbSpeed::Full12,
-            packet_size_ep0: 8,
-        };
-
-        let r = pin!(bus.new_hub(&device, &info));
-        let rr = dbg!(r.poll(&mut c));
-        assert!(rr.is_ready());
+        let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+        let rr = r.poll(&mut c);
         let rc = unwrap_poll(rr).unwrap();
         assert!(rc.is_ok());
     }
