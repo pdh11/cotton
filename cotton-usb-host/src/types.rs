@@ -1,4 +1,5 @@
 use crate::debug;
+use zerocopy::{Immutable, IntoBytes};
 
 /// A SETUP packet as transmitted on control endpoints.
 ///
@@ -145,7 +146,7 @@ pub struct DeviceDescriptor {
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Immutable, IntoBytes)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-10
 pub struct ConfigurationDescriptor {
     pub bLength: u8,
@@ -171,7 +172,7 @@ impl ConfigurationDescriptor {
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Immutable, IntoBytes)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-12
 pub struct InterfaceDescriptor {
     pub bLength: u8,
@@ -198,7 +199,7 @@ impl InterfaceDescriptor {
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Immutable, IntoBytes)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-13
 pub struct EndpointDescriptor {
     pub bLength: u8,
