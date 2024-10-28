@@ -21,6 +21,7 @@ pub use crate::host_controller::DataPhase;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
 /// A device-related event has occurred.
 ///
 /// This is the type of events returned from
@@ -282,7 +283,7 @@ impl<HC: HostController> UsbBus<HC> {
                 InternalEvent::Packet(packet) => self
                     .handle_hub_packet(&packet)
                     .await
-                    .unwrap_or(DeviceEvent::Disconnect(BitSet(0))),
+                    .unwrap_or(DeviceEvent::None),
             }
         })
     }
@@ -383,8 +384,8 @@ impl<HC: HostController> UsbBus<HC> {
                         return DeviceEvent::Connect(device, info);
                     }
                 }
-                // Can't enumerate device
-                DeviceEvent::Disconnect(BitSet(0))
+                // Can't enumerate device (TODO: DeviceEvent::EnumerationError)
+                DeviceEvent::None
             } else {
                 DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
             }
@@ -598,21 +599,8 @@ impl<HC: HostController> UsbBus<HC> {
 
         // Ports are numbered from 1..=N (not 0..N)
         for port in 1..=ports {
-            self.control_transfer(
-                device.address,
-                info.packet_size_ep0,
-                SetupPacket {
-                    bmRequestType: HOST_TO_DEVICE
-                        | CLASS_REQUEST
-                        | RECIPIENT_OTHER,
-                    bRequest: SET_FEATURE,
-                    wValue: PORT_POWER,
-                    wIndex: port as u16,
-                    wLength: 0,
-                },
-                DataPhase::None,
-            )
-            .await?;
+            self.set_port_feature(device.address, port, PORT_POWER)
+                .await?;
         }
 
         Ok(())
@@ -626,6 +614,84 @@ impl<HC: HostController> UsbBus<HC> {
     /// This is useful for logging/debugging.
     pub fn topology(&self) -> Topology {
         self.hub_state.borrow().topology.clone()
+    }
+
+    async fn get_hub_port_status(
+        &self,
+        hub_address: u8,
+        port: u8,
+    ) -> Result<(u16, u16), UsbError> {
+        let mut data = [0u8; 4];
+        self.control_transfer(
+            hub_address,
+            8,
+            SetupPacket {
+                bmRequestType: DEVICE_TO_HOST
+                    | CLASS_REQUEST
+                    | RECIPIENT_OTHER,
+                bRequest: GET_STATUS,
+                wValue: 0,
+                wIndex: port as u16,
+                wLength: 4,
+            },
+            DataPhase::In(&mut data),
+        )
+        .await?;
+
+        Ok((
+            u16::from_le_bytes([data[0], data[1]]),
+            u16::from_le_bytes([data[2], data[3]]),
+        ))
+    }
+
+    /// Clear C_PORT_CONNECTION (or similar status-change bit); see
+    /// USB 2.0 s11.24.2.7.2
+    async fn clear_port_feature(
+        &self,
+        hub_address: u8,
+        port: u8,
+        feature: u16,
+    ) -> Result<(), UsbError> {
+        self.control_transfer(
+            hub_address,
+            8,
+            SetupPacket {
+                bmRequestType: HOST_TO_DEVICE
+                    | CLASS_REQUEST
+                    | RECIPIENT_OTHER,
+                bRequest: CLEAR_FEATURE,
+                wValue: feature,
+                wIndex: port as u16,
+                wLength: 0,
+            },
+            DataPhase::None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_port_feature(
+        &self,
+        hub_address: u8,
+        port: u8,
+        feature: u16,
+    ) -> Result<(), UsbError> {
+        self.control_transfer(
+            hub_address,
+            8,
+            SetupPacket {
+                bmRequestType: HOST_TO_DEVICE
+                    | CLASS_REQUEST
+                    | RECIPIENT_OTHER,
+                bRequest: SET_FEATURE,
+                wValue: feature,
+                wIndex: port as u16,
+                wLength: 0,
+            },
+            DataPhase::None,
+        )
+        .await?;
+        Ok(())
     }
 
     async fn handle_hub_packet(
@@ -660,26 +726,6 @@ impl<HC: HostController> UsbBus<HC> {
             packet.size
         );
 
-        let mut data = [0u8; 8];
-        let sz = self
-            .control_transfer(
-                packet.address,
-                8,
-                SetupPacket {
-                    bmRequestType: DEVICE_TO_HOST | CLASS_REQUEST,
-                    bRequest: GET_DESCRIPTOR,
-                    wValue: (HUB_DESCRIPTOR as u16) << 8,
-                    wIndex: 0,
-                    wLength: 7,
-                },
-                DataPhase::In(&mut data),
-            )
-            .await?;
-
-        if sz < 3 {
-            return Err(UsbError::ProtocolError);
-        }
-
         let mut port_bitmap = packet.data[0] as u32;
         if packet.size > 1 {
             port_bitmap |= (packet.data[1] as u32) << 8;
@@ -688,25 +734,8 @@ impl<HC: HostController> UsbBus<HC> {
         for port in port_bitmap {
             debug::println!("I'm told to investigate port {}", port);
 
-            self.control_transfer(
-                packet.address,
-                8,
-                SetupPacket {
-                    bmRequestType: DEVICE_TO_HOST
-                        | CLASS_REQUEST
-                        | RECIPIENT_OTHER,
-                    bRequest: GET_STATUS,
-                    wValue: 0,
-                    wIndex: port as u16,
-                    wLength: 4,
-                },
-                DataPhase::In(&mut data),
-            )
-            .await?;
-
-            let state = u16::from_le_bytes([data[0], data[1]]);
-            let changes = u16::from_le_bytes([data[2], data[3]]);
-
+            let (state, changes) =
+                self.get_hub_port_status(packet.address, port).await?;
             debug::println!(
                 "  port {} status3 {:x} {:x}",
                 port,
@@ -718,21 +747,12 @@ impl<HC: HostController> UsbBus<HC> {
                 let bit = changes.trailing_zeros(); // i.e., least_set_bit
 
                 if bit < 8 {
-                    // Clear C_PORT_CONNECTION (or similar
-                    // status-change bit); see USB 2.0 s11.24.2.7.2
-                    self.control_transfer(
+                    // "+16" to clear the change version C_xx rather than the
+                    // feature itself, see USB 2.0 table 11-17
+                    self.clear_port_feature(
                         packet.address,
-                        8,
-                        SetupPacket {
-                            bmRequestType: HOST_TO_DEVICE
-                                | CLASS_REQUEST
-                                | RECIPIENT_OTHER,
-                            bRequest: CLEAR_FEATURE,
-                            wValue: (bit as u16) + 16,
-                            wIndex: port as u16,
-                            wLength: 0,
-                        },
-                        DataPhase::None,
+                        port,
+                        (bit + 16) as u16,
                     )
                     .await?;
                 }
@@ -750,24 +770,18 @@ impl<HC: HostController> UsbBus<HC> {
 
                     // now connected
                     if self.hub_state.borrow().currently_resetting.is_none() {
-                        self.hub_state.borrow_mut().currently_resetting =
-                            Some((packet.address, port));
-                        self.control_transfer(
+                        self.set_port_feature(
                             packet.address,
-                            8,
-                            SetupPacket {
-                                bmRequestType: HOST_TO_DEVICE
-                                    | CLASS_REQUEST
-                                    | RECIPIENT_OTHER,
-                                bRequest: SET_FEATURE,
-                                wValue: PORT_RESET,
-                                wIndex: port as u16,
-                                wLength: 0,
-                            },
-                            DataPhase::None,
+                            port,
+                            PORT_RESET,
                         )
                         .await?;
-                        return Ok(DeviceEvent::Disconnect(BitSet(0)));
+                        self.hub_state.borrow_mut().currently_resetting =
+                            Some((packet.address, port));
+
+                        // wait for the reset to complete (we'll be called
+                        // again with C_PORT_RESET)
+                        return Ok(DeviceEvent::None);
                     } else {
                         // TODO: queue hub for future investigation
                     }
@@ -784,7 +798,7 @@ impl<HC: HostController> UsbBus<HC> {
                     };
 
                     let Ok(info) = self.new_device(speed).await else {
-                        return Ok(DeviceEvent::Disconnect(BitSet(0)));
+                        return Ok(DeviceEvent::None);
                     };
                     let is_hub = info.class == HUB_CLASSCODE;
                     let address = {
@@ -806,7 +820,7 @@ impl<HC: HostController> UsbBus<HC> {
             }
         }
         // TODO: if we get here, does some other port need resetting?
-        Ok(DeviceEvent::Disconnect(BitSet(0)))
+        Ok(DeviceEvent::None)
     }
 }
 
@@ -1623,5 +1637,470 @@ mod tests {
         let rr = r.poll(&mut c);
         let rc = unwrap_poll(rr).unwrap();
         assert!(rc.is_ok());
+    }
+
+    #[test]
+    fn new_hub_get_configuration_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+
+        // Call to get_basic_configuration
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_configuration_descriptor)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+        let rr = r.poll(&mut c);
+        let rc = unwrap_poll(rr).unwrap();
+        assert_eq!(rc, Err(UsbError::Timeout));
+    }
+
+    #[test]
+    fn new_hub_configure_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner.expect_multi_interrupt_pipe().returning(|| {
+            let mut mip = MockMultiInterruptPipe::new();
+            mip.expect_try_add().returning(|_, _, _, _| Ok(()));
+            mip
+        });
+
+        // Call to get_basic_configuration
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_configuration_descriptor)
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| {
+                    example_config_descriptor(bytes);
+                });
+                Box::pin(future::ready(Ok(25)))
+            });
+
+        // Call to configure
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_configuration::<1>)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+        let rr = r.poll(&mut c);
+        let rc = unwrap_poll(rr).unwrap();
+        assert_eq!(rc, Err(UsbError::Timeout));
+    }
+
+    #[test]
+    fn new_hub_get_descriptor_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner.expect_multi_interrupt_pipe().returning(|| {
+            let mut mip = MockMultiInterruptPipe::new();
+            mip.expect_try_add().returning(|_, _, _, _| Ok(()));
+            mip
+        });
+
+        // Call to get_basic_configuration
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_configuration_descriptor)
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| {
+                    example_config_descriptor(bytes);
+                });
+                Box::pin(future::ready(Ok(25)))
+            });
+
+        // Call to configure
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_configuration::<1>)
+            .returning(control_transfer_ok::<0>);
+
+        // Get hub descriptor
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_hub_descriptor)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+        let rr = r.poll(&mut c);
+        let rc = unwrap_poll(rr).unwrap();
+        assert_eq!(rc, Err(UsbError::Timeout));
+    }
+
+    #[test]
+    fn new_hub_get_descriptor_short() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner.expect_multi_interrupt_pipe().returning(|| {
+            let mut mip = MockMultiInterruptPipe::new();
+            mip.expect_try_add().returning(|_, _, _, _| Ok(()));
+            mip
+        });
+
+        // Call to get_basic_configuration
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_configuration_descriptor)
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| {
+                    example_config_descriptor(bytes);
+                });
+                Box::pin(future::ready(Ok(25)))
+            });
+
+        // Call to configure
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_configuration::<1>)
+            .returning(control_transfer_ok::<0>);
+
+        // Get hub descriptor
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_hub_descriptor)
+            .returning(control_transfer_ok::<8>);
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+        let rr = r.poll(&mut c);
+        let rc = unwrap_poll(rr).unwrap();
+        assert_eq!(rc, Err(UsbError::ProtocolError));
+    }
+
+    #[test]
+    fn new_hub_set_port_power_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner.expect_multi_interrupt_pipe().returning(|| {
+            let mut mip = MockMultiInterruptPipe::new();
+            mip.expect_try_add().returning(|_, _, _, _| Ok(()));
+            mip
+        });
+
+        // Call to get_basic_configuration
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_configuration_descriptor)
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| {
+                    example_config_descriptor(bytes);
+                });
+                Box::pin(future::ready(Ok(25)))
+            });
+
+        // Call to configure
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_configuration::<1>)
+            .returning(control_transfer_ok::<0>);
+
+        // Get hub descriptor
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_hub_descriptor)
+            .returning(control_transfer_ok_with(hub_descriptor));
+
+        // Set port power
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_port_power::<1>)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+        let rr = r.poll(&mut c);
+        let rc = unwrap_poll(rr).unwrap();
+        assert_eq!(rc, Err(UsbError::Timeout));
+    }
+
+    #[test]
+    fn handle_hub_packet_empty() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+        let bus = UsbBus::new(hc);
+
+        let mut p = InterruptPacket::new();
+        p.size = 1;
+        let fut = pin!(bus.handle_hub_packet(&p));
+
+        let poll = fut.poll(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(result, Ok(DeviceEvent::None));
+    }
+
+    fn is_get_port_status<const N: u8>(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 5
+            && *p == 8
+            && s.bmRequestType
+                == DEVICE_TO_HOST | CLASS_REQUEST | RECIPIENT_OTHER
+            && s.bRequest == GET_STATUS
+            && s.wValue == 0
+            && s.wIndex == N as u16
+            && s.wLength == 4
+            && d.is_in()
+    }
+
+    fn port_status<const STATE: u16, const CHANGES: u16>(
+        bytes: &mut [u8],
+    ) -> usize {
+        bytes[0..2].copy_from_slice(&STATE.to_le_bytes());
+        bytes[2..4].copy_from_slice(&CHANGES.to_le_bytes());
+        4
+    }
+
+    fn is_clear_port_feature<const PORT: u8, const FEATURE: u16>(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 5
+            && *p == 8
+            && s.bmRequestType
+                == HOST_TO_DEVICE | CLASS_REQUEST | RECIPIENT_OTHER
+            && s.bRequest == 1
+            && s.wValue == FEATURE
+            && s.wIndex == PORT as u16
+            && s.wLength == 0
+            && d.is_none()
+    }
+
+    fn is_set_port_feature<const PORT: u8, const FEATURE: u16>(
+        a: &u8,
+        p: &u8,
+        s: &SetupPacket,
+        d: &DataPhase,
+    ) -> bool {
+        *a == 5
+            && *p == 8
+            && s.bmRequestType
+                == HOST_TO_DEVICE | CLASS_REQUEST | RECIPIENT_OTHER
+            && s.bRequest == 3
+            && s.wValue == FEATURE
+            && s.wIndex == PORT as u16
+            && s.wLength == 0
+            && d.is_none()
+    }
+
+    #[test]
+    fn handle_hub_packet_connection() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+
+        // Get port status
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_port_status::<1>)
+            .returning(control_transfer_ok_with(port_status::<1, 1>));
+
+        // Clear C_PORT_CONNECTION
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_clear_port_feature::<1, 16>)
+            .returning(control_transfer_ok::<0>);
+
+        // Set PORT_RESET
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_port_feature::<1, 4>)
+            .returning(control_transfer_ok::<0>);
+
+        let bus = UsbBus::new(hc);
+
+        let mut p = InterruptPacket::new();
+        p.address = 5;
+        p.size = 1;
+        p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+        let fut = pin!(bus.handle_hub_packet(&p));
+
+        let poll = fut.poll(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(result, Ok(DeviceEvent::None));
+
+        assert_eq!(bus.hub_state.borrow().currently_resetting, Some((5, 1)));
+    }
+
+    #[test]
+    fn handle_hub_packet_connection_status_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+
+        // Get port status
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_port_status::<1>)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let mut p = InterruptPacket::new();
+        p.address = 5;
+        p.size = 1;
+        p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+        let fut = pin!(bus.handle_hub_packet(&p));
+
+        let poll = fut.poll(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(result, Err(UsbError::Timeout));
+    }
+
+    #[test]
+    fn handle_hub_packet_connection_clear_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+
+        // Get port status
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_port_status::<1>)
+            .returning(control_transfer_ok_with(port_status::<1, 1>));
+
+        // Clear C_PORT_CONNECTION
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_clear_port_feature::<1, 16>)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let mut p = InterruptPacket::new();
+        p.address = 5;
+        p.size = 1;
+        p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+        let fut = pin!(bus.handle_hub_packet(&p));
+
+        let poll = fut.poll(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(result, Err(UsbError::Timeout));
+    }
+
+    #[test]
+    fn handle_hub_packet_connection_set_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+
+        // Get port status
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_port_status::<1>)
+            .returning(control_transfer_ok_with(port_status::<1, 1>));
+
+        // Clear C_PORT_CONNECTION
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_clear_port_feature::<1, 16>)
+            .returning(control_transfer_ok::<0>);
+
+        // Set PORT_RESET
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_set_port_feature::<1, 4>)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let mut p = InterruptPacket::new();
+        p.address = 5;
+        p.size = 1;
+        p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+        let fut = pin!(bus.handle_hub_packet(&p));
+
+        let poll = fut.poll(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(result, Err(UsbError::Timeout));
+
+        assert_eq!(bus.hub_state.borrow().currently_resetting, None);
+    }
+
+    #[test]
+    fn handle_hub_packet_disconnection() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+
+        // Get port status
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_get_port_status::<1>)
+            .returning(control_transfer_ok_with(port_status::<0, 1>));
+
+        // Clear C_PORT_CONNECTION
+        hc.inner
+            .expect_control_transfer()
+            .withf(is_clear_port_feature::<1, 16>)
+            .returning(control_transfer_ok::<0>);
+
+        let bus = UsbBus::new(hc);
+
+        {
+            // Set up topology so there's a device (31) on hub 5 port 1
+            let mut b = bus.hub_state.borrow_mut();
+            b.topology.device_connect(0, 1, true); // 1
+            b.topology.device_connect(1, 1, true); // 2
+            b.topology.device_connect(1, 2, true); // 3
+            b.topology.device_connect(1, 3, true); // 4
+            b.topology.device_connect(1, 4, true); // 5
+            b.topology.device_connect(5, 1, false); // 31
+        }
+
+        let mut p = InterruptPacket::new();
+        p.address = 5;
+        p.size = 1;
+        p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+        let fut = pin!(bus.handle_hub_packet(&p));
+
+        let poll = fut.poll(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(result, Ok(DeviceEvent::Disconnect(BitSet(0x8000_0000))));
     }
 }

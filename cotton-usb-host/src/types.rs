@@ -328,7 +328,7 @@ pub enum Direction {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct DeviceInfo {
     pub vid: u16,
     pub pid: u16,
