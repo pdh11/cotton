@@ -19,10 +19,7 @@ etc.) to be connected directly to the RP2040 and controlled by it.
 USB operation is _asynchronous_ and so this crate is suited for use
 with embedded asynchronous executors such as
 [RTIC&nbsp;2](https://rtic.rs/2/book/en/) and
-[Embassy](https://embassy.dev). The implementation uses no timers and
-never polls &mdash; it's wholly interrupt-driven &mdash; and so is, in
-theory, compatible with executors which put the microcontroller into
-low-power modes in-between interrupts.
+[Embassy](https://embassy.dev).
 
 Includes:
 
@@ -43,7 +40,7 @@ Limitations:
 
  - maximum of 31 devices total (including hubs);
  - maximum of 15 hubs;
- - maximum of 15 ports on any one hub[^2];
+ - maximum of 8 ports on any one hub[^2];
  - supports Low Speed (1.5Mbits/s) and Full Speed (12Mbits/s)
    operation only -- not High Speed (480Mbits/s) or above.
 
@@ -145,15 +142,16 @@ belongs in those microcontrollers' HAL crates.
 TODO before merge
 
  - [x] Hub state machine
- - [ ] Unit tests
+ - [x] Unit tests
  - [x] Interlocking to avoid contending on pipe 0
+ - [ ] Rename types to wire
 
 TODO before 0.1.0:
 
  - [ ] System test
  - [ ] Bulk in/out
  - [ ] doc-comments
- - [ ] At least one real example (MSC?)
+ - [ ] At least one real example (MSC? HID?)
  - [ ] Review register usage for contention (buff_status?)
  - [ ] STM32?
 
