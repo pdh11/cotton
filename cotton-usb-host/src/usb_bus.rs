@@ -380,13 +380,13 @@ impl<HC: HostController> UsbBus<HC> {
         let root_device = self.driver.device_detect();
         root_device.then(move |status| async move {
             if let DeviceStatus::Present(speed) = status {
-                if let Ok(info) = self.new_device(speed).await {
-                    if let Ok(device) = self.set_address(1, &info).await {
-                        return DeviceEvent::Connect(device, info);
-                    }
+                match self.new_device(speed).await {
+                    Ok(info) => match self.set_address(1, &info).await {
+                        Ok(device) => DeviceEvent::Connect(device, info),
+                        Err(e) => DeviceEvent::EnumerationError(0, 1, e),
+                    },
+                    Err(e) => DeviceEvent::EnumerationError(0, 1, e),
                 }
-                // Can't enumerate device (TODO: DeviceEvent::EnumerationError)
-                DeviceEvent::None
             } else {
                 DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
             }
@@ -823,7 +823,8 @@ impl<HC: HostController> UsbBus<HC> {
 mod tests {
     use super::*;
     use crate::host_controller::tests::{
-        MockHostController, MockInterruptPipe, MockMultiInterruptPipe,
+        MockDeviceDetect, MockHostController, MockInterruptPipe,
+        MockMultiInterruptPipe,
     };
     use crate::types::{
         EndpointDescriptor, InterfaceDescriptor, ENDPOINT_DESCRIPTOR,
@@ -2346,6 +2347,8 @@ mod tests {
             b.topology.device_connect(5, 1, false); // 31
         }
 
+        assert_eq!(format!("{:?}", bus.topology()), "0:(1:(2 3 4 5:(31)))");
+
         let mut p = InterruptPacket::new();
         p.address = 5;
         p.size = 1;
@@ -3126,5 +3129,252 @@ mod tests {
         assert!(poll.is_pending());
         let poll = fut.as_mut().poll(&mut c);
         assert!(poll.is_pending());
+    }
+
+    #[test]
+    fn device_events_nh() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+        hc.inner.expect_device_detect().returning(|| {
+            let mut mdd = MockDeviceDetect::new();
+            mdd.expect_poll_next().returning(|_| {
+                Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+            });
+            mdd
+        });
+
+        // new_device(): first call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_ok_with(device_descriptor_prefix));
+
+        // new_device(): Second call (wLength == 18)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<18>)
+            .returning(control_transfer_ok_with(device_descriptor));
+
+        // Set address (1)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_set_address::<1>)
+            .returning(control_transfer_ok::<0>);
+
+        let bus = UsbBus::new(hc);
+
+        let stream = pin!(bus.device_events_no_hubs());
+
+        let poll = stream.poll_next(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(
+            result,
+            Some(DeviceEvent::Connect(
+                UsbDevice { address: 1 },
+                DeviceInfo {
+                    vid: 0x1234,
+                    pid: 0x5678,
+                    class: 0,
+                    subclass: 0,
+                    speed: UsbSpeed::Full12,
+                    packet_size_ep0: 8
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn device_events_nh_new_device_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+        hc.inner.expect_device_detect().returning(|| {
+            let mut mdd = MockDeviceDetect::new();
+            mdd.expect_poll_next().returning(|_| {
+                Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+            });
+            mdd
+        });
+
+        // new_device(): first call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let stream = pin!(bus.device_events_no_hubs());
+
+        let poll = stream.poll_next(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(
+            result,
+            Some(DeviceEvent::EnumerationError(0, 1, UsbError::Timeout))
+        );
+    }
+
+    #[test]
+    fn device_events_nh_new_device_pends() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+        hc.inner.expect_device_detect().returning(|| {
+            let mut mdd = MockDeviceDetect::new();
+            mdd.expect_poll_next().returning(|_| {
+                Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+            });
+            mdd
+        });
+
+        // new_device(): first call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_pending);
+
+        let bus = UsbBus::new(hc);
+
+        let mut stream = pin!(bus.device_events_no_hubs());
+
+        let poll = stream.as_mut().poll_next(&mut c);
+        assert!(poll.is_pending());
+        let poll = stream.as_mut().poll_next(&mut c);
+        assert!(poll.is_pending());
+    }
+
+    #[test]
+    fn device_events_nh_set_address_fails() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+        hc.inner.expect_device_detect().returning(|| {
+            let mut mdd = MockDeviceDetect::new();
+            mdd.expect_poll_next().returning(|_| {
+                Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+            });
+            mdd
+        });
+
+        // new_device(): first call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_ok_with(device_descriptor_prefix));
+
+        // new_device(): Second call (wLength == 18)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<18>)
+            .returning(control_transfer_ok_with(device_descriptor));
+
+        // Set address (1)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_set_address::<1>)
+            .returning(control_transfer_timeout);
+
+        let bus = UsbBus::new(hc);
+
+        let stream = pin!(bus.device_events_no_hubs());
+
+        let poll = stream.poll_next(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(
+            result,
+            Some(DeviceEvent::EnumerationError(0, 1, UsbError::Timeout))
+        );
+    }
+
+    #[test]
+    fn device_events_nh_set_address_pends() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+        hc.inner.expect_device_detect().returning(|| {
+            let mut mdd = MockDeviceDetect::new();
+            mdd.expect_poll_next().returning(|_| {
+                Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+            });
+            mdd
+        });
+
+        // new_device(): first call (wLength == 8)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<8>)
+            .returning(control_transfer_ok_with(device_descriptor_prefix));
+
+        // new_device(): Second call (wLength == 18)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_device_descriptor::<18>)
+            .returning(control_transfer_ok_with(device_descriptor));
+
+        // Set address (1)
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_set_address::<1>)
+            .returning(control_transfer_pending);
+
+        let bus = UsbBus::new(hc);
+
+        let mut stream = pin!(bus.device_events_no_hubs());
+
+        let poll = stream.as_mut().poll_next(&mut c);
+        assert!(poll.is_pending());
+        let poll = stream.as_mut().poll_next(&mut c);
+        assert!(poll.is_pending());
+    }
+
+    #[test]
+    fn device_events_nh_disconnect() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+        let mut hc = MockHostController::default();
+        hc.inner
+            .expect_multi_interrupt_pipe()
+            .returning(MockMultiInterruptPipe::new);
+        hc.inner.expect_device_detect().returning(|| {
+            let mut mdd = MockDeviceDetect::new();
+            mdd.expect_poll_next()
+                .returning(|_| Poll::Ready(Some(DeviceStatus::Absent)));
+            mdd
+        });
+
+        let bus = UsbBus::new(hc);
+
+        let stream = pin!(bus.device_events_no_hubs());
+
+        let poll = stream.poll_next(&mut c);
+        let result = unwrap_poll(poll).unwrap();
+        assert_eq!(result, Some(DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))));
     }
 }

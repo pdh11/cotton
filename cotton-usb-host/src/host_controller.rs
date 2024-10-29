@@ -271,26 +271,30 @@ pub mod tests {
         assert_eq!((&p)[9], 1);
     }
 
+    fn add_one(b: &mut [u8]) {
+        b[0] += 1;
+    }
+
     #[test]
     fn dataphase_accessors() {
-        let mut b = [0u8; 1];
+        let mut b = [1u8; 1];
         let mut d1 = DataPhase::In(&mut b);
         assert!(d1.is_in());
         assert!(!d1.is_out());
         assert!(!d1.is_none());
-        d1.in_with(|s| s[0] = 2);
+        d1.in_with(add_one);
         assert_eq!(b[0], 2);
         let mut d1 = DataPhase::Out(&b);
         assert!(!d1.is_in());
         assert!(d1.is_out());
         assert!(!d1.is_none());
-        d1.in_with(|s| s[0] = 3);
-        assert_eq!(b[0], 2);
+        d1.in_with(add_one);
+        assert_eq!(b[0], 2); // not IN, nothing added
         let mut d1 = DataPhase::None;
         assert!(!d1.is_in());
         assert!(!d1.is_out());
         assert!(d1.is_none());
-        d1.in_with(|s| s[0] = 4);
-        assert_eq!(b[0], 2);
+        d1.in_with(add_one);
+        assert_eq!(b[0], 2); // not IN, nothing added
     }
 }
