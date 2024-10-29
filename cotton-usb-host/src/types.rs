@@ -1,5 +1,4 @@
 use crate::debug;
-use zerocopy::{Immutable, IntoBytes};
 
 /// A SETUP packet as transmitted on control endpoints.
 ///
@@ -146,7 +145,7 @@ pub struct DeviceDescriptor {
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, Immutable, IntoBytes)]
+#[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-10
 pub struct ConfigurationDescriptor {
     pub bLength: u8,
@@ -159,20 +158,15 @@ pub struct ConfigurationDescriptor {
     pub bMaxPower: u8,
 }
 
-impl ConfigurationDescriptor {
-    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= core::mem::size_of::<Self>() {
-            Some(unsafe { *(bytes as *const [u8] as *const Self) })
-        } else {
-            None
-        }
-    }
-}
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for ConfigurationDescriptor {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for ConfigurationDescriptor {}
 
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, Immutable, IntoBytes)]
+#[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-12
 pub struct InterfaceDescriptor {
     pub bLength: u8,
@@ -186,20 +180,15 @@ pub struct InterfaceDescriptor {
     pub iInterface: u8,
 }
 
-impl InterfaceDescriptor {
-    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= core::mem::size_of::<Self>() {
-            Some(unsafe { *(bytes as *const [u8] as *const Self) })
-        } else {
-            None
-        }
-    }
-}
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for InterfaceDescriptor {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for InterfaceDescriptor {}
 
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, Immutable, IntoBytes)]
+#[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-13
 pub struct EndpointDescriptor {
     pub bLength: u8,
@@ -210,15 +199,10 @@ pub struct EndpointDescriptor {
     pub bInterval: u8,
 }
 
-impl EndpointDescriptor {
-    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= core::mem::size_of::<Self>() {
-            Some(unsafe { *(bytes as *const [u8] as *const Self) })
-        } else {
-            None
-        }
-    }
-}
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for EndpointDescriptor {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for EndpointDescriptor {}
 
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -236,15 +220,10 @@ pub struct HubDescriptor {
     PortPwrCtrlMask: u8, // NB only for hubs up to 8 (true) ports
 }
 
-impl HubDescriptor {
-    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= core::mem::size_of::<Self>() {
-            Some(unsafe { *(bytes as *const [u8] as *const Self) })
-        } else {
-            None
-        }
-    }
-}
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for HubDescriptor {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for HubDescriptor {}
 
 // For request_type (USB 2.0 table 9-2)
 pub const DEVICE_TO_HOST: u8 = 0x80;
@@ -389,22 +368,27 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
         }
 
         match dtype {
-            CONFIGURATION_DESCRIPTOR => v.on_configuration(
-                &ConfigurationDescriptor::try_from_bytes(
-                    &buf[index..index + dlen],
-                )
-                .unwrap(),
-            ),
-            INTERFACE_DESCRIPTOR => v.on_interface(
-                &InterfaceDescriptor::try_from_bytes(
-                    &buf[index..index + dlen],
-                )
-                .unwrap(),
-            ),
-            ENDPOINT_DESCRIPTOR => v.on_endpoint(
-                &EndpointDescriptor::try_from_bytes(&buf[index..index + dlen])
-                    .unwrap(),
-            ),
+            CONFIGURATION_DESCRIPTOR => {
+                if let Ok(c) =
+                    bytemuck::try_from_bytes(&buf[index..index + dlen])
+                {
+                    v.on_configuration(c);
+                }
+            }
+            INTERFACE_DESCRIPTOR => {
+                if let Ok(i) =
+                    bytemuck::try_from_bytes(&buf[index..index + dlen])
+                {
+                    v.on_interface(i);
+                }
+            }
+            ENDPOINT_DESCRIPTOR => {
+                if let Ok(e) =
+                    bytemuck::try_from_bytes(&buf[index..index + dlen])
+                {
+                    v.on_endpoint(e);
+                }
+            }
             _ => v.on_other(&buf[index..(index + dlen)]),
         }
 
@@ -500,36 +484,19 @@ mod tests {
     }
 
     #[test]
-    fn configuration_too_small() {
-        assert!(ConfigurationDescriptor::try_from_bytes(&[0]).is_none());
-    }
-
-    #[test]
-    fn interface_too_small() {
-        assert!(InterfaceDescriptor::try_from_bytes(&[0]).is_none());
-    }
-
-    #[test]
-    fn endpoint_too_small() {
-        assert!(EndpointDescriptor::try_from_bytes(&[0]).is_none());
-    }
-
-    #[test]
     fn hub() {
-        let h = HubDescriptor::try_from_bytes(HUB).unwrap();
+        let h: &HubDescriptor = bytemuck::from_bytes(HUB);
         assert_eq!(h.bNbrPorts, 4);
         assert_eq!(h.bHubContrCurrent, 100);
     }
 
     #[test]
-    fn hub_too_small() {
-        assert!(HubDescriptor::try_from_bytes(&[0]).is_none());
-    }
-
-    #[test]
-    fn invalid_descriptor() {
+    fn invalid_descriptors() {
         // Mostly a test for Miri
         parse_descriptors(&[9, 41, 1], &mut ShowDescriptors);
+        parse_descriptors(&[3, 2, 1], &mut ShowDescriptors);
+        parse_descriptors(&[3, 4, 1], &mut ShowDescriptors);
+        parse_descriptors(&[3, 5, 1], &mut ShowDescriptors);
     }
 
     #[test]

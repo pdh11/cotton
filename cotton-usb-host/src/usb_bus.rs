@@ -592,10 +592,6 @@ impl<HC: HostController> UsbBus<HC> {
             return Err(UsbError::ProtocolError);
         }
 
-        debug::println!(
-            "{:?}",
-            &HubDescriptor::try_from_bytes(&descriptors[0..sz]).unwrap()
-        );
         let ports = descriptors[2];
         debug::println!("{}-port hub", ports);
 
@@ -837,7 +833,6 @@ mod tests {
     use std::pin::{pin, Pin};
     use std::sync::Arc;
     use std::task::{Poll, Wake, Waker};
-    use zerocopy::IntoBytes;
     extern crate alloc;
 
     struct NoOpWaker;
@@ -887,7 +882,7 @@ mod tests {
             bMaxPower: 0,
         };
 
-        c.write_to(&mut buf[0..9]).unwrap();
+        buf[0..9].copy_from_slice(bytemuck::bytes_of(&c));
 
         let i = InterfaceDescriptor {
             bLength: core::mem::size_of::<InterfaceDescriptor>() as u8,
@@ -901,7 +896,7 @@ mod tests {
             iInterface: 0,
         };
 
-        i.write_to(&mut buf[9..18]).unwrap();
+        buf[9..18].copy_from_slice(bytemuck::bytes_of(&i));
 
         let e = EndpointDescriptor {
             bLength: core::mem::size_of::<EndpointDescriptor>() as u8,
@@ -912,7 +907,7 @@ mod tests {
             bInterval: 0,
         };
 
-        e.write_to(&mut buf[18..25]).unwrap();
+        buf[18..25].copy_from_slice(bytemuck::bytes_of(&e));
     }
 
     const EXAMPLE_DEVICE: UsbDevice = UsbDevice { address: 5 };

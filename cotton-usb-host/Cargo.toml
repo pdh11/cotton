@@ -24,7 +24,7 @@ cortex-m = { version = "0.7.7", optional = true }
 rtic-common = { version = "1", optional = true }        # For WakerRegistration
 mockall = { version = "0.13", optional = true }
 critical-section = "1.1"
-zerocopy = { version = "0.8", features = ["derive"] }
+bytemuck = "1.1"
 
 [features]
 default = ["std"]
