@@ -242,6 +242,7 @@ impl<HC: HostController> UsbBus<HC> {
                             .borrow_mut()
                             .topology
                             .device_disconnect(0, 1);
+                        // TODO: unset currently_resetting
                         DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                     }
                 }
@@ -678,6 +679,8 @@ impl<HC: HostController> UsbBus<HC> {
                             .borrow_mut()
                             .topology
                             .device_disconnect(packet.address, port);
+
+                        // TODO: unset currently_resetting if it's in the list
                         return Ok(DeviceEvent::Disconnect(BitSet(mask)));
                     }
 

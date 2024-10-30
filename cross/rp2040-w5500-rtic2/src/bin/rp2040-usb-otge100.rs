@@ -10,12 +10,15 @@ use rp_pico as _; // includes boot2
 mod app {
     use core::pin::pin;
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
+    use cotton_usb_host::host_controller::HostController;
+    use cotton_usb_host::usb_bus::{
+        DataPhase, DeviceEvent, DeviceInfo, UsbBus, UsbDevice, UsbError,
+    };
     use cotton_usb_host::wire::{
         parse_descriptors, ConfigurationDescriptor, SetupPacket,
         ShowDescriptors, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
-        GET_DESCRIPTOR, VENDOR_REQUEST,
+        GET_DESCRIPTOR, HOST_TO_DEVICE, VENDOR_REQUEST,
     };
-    use cotton_usb_host::usb_bus::{DataPhase, DeviceEvent, UsbBus};
     use futures_util::StreamExt;
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
@@ -116,6 +119,114 @@ mod app {
         )
     }
 
+    struct AX88772<'a, T: HostController> {
+        bus: &'a UsbBus<T>,
+        device: &'a UsbDevice,
+        info: &'a DeviceInfo,
+    }
+
+    const MII_ADVERTISE: u8 = 4;
+    const MII_BMCR: u8 = 0;
+    const ADVERTISE_ALL: u16 = 0x1E1; // /usr/include/linux/mii.h
+    const BMCR_ANENABLE: u16 = 0x1000;
+    const BMCR_ANRESTART: u16 = 0x200;
+
+    impl<'a, T: HostController> AX88772<'a, T> {
+        pub fn new(
+            bus: &'a UsbBus<T>,
+            device: &'a UsbDevice,
+            info: &'a DeviceInfo,
+        ) -> Self {
+            Self { bus, device, info }
+        }
+
+        async fn vendor_command(
+            &self,
+            request: u8,
+            value: u16,
+            index: u16,
+            data: DataPhase<'_>,
+        ) -> Result<(), UsbError> {
+            let (request_type, length) = match data {
+                DataPhase::Out(bytes) => {
+                    (HOST_TO_DEVICE | VENDOR_REQUEST, bytes.len() as u16)
+                }
+                DataPhase::In(ref bytes) => {
+                    (DEVICE_TO_HOST | VENDOR_REQUEST, bytes.len() as u16)
+                }
+                DataPhase::None => (HOST_TO_DEVICE | VENDOR_REQUEST, 0),
+            };
+            self.bus
+                .control_transfer(
+                    self.device.address,
+                    self.info.packet_size_ep0,
+                    SetupPacket {
+                        bmRequestType: request_type,
+                        bRequest: request,
+                        wValue: value,
+                        wIndex: index,
+                        wLength: length,
+                    },
+                    data,
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn write_phy(
+            &self,
+            phy_id: u8,
+            reg: u8,
+            value: u16,
+        ) -> Result<(), UsbError> {
+            let data = value.to_le_bytes();
+
+            self.vendor_command(
+                0x8,
+                phy_id as u16,
+                reg as u16,
+                DataPhase::Out(&data),
+            )
+            .await?;
+            Ok(())
+        }
+
+        pub async fn init(&self) -> Result<(), UsbError> {
+            let mut data = [0u8; 6];
+            self.vendor_command(0x13, 0, 0, DataPhase::In(&mut data[0..6]))
+                .await?;
+
+            defmt::println!("AX88772 MAC {:x}", &data[0..6]);
+
+            self.vendor_command(0x19, 0, 0, DataPhase::In(&mut data[0..2]))
+                .await?;
+
+            defmt::println!("PHY id {:x} {:x}", data[0], data[1]);
+
+            // Select PHY
+            self.vendor_command(0x22, 1, 0, DataPhase::None).await?;
+
+            // Enable PHY
+            self.vendor_command(0x20, 0x28, 0, DataPhase::None).await?;
+
+            Mono::delay(150.millis()).await;
+
+            // Switch to SW PHY control
+            self.vendor_command(0x6, 0, 0, DataPhase::None).await?;
+
+            self.write_phy(0x10, MII_ADVERTISE, ADVERTISE_ALL).await?;
+            self.write_phy(0x10, MII_BMCR, BMCR_ANENABLE | BMCR_ANRESTART)
+                .await?;
+
+            // Switch back to HW PHY control
+            self.vendor_command(0xA, 0, 0, DataPhase::None).await?;
+
+            defmt::println!("AX88772 OK");
+
+            Ok(())
+        }
+    }
+
     #[task(local = [regs, dpram, resets], shared = [&shared], priority = 2)]
     async fn usb_task(cx: usb_task::Context) {
         static USB_STATICS: ConstStaticCell<UsbStatics> =
@@ -170,7 +281,7 @@ mod app {
                     .await;
                 if let Ok(_sz) = rc {
                     let total_length =
-                        u16::from_be_bytes([descriptors[2], descriptors[3]]);
+                        u16::from_le_bytes([descriptors[2], descriptors[3]]);
                     defmt::println!(
                         "{} bytes of configuration total",
                         total_length
@@ -202,29 +313,9 @@ mod app {
                 }
 
                 if info.vid == 0x0B95 && info.pid == 0x7720 {
-                    // ASIX AX88772
-                    defmt::trace!("fetching4");
-                    let rc = stack
-                        .control_transfer(
-                            device.address,
-                            info.packet_size_ep0,
-                            SetupPacket {
-                                bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
-                                bRequest: 0x13,
-                                wValue: 0,
-                                wIndex: 0,
-                                wLength: 6,
-                            },
-                            DataPhase::In(&mut descriptors),
-                        )
-                        .await;
-                    if let Ok(_sz) = rc {
-                        defmt::println!(
-                            "AX88772 MAC {:x}",
-                            &descriptors[0..6]
-                        );
-                    } else {
-                        defmt::println!("fetched {:?}", rc);
+                    let otge = AX88772::new(&stack, &device, &info);
+                    if let Err(e) = otge.init().await {
+                        defmt::println!("error {}", e);
                     }
                 }
             }

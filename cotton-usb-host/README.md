@@ -58,6 +58,13 @@ ports, are in fact multiple hubs in a trenchcoat.
 Library documentation is [on
 docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).
 
+## Known issues
+
+ - If two new devices are connected at the same time (to the same hub
+   or different ones), the second connection event might be lost.
+   (Specifically, if the second device enters the Connected state
+   while the first is still in the Resetting state -- which lasts for
+   10ms.)
 
 ## Using cotton-usb-host with a Raspberry&nbsp;Pi Pico
 

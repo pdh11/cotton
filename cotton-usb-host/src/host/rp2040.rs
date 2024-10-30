@@ -873,7 +873,7 @@ impl Rp2040HostController {
             w.send_setup().set_bit()
         });
 
-        defmt::println!("S ctrl->{:x}", self.regs.sie_ctrl().read().bits());
+        defmt::trace!("S ctrl->{:x}", self.regs.sie_ctrl().read().bits());
 
         cortex_m::asm::delay(12);
 
@@ -1005,7 +1005,7 @@ impl Rp2040HostController {
             if !started {
                 started = true;
 
-                defmt::println!(
+                defmt::trace!(
                     "len{} {} ctrl{:x}",
                     size,
                     direction,
@@ -1017,7 +1017,7 @@ impl Rp2040HostController {
                     w.send_setup().clear_bit()
                 });
 
-                defmt::println!(
+                defmt::trace!(
                     "ctrl->{:x}",
                     self.regs.sie_ctrl().read().bits()
                 );
