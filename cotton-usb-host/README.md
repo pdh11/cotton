@@ -144,7 +144,7 @@ TODO before merge
  - [x] Hub state machine
  - [x] Unit tests
  - [x] Interlocking to avoid contending on pipe 0
- - [ ] Rename types to wire
+ - [x] Rename types to wire
 
 TODO before 0.1.0:
 

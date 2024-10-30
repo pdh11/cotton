@@ -1,23 +1,42 @@
 use crate::bitset::{BitIterator, BitSet};
 use crate::debug;
-use crate::host_controller::{
-    DeviceStatus, HostController, InterruptPacket, MultiInterruptPipe,
-};
 use crate::interrupt::{InterruptStream, MultiInterruptStream};
 use crate::topology::Topology;
 use crate::wire::{
-    ConfigurationDescriptor, DescriptorVisitor, DeviceInfo,
-    EndpointDescriptor, HubDescriptor, SetupPacket, UsbDevice, UsbError,
-    UsbSpeed, CLASS_REQUEST, CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR,
-    DEVICE_DESCRIPTOR, DEVICE_TO_HOST, GET_DESCRIPTOR, GET_STATUS,
-    HOST_TO_DEVICE, HUB_CLASSCODE, HUB_DESCRIPTOR, PORT_POWER, PORT_RESET,
-    RECIPIENT_OTHER, SET_ADDRESS, SET_CONFIGURATION, SET_FEATURE,
+    ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
+    HubDescriptor, SetupPacket, CLASS_REQUEST, CLEAR_FEATURE,
+    CONFIGURATION_DESCRIPTOR, DEVICE_DESCRIPTOR, DEVICE_TO_HOST,
+    GET_DESCRIPTOR, GET_STATUS, HOST_TO_DEVICE, HUB_CLASSCODE, HUB_DESCRIPTOR,
+    PORT_POWER, PORT_RESET, RECIPIENT_OTHER, SET_ADDRESS, SET_CONFIGURATION,
+    SET_FEATURE,
 };
 use core::cell::RefCell;
 use futures::future::FutureExt;
 use futures::{Stream, StreamExt};
 
-pub use crate::host_controller::DataPhase;
+pub use crate::host_controller::{
+    DataPhase, DeviceStatus, HostController, InterruptPacket,
+    MultiInterruptPipe, UsbError, UsbSpeed,
+};
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub vid: u16,
+    pub pid: u16,
+    pub class: u8,
+    pub subclass: u8,
+    pub speed: UsbSpeed,
+    pub packet_size_ep0: u8,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
+pub struct UsbDevice {
+    pub address: u8,
+}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]

@@ -1,7 +1,6 @@
 use crate::host_controller::{
-    InterruptPacket, InterruptPipe, MultiInterruptPipe,
+    InterruptPacket, InterruptPipe, MultiInterruptPipe, UsbError,
 };
-use crate::wire::UsbError;
 use core::cell::RefCell;
 use core::pin::Pin;
 use core::task::{Context, Poll};

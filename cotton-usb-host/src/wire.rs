@@ -18,9 +18,9 @@ use crate::debug;
 /// USB-to-Ethernet adaptor:
 ///
 /// ```no_run
-/// # use cotton_usb_host::host_controller::{HostController, DataPhase};
-/// # use cotton_usb_host::usb_bus::UsbBus;
-/// # use cotton_usb_host::wire::{SetupPacket, UsbError, UsbDevice, DEVICE_TO_HOST, VENDOR_REQUEST, DeviceInfo};
+/// # use cotton_usb_host::host_controller::{UsbError, HostController, DataPhase};
+/// # use cotton_usb_host::usb_bus::{UsbBus, UsbDevice, DeviceInfo};
+/// # use cotton_usb_host::wire::{SetupPacket, DEVICE_TO_HOST, VENDOR_REQUEST};
 /// # use futures::{Stream, StreamExt};
 /// # async fn foo<HC: HostController>(bus: UsbBus<HC>, device: UsbDevice, info: DeviceInfo) {
 /// let mut data = [0u8; 6];
@@ -207,33 +207,6 @@ pub const PORT_POWER: u16 = 8;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum UsbError {
-    Nak,
-    Stall,
-    Timeout,
-    Overflow,
-    BitStuffError,
-    CrcError,
-    DataSeqError,
-    BufferTooSmall,
-    AllPipesInUse,
-    ProtocolError,
-    TooManyDevices,
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum UsbSpeed {
-    Low1_5,
-    Full12,
-    High480,
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum EndpointType {
     Control = 0,
     Isochronous = 1,
@@ -247,25 +220,6 @@ pub enum EndpointType {
 pub enum Direction {
     In,
     Out,
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct DeviceInfo {
-    pub vid: u16,
-    pub pid: u16,
-    pub class: u8,
-    pub subclass: u8,
-    pub speed: UsbSpeed,
-    pub packet_size_ep0: u8,
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "std", derive(Debug))]
-#[derive(PartialEq, Eq)]
-pub struct UsbDevice {
-    pub address: u8,
 }
 
 pub trait DescriptorVisitor {

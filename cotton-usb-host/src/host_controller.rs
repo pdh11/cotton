@@ -1,6 +1,33 @@
-use crate::wire::{SetupPacket, UsbError, UsbSpeed};
+use crate::wire::SetupPacket;
 use core::ops::Deref;
 use futures::Stream;
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UsbError {
+    Nak,
+    Stall,
+    Timeout,
+    Overflow,
+    BitStuffError,
+    CrcError,
+    DataSeqError,
+    BufferTooSmall,
+    AllPipesInUse,
+    ProtocolError,
+    TooManyDevices,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum UsbSpeed {
+    Low1_5,
+    Full12,
+    High480,
+}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
