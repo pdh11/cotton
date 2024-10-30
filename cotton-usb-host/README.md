@@ -40,7 +40,7 @@ Limitations:
 
  - maximum of 31 devices total (including hubs);
  - maximum of 15 hubs;
- - maximum of 8 ports on any one hub[^2];
+ - maximum of 15 ports on any one hub[^2];
  - supports Low Speed (1.5Mbits/s) and Full Speed (12Mbits/s)
    operation only -- not High Speed (480Mbits/s) or above.
 

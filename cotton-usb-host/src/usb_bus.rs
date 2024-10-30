@@ -1626,6 +1626,13 @@ mod tests {
         9
     }
 
+    fn giant_hub_descriptor(bytes: &mut [u8]) -> usize {
+        bytes[0] = 9;
+        bytes[1] = HUB_DESCRIPTOR;
+        bytes[2] = 15; // 15-port hub
+        11 // NB bigger than normal
+    }
+
     fn is_set_port_power<const ADDR: u8, const N: u8>(
         a: &u8,
         p: &u8,
@@ -1691,6 +1698,58 @@ mod tests {
             .expect_control_transfer()
             .times(1)
             .withf(is_set_port_power::<5, 2>)
+            .returning(control_transfer_ok::<0>);
+
+        let bus = UsbBus::new(hc);
+
+        let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+        let rr = r.poll(&mut c);
+        let rc = unwrap_poll(rr).unwrap();
+        assert!(rc.is_ok());
+    }
+
+    #[test]
+    fn new_hub_giant() {
+        let w = Waker::from(Arc::new(NoOpWaker));
+        let mut c = core::task::Context::from_waker(&w);
+
+        let mut hc = MockHostController::default();
+        hc.inner.expect_multi_interrupt_pipe().returning(|| {
+            let mut mip = MockMultiInterruptPipe::new();
+            mip.expect_try_add().returning(|_, _, _, _| Ok(()));
+            mip
+        });
+
+        // Call to get_basic_configuration
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_configuration_descriptor::<5>)
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| {
+                    example_config_descriptor(bytes);
+                });
+                Box::pin(future::ready(Ok(25)))
+            });
+
+        // Call to configure
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_set_configuration::<5, 1>)
+            .returning(control_transfer_ok::<0>);
+
+        // Get hub descriptor
+        hc.inner
+            .expect_control_transfer()
+            .times(1)
+            .withf(is_get_hub_descriptor::<5>)
+            .returning(control_transfer_ok_with(giant_hub_descriptor));
+
+        // Set port power x15
+        hc.inner
+            .expect_control_transfer()
+            .times(15)
             .returning(control_transfer_ok::<0>);
 
         let bus = UsbBus::new(hc);
