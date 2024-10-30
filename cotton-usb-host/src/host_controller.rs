@@ -1,4 +1,4 @@
-use crate::types::{SetupPacket, UsbError, UsbSpeed};
+use crate::wire::{SetupPacket, UsbError, UsbSpeed};
 use core::ops::Deref;
 use futures::Stream;
 

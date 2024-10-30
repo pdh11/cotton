@@ -3,7 +3,7 @@ use crate::host_controller::tests::{
     MockDeviceDetect, MockHostController, MockInterruptPipe,
     MockMultiInterruptPipe,
 };
-use crate::types::{
+use crate::wire::{
     EndpointDescriptor, InterfaceDescriptor, ENDPOINT_DESCRIPTOR,
     INTERFACE_DESCRIPTOR,
 };
@@ -119,7 +119,7 @@ fn unwrap_bad_poll() {
 #[test]
 fn basic_configuration() {
     let mut bc = BasicConfiguration::default();
-    crate::types::parse_descriptors(ELLA, &mut bc);
+    crate::wire::parse_descriptors(ELLA, &mut bc);
 
     assert_eq!(bc.configuration_value, 1);
     assert_eq!(bc.num_configurations, 1);

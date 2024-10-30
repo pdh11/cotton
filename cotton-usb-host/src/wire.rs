@@ -14,12 +14,13 @@ use crate::debug;
 /// Control transactions are performed using
 /// [`UsbBus::control_transfer()`](crate::usb_bus::UsbBus::control_transfer).
 ///
-/// For instance, here is how to read the MAC address of an AX88772 USB-to-Ethernet adaptor:
+/// For instance, here is how to read the MAC address of an AX88772
+/// USB-to-Ethernet adaptor:
 ///
 /// ```no_run
 /// # use cotton_usb_host::host_controller::{HostController, DataPhase};
 /// # use cotton_usb_host::usb_bus::UsbBus;
-/// # use cotton_usb_host::types::{SetupPacket, UsbError, UsbDevice, DEVICE_TO_HOST, VENDOR_REQUEST, DeviceInfo};
+/// # use cotton_usb_host::wire::{SetupPacket, UsbError, UsbDevice, DEVICE_TO_HOST, VENDOR_REQUEST, DeviceInfo};
 /// # use futures::{Stream, StreamExt};
 /// # async fn foo<HC: HostController>(bus: UsbBus<HC>, device: UsbDevice, info: DeviceInfo) {
 /// let mut data = [0u8; 6];

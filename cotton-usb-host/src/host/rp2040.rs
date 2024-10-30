@@ -2,9 +2,9 @@ use crate::async_pool::Pool;
 use crate::debug;
 use crate::host_controller::{
     DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    MultiInterruptPipe,
+    MultiInterruptPipe, UsbError, UsbSpeed,
 };
-use crate::types::{Direction, EndpointType, SetupPacket, UsbError, UsbSpeed};
+use crate::wire::{Direction, EndpointType, SetupPacket};
 use core::cell::Cell;
 use core::future::Future;
 use core::pin::Pin;

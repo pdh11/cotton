@@ -10,7 +10,7 @@ use rp_pico as _; // includes boot2
 mod app {
     use core::pin::pin;
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
-    use cotton_usb_host::types::{
+    use cotton_usb_host::wire::{
         parse_descriptors, ConfigurationDescriptor, SetupPacket,
         ShowDescriptors, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
         GET_DESCRIPTOR, VENDOR_REQUEST,

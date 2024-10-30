@@ -5,7 +5,7 @@ use crate::host_controller::{
 };
 use crate::interrupt::{InterruptStream, MultiInterruptStream};
 use crate::topology::Topology;
-use crate::types::{
+use crate::wire::{
     ConfigurationDescriptor, DescriptorVisitor, DeviceInfo,
     EndpointDescriptor, HubDescriptor, SetupPacket, UsbDevice, UsbError,
     UsbSpeed, CLASS_REQUEST, CLEAR_FEATURE, CONFIGURATION_DESCRIPTOR,
@@ -440,7 +440,7 @@ impl<HC: HostController> UsbBus<HC> {
             )
             .await?;
         let mut bd = BasicConfiguration::default();
-        crate::types::parse_descriptors(&buf[0..sz], &mut bd);
+        crate::wire::parse_descriptors(&buf[0..sz], &mut bd);
         if bd.num_configurations == 0 || bd.configuration_value == 0 {
             Err(UsbError::ProtocolError)
         } else {
