@@ -12,7 +12,7 @@ use crate::wire::{
 };
 use core::cell::RefCell;
 use futures::future::FutureExt;
-use futures::{Stream, StreamExt};
+use futures::{Future, Stream, StreamExt};
 
 pub use crate::host_controller::{
     DataPhase, DeviceStatus, HostController, InterruptPacket,
@@ -114,7 +114,6 @@ impl DescriptorVisitor for BasicConfiguration {
 #[derive(Default)]
 struct HubState {
     topology: Topology,
-    currently_resetting: Option<(u8, u8)>,
     //needs_reset: BitSet,
 }
 
@@ -161,16 +160,25 @@ impl<HC: HostController> UsbBus<HC> {
     /// # use cotton_usb_host::host_controller::HostController;
     /// # use std::pin::{pin, Pin};
     /// # use cotton_usb_host::usb_bus::UsbBus;
-    /// # use futures::{Stream, StreamExt};
+    /// # use futures::{future, Future, Stream, StreamExt};
+    /// # fn delay_ms(_ms: usize) -> impl Future<Output = ()> {
+    /// #  future::ready(())
+    /// # }
     /// # async fn foo<D: HostController>(driver: D) -> () {
     /// let bus = UsbBus::new(driver);
-    /// let mut device_stream = pin!(bus.device_events());
+    /// let mut device_stream = pin!(bus.device_events(delay_ms));
     /// loop {
     ///     let event = device_stream.next().await;
     ///     // ... process the event ...
     /// }
     /// # }
     /// ```
+    ///
+    /// You need to supply an implementation of the "delay" function which,
+    /// given a parameter in milliseconds, returns a Future that waits for
+    /// that long before coming ready. See the examples for how to implement
+    /// that (simple!) function for RTIC2 and for Embassy; other executors
+    /// will require their own implementations.
     ///
     /// When using this method, the cotton-usb-host crate itself takes
     /// care of detecting and configuring hubs, and of detecting
@@ -184,7 +192,13 @@ impl<HC: HostController> UsbBus<HC> {
     /// [`device_events_no_hubs()`](`UsbBus::device_events_no_hubs()`)
     /// instead of `device_events()` and get smaller, simpler code.
     ///
-    pub fn device_events(&self) -> impl Stream<Item = DeviceEvent> + '_ {
+    pub fn device_events<
+        D: Future<Output = ()>,
+        F: Fn(usize) -> D + 'static + Clone,
+        >(
+        &self,
+        delay_ms_in: F,
+    ) -> impl Stream<Item = DeviceEvent> + '_ {
         let root_device = self.driver.device_detect();
 
         enum InternalEvent {
@@ -199,10 +213,16 @@ impl<HC: HostController> UsbBus<HC> {
             }
             .map(InternalEvent::Packet),
         )
-        .then(move |ev| async move {
+            .then(move |ev| {
+                let delay_ms = delay_ms_in.clone();
+                async move {
             match ev {
                 InternalEvent::Root(status) => {
                     if let DeviceStatus::Present(speed) = status {
+                        self.driver.reset_root_port(true);
+                        delay_ms(50).await;
+                        self.driver.reset_root_port(false);
+                        delay_ms(10).await;
                         let info = match self.new_device(speed).await {
                             Ok(info) => info,
                             Err(e) => {
@@ -242,16 +262,16 @@ impl<HC: HostController> UsbBus<HC> {
                             .borrow_mut()
                             .topology
                             .device_disconnect(0, 1);
-                        // TODO: unset currently_resetting
                         DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                     }
                 }
                 InternalEvent::Packet(packet) => {
-                    self.handle_hub_packet(&packet).await.unwrap_or_else(|e| {
+                    self.handle_hub_packet(&packet, delay_ms).await.unwrap_or_else(|e| {
                         DeviceEvent::EnumerationError(0, 1, e)
                     })
                 }
             }
+                }
         })
     }
 
@@ -266,16 +286,25 @@ impl<HC: HostController> UsbBus<HC> {
     /// # use cotton_usb_host::host_controller::HostController;
     /// # use std::pin::{pin, Pin};
     /// # use cotton_usb_host::usb_bus::UsbBus;
-    /// # use futures::{Stream, StreamExt};
+    /// # use futures::{future, Future, Stream, StreamExt};
+    /// # fn delay_ms(_ms: usize) -> impl Future<Output = ()> {
+    /// #  future::ready(())
+    /// # }
     /// # async fn foo<D: HostController>(driver: D) -> () {
     /// let bus = UsbBus::new(driver);
-    /// let mut device_stream = pin!(bus.device_events_no_hubs());
+    /// let mut device_stream = pin!(bus.device_events_no_hubs(delay_ms));
     /// loop {
     ///     let event = device_stream.next().await;
     ///     // ... process the event ...
     /// }
     /// # }
     /// ```
+    ///
+    /// You need to supply an implementation of the "delay" function which,
+    /// given a parameter in milliseconds, returns a Future that waits for
+    /// that long before coming ready. See the examples for how to implement
+    /// that (simple!) function for RTIC2 and for Embassy; other executors
+    /// will require their own implementations.
     ///
     /// When using this method, the cotton-usb-host crate deals only with
     /// a single USB device attached directly to the USB host controller,
@@ -286,21 +315,32 @@ impl<HC: HostController> UsbBus<HC> {
     /// [`device_events()`](`UsbBus::device_events_no_hubs()`) instead
     /// of `device_events_no_hubs()`.
     ///
-    pub fn device_events_no_hubs(
+    pub fn device_events_no_hubs<
+        D: Future<Output = ()>,
+        F: Fn(usize) -> D + 'static + Clone,
+    >(
         &self,
+        delay_ms_in: F,
     ) -> impl Stream<Item = DeviceEvent> + '_ {
         let root_device = self.driver.device_detect();
-        root_device.then(move |status| async move {
-            if let DeviceStatus::Present(speed) = status {
-                match self.new_device(speed).await {
-                    Ok(info) => match self.set_address(1, &info).await {
-                        Ok(device) => DeviceEvent::Connect(device, info),
+        root_device.then(move |status| {
+            let delay_ms = delay_ms_in.clone();
+            async move {
+                if let DeviceStatus::Present(speed) = status {
+                    self.driver.reset_root_port(true);
+                    delay_ms(50).await;
+                    self.driver.reset_root_port(false);
+                    delay_ms(10).await;
+                    match self.new_device(speed).await {
+                        Ok(info) => match self.set_address(1, &info).await {
+                            Ok(device) => DeviceEvent::Connect(device, info),
+                            Err(e) => DeviceEvent::EnumerationError(0, 1, e),
+                        },
                         Err(e) => DeviceEvent::EnumerationError(0, 1, e),
-                    },
-                    Err(e) => DeviceEvent::EnumerationError(0, 1, e),
+                    }
+                } else {
+                    DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                 }
-            } else {
-                DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
             }
         })
     }
@@ -604,30 +644,19 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(())
     }
 
-    async fn handle_hub_packet(
+    async fn handle_hub_packet<
+        D: Future<Output = ()>,
+        F: Fn(usize) -> D + 'static + Clone,
+    >(
         &self,
         packet: &InterruptPacket,
+        delay_ms: F,
     ) -> Result<DeviceEvent, UsbError> {
         // Hub state machine: each hub must have each port powered,
         // then reset. But only one hub port on the whole *bus* can be
         // in reset at any one time, because it becomes sensitive to
         // address zero. So there needs to be a bus-wide hub state
         // machine.
-        //
-        // Idea: hubs get given addresses 1-15, so a bitmap of hubs
-        // fits in u16. Newly found hubs get their interrupt EP added
-        // to the waker, and all their ports powered. Ports that see a
-        // C_PORT_CONNECTION get the parent hub added to a bitmap of
-        // "hubs needing resetting". When no port is currently in
-        // reset, a hub is removed from the bitmap, and a port counter
-        // (1..=N) is set up; each port in turn has GetStatus called,
-        // and on returning CONNECTION but not ENABLE, the port is
-        // reset. (Not connected or already enabled means progress to
-        // the next port, then the next hub.)
-        //
-        // On a reset complete, give the new device an address (1-15
-        // if it, too, is a hub) and then again proceed to the next
-        // port, then the next hub.
 
         debug::println!(
             "Hub int {} [{}; {}]",
@@ -680,62 +709,52 @@ impl<HC: HostController> UsbBus<HC> {
                             .topology
                             .device_disconnect(packet.address, port);
 
-                        // TODO: unset currently_resetting if it's in the list
                         return Ok(DeviceEvent::Disconnect(BitSet(mask)));
                     }
 
                     // now connected
-                    if self.hub_state.borrow().currently_resetting.is_none() {
-                        self.set_port_feature(
-                            packet.address,
-                            port,
-                            PORT_RESET,
-                        )
+                    self.set_port_feature(
+                        packet.address,
+                        port,
+                        PORT_RESET,
+                    )
                         .await?;
-                        self.hub_state.borrow_mut().currently_resetting =
-                            Some((packet.address, port));
 
-                        // wait for the reset to complete (we'll be called
-                        // again with C_PORT_RESET)
-                        return Ok(DeviceEvent::None);
-                    } else {
-                        // TODO: queue hub for future investigation
-                    }
-                }
-                if bit == 4 {
-                    // C_PORT_RESET -- "This bit is set when the port
-                    // transitions [...] to the Enabled state"
+                    delay_ms(50).await;
 
-                    // USB 2.0 table 11-21
-                    let speed = match state & 0x600 {
-                        0 => UsbSpeed::Full12,
-                        0x400 => UsbSpeed::High480,
-                        _ => UsbSpeed::Low1_5,
-                    };
+                    let (state, _changes) =
+                        self.get_hub_port_status(packet.address, port).await?;
 
-                    let info = self.new_device(speed).await?;
-                    let is_hub = info.class == HUB_CLASSCODE;
-                    let address = {
-                        let mut state = self.hub_state.borrow_mut();
-                        state.currently_resetting = None;
-                        state
+                    if (state & 2) != 0 {
+                        // port is now ENABLED i.e. operational
+
+                        // USB 2.0 table 11-21
+                        let speed = match state & 0x600 {
+                            0 => UsbSpeed::Full12,
+                            0x400 => UsbSpeed::High480,
+                            _ => UsbSpeed::Low1_5,
+                        };
+
+                        let info = self.new_device(speed).await?;
+                        let is_hub = info.class == HUB_CLASSCODE;
+                        let address = {
+                            let mut state = self.hub_state.borrow_mut();
+                            state
                             .topology
-                            .device_connect(packet.address, port, is_hub)
+                                .device_connect(packet.address, port, is_hub)
                             .ok_or(UsbError::TooManyDevices)?
-                    };
-                    let device = self.set_address(address, &info).await?;
-                    if is_hub {
-                        debug::println!("It's a hub");
-                        self.new_hub(&device, &info).await?;
+                        };
+                        let device = self.set_address(address, &info).await?;
+                        if is_hub {
+                            debug::println!("It's a hub");
+                            self.new_hub(&device, &info).await?;
+                        }
+
+                        return Ok(DeviceEvent::Connect(device, info));
                     }
-
-                    // TODO: can we reset another port now?
-
-                    return Ok(DeviceEvent::Connect(device, info));
                 }
             }
         }
-        // TODO: if we get here, does some other port need resetting?
         Ok(DeviceEvent::None)
     }
 }

@@ -123,6 +123,8 @@ pub trait HostController {
 
     fn device_detect(&self) -> Self::DeviceDetect;
 
+    fn reset_root_port(&self, rst: bool);
+
     fn control_transfer<'a>(
         &self,
         address: u8,
@@ -199,6 +201,8 @@ pub mod tests {
         pub HostControllerInner {
             pub fn device_detect(&self) -> MockDeviceDetect;
 
+            pub fn reset_root_port(&self, rst: bool);
+
             pub fn control_transfer<'a>(
                 &self,
                 address: u8,
@@ -239,6 +243,10 @@ pub mod tests {
 
         fn device_detect(&self) -> Self::DeviceDetect {
             self.inner.device_detect()
+        }
+
+        fn reset_root_port(&self, rst: bool) {
+            self.inner.reset_root_port(rst);
         }
 
         fn control_transfer<'a>(

@@ -152,6 +152,7 @@ TODO before merge
  - [x] Unit tests
  - [x] Interlocking to avoid contending on pipe 0
  - [x] Rename types to wire
+ - [ ] Introduce delay to process_hub_packet and do away with currently_resetting
 
 TODO before 0.1.0:
 

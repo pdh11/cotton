@@ -1173,6 +1173,13 @@ impl HostController for Rp2040HostController {
         Rp2040DeviceDetect::new(&self.shared.device_waker)
     }
 
+    fn reset_root_port(&self, rst: bool) {
+        if rst {
+            self.regs.sie_ctrl().modify(|_, w| w.reset_bus().set_bit());
+        }
+        // SIE_CTRL.RESET_BUS clears itself when done
+    }
+
     async fn control_transfer<'a>(
         &self,
         address: u8,

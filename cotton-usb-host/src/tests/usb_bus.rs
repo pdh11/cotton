@@ -19,6 +19,22 @@ impl Wake for NoOpWaker {
     fn wake(self: Arc<Self>) {}
 }
 
+fn no_delay(_ms: usize) -> impl Future<Output = ()> {
+    future::ready(())
+}
+
+fn long_delay(_ms: usize) -> impl Future<Output = ()> {
+    future::pending()
+}
+
+fn short_delay(ms: usize) -> impl Future<Output = ()> {
+    if ms > 20 {
+        future::Either::Left(future::ready(()))
+    } else {
+        future::Either::Right(future::pending())
+    }
+}
+
 const ELLA: &[u8] = &[
     9, 2, 180, 1, 5, 1, 0, 128, 250, 9, 4, 0, 0, 4, 255, 0, 3, 0, 12, 95, 1,
     0, 10, 0, 4, 4, 1, 0, 4, 0, 7, 5, 2, 2, 0, 2, 0, 7, 5, 8, 2, 0, 2, 0, 7,
@@ -1319,7 +1335,7 @@ fn handle_hub_packet_empty() {
 
     let mut p = InterruptPacket::new();
     p.size = 1;
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1391,7 +1407,7 @@ fn handle_hub_packet_connection() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
@@ -1412,19 +1428,60 @@ fn handle_hub_packet_connection() {
         .withf(is_clear_port_feature::<1, 16>)
         .returning(control_transfer_ok::<0>);
 
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<3, 0>));
+
+    // new_device(): first call (wLength == 8)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_device_descriptor::<8>)
+        .returning(control_transfer_ok_with(device_descriptor_prefix));
+
+    // new_device(): Second call (wLength == 18)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_device_descriptor::<18>)
+        .returning(control_transfer_ok_with(device_descriptor));
+
+    // Set address (31)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_set_address::<31>)
+        .returning(control_transfer_ok::<0>);
+
+    // The new device is NOT a hub so we're now done
+
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
-    assert_eq!(result, Ok(DeviceEvent::None));
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, Some((5, 1)));
+    assert_eq!(
+        result,
+        Ok(DeviceEvent::Connect(
+            UsbDevice { address: 31 },
+            DeviceInfo {
+                vid: 0x1234,
+                pid: 0x5678,
+                class: 0,
+                subclass: 0,
+                speed: UsbSpeed::Full12,
+                packet_size_ep0: 8
+            }
+        ))
+    );
 }
 
 #[test]
@@ -1450,7 +1507,7 @@ fn handle_hub_packet_no_changes() {
     p.size = 2;
     p.data[0] = 0;
     p.data[1] = 1; // bit 8 set => port 8 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1480,7 +1537,7 @@ fn handle_hub_packet_crazy_changes() {
     p.size = 2;
     p.data[0] = 0;
     p.data[1] = 1; // bit 8 set => port 8 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1509,7 +1566,7 @@ fn handle_hub_packet_connection_status_fails() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1538,7 +1595,7 @@ fn handle_hub_packet_connection_status_pends() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1575,7 +1632,7 @@ fn handle_hub_packet_connection_clear_fails() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1611,7 +1668,7 @@ fn handle_hub_packet_connection_clear_pends() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1655,13 +1712,11 @@ fn handle_hub_packet_connection_set_fails() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Err(UsbError::Timeout));
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
 }
 
 #[test]
@@ -1700,7 +1755,7 @@ fn handle_hub_packet_connection_set_pends() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1708,8 +1763,9 @@ fn handle_hub_packet_connection_set_pends() {
     assert!(poll.is_pending());
 }
 
+
 #[test]
-fn handle_hub_packet_connection_queued() {
+fn handle_hub_packet_connection_second_status_fails() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -1717,12 +1773,69 @@ fn handle_hub_packet_connection_queued() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_ok_with(port_status::<1, 1>));
+
+    // Set PORT_RESET
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_set_port_feature::<1, 4>)
+        .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_timeout);
+
+    let bus = UsbBus::new(hc);
+
+    let mut p = InterruptPacket::new();
+    p.address = 5;
+    p.size = 1;
+    p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+
+    let poll = fut.poll(&mut c);
+    let result = unwrap_poll(poll).unwrap();
+    assert_eq!(result, Err(UsbError::Timeout));
+}
+
+#[test]
+fn handle_hub_packet_connection_delay_pends() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+
+    // Get port status (connected)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<1, 1>));
+
+    // Set PORT_RESET
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_set_port_feature::<1, 4>)
+        .returning(control_transfer_ok::<0>);
 
     // Clear C_PORT_CONNECTION
     hc.inner
@@ -1733,19 +1846,116 @@ fn handle_hub_packet_connection_queued() {
 
     let bus = UsbBus::new(hc);
 
-    bus.hub_state.borrow_mut().currently_resetting = Some((4, 4));
+    let mut p = InterruptPacket::new();
+    p.address = 5;
+    p.size = 1;
+    p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+    let mut fut = pin!(bus.handle_hub_packet(&p, long_delay));
+
+    let poll = fut.as_mut().poll(&mut c);
+    assert!(poll.is_pending());
+    let poll = fut.as_mut().poll(&mut c);
+    assert!(poll.is_pending());
+}
+
+#[test]
+fn handle_hub_packet_connection_second_status_pends() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+
+    // Get port status (connected)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<1, 1>));
+
+    // Set PORT_RESET
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_set_port_feature::<1, 4>)
+        .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_pending);
+
+    let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
+    let poll = fut.as_mut().poll(&mut c);
+    assert!(poll.is_pending());
+    let poll = fut.as_mut().poll(&mut c);
+    assert!(poll.is_pending());
+}
+
+#[test]
+fn handle_hub_packet_connection_second_status_not_connected() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+
+    // Get port status (connected)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<1, 1>));
+
+    // Set PORT_RESET
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_set_port_feature::<1, 4>)
+        .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0, 0>));
+
+    let bus = UsbBus::new(hc);
+
+    let mut p = InterruptPacket::new();
+    p.address = 5;
+    p.size = 1;
+    p.data[0] = 0b10; // bit 1 set => port 1 needs attention
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Ok(DeviceEvent::None));
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, Some((4, 4)));
 }
 
 #[test]
@@ -1790,91 +2000,17 @@ fn handle_hub_packet_disconnection() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Ok(DeviceEvent::Disconnect(BitSet(0x8000_0000))));
 }
 
-#[test]
-fn handle_hub_packet_enabled() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
-    let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
-
-    // Get port status
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
-
-    // Clear C_PORT_RESET
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
-        .returning(control_transfer_ok::<0>);
-
-    // new_device(): first call (wLength == 8)
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_get_device_descriptor::<8>)
-        .returning(control_transfer_ok_with(device_descriptor_prefix));
-
-    // new_device(): Second call (wLength == 18)
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_get_device_descriptor::<18>)
-        .returning(control_transfer_ok_with(device_descriptor));
-
-    // Set address (31)
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_set_address::<31>)
-        .returning(control_transfer_ok::<0>);
-
-    // The new device is NOT a hub so we're now done
-
-    let bus = UsbBus::new(hc);
-
-    let mut p = InterruptPacket::new();
-    p.address = 5;
-    p.size = 1;
-    p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
-
-    let poll = fut.poll(&mut c);
-    let result = unwrap_poll(poll).unwrap();
-    assert_eq!(
-        result,
-        Ok(DeviceEvent::Connect(
-            UsbDevice { address: 31 },
-            DeviceInfo {
-                vid: 0x1234,
-                pid: 0x5678,
-                class: 0,
-                subclass: 0,
-                speed: UsbSpeed::Full12,
-                packet_size_ep0: 8
-            }
-        ))
-    );
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
-}
-
 // A bit unlikely as we only have FS hardware, but the protocol
 // allows for it
 #[test]
-fn handle_hub_packet_enabled_high_speed() {
+fn handle_hub_packet_connected_high_speed() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -1882,19 +2018,33 @@ fn handle_hub_packet_enabled_high_speed() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x411, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x411, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x413, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -1925,7 +2075,7 @@ fn handle_hub_packet_enabled_high_speed() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1943,12 +2093,10 @@ fn handle_hub_packet_enabled_high_speed() {
             }
         ))
     );
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
 }
 
 #[test]
-fn handle_hub_packet_enabled_low_speed() {
+fn handle_hub_packet_connected_low_speed() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -1956,19 +2104,33 @@ fn handle_hub_packet_enabled_low_speed() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x211, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x211, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x213, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -1999,7 +2161,7 @@ fn handle_hub_packet_enabled_low_speed() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2017,8 +2179,6 @@ fn handle_hub_packet_enabled_low_speed() {
             }
         ))
     );
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
 }
 
 #[test]
@@ -2050,13 +2210,11 @@ fn handle_hub_packet_enabled_port_reset_fails() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Err(UsbError::Timeout));
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
 }
 
 #[test]
@@ -2088,18 +2246,16 @@ fn handle_hub_packet_enabled_port_reset_pends() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
 }
 
 #[test]
-fn handle_hub_packet_enabled_new_device_fails() {
+fn handle_hub_packet_connected_new_device_fails() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -2107,19 +2263,33 @@ fn handle_hub_packet_enabled_new_device_fails() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x211, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x213, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2134,17 +2304,15 @@ fn handle_hub_packet_enabled_new_device_fails() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Err(UsbError::Timeout));
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
 }
 
 #[test]
-fn handle_hub_packet_enabled_new_device_pends() {
+fn handle_hub_packet_connected_new_device_pends() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -2152,19 +2320,33 @@ fn handle_hub_packet_enabled_new_device_pends() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x211, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x213, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2179,7 +2361,7 @@ fn handle_hub_packet_enabled_new_device_pends() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -2196,19 +2378,34 @@ fn handle_hub_packet_enabled_set_address_fails() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x11, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x13, 0>));
+
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2239,7 +2436,7 @@ fn handle_hub_packet_enabled_set_address_fails() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2247,7 +2444,7 @@ fn handle_hub_packet_enabled_set_address_fails() {
 }
 
 #[test]
-fn handle_hub_packet_enabled_set_address_pends() {
+fn handle_hub_packet_connected_set_address_pends() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -2255,19 +2452,33 @@ fn handle_hub_packet_enabled_set_address_pends() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x11, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x13, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2298,7 +2509,7 @@ fn handle_hub_packet_enabled_set_address_pends() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -2324,7 +2535,7 @@ fn device_descriptor_hub(bytes: &mut [u8]) -> usize {
 }
 
 #[test]
-fn handle_hub_packet_enabled_hub() {
+fn handle_hub_packet_connected_hub() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -2334,19 +2545,33 @@ fn handle_hub_packet_enabled_hub() {
         mip
     });
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x11, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x13, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2413,7 +2638,7 @@ fn handle_hub_packet_enabled_hub() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2431,12 +2656,10 @@ fn handle_hub_packet_enabled_hub() {
             }
         ))
     );
-
-    assert_eq!(bus.hub_state.borrow().currently_resetting, None);
 }
 
 #[test]
-fn handle_hub_packet_enabled_hub_new_hub_fails() {
+fn handle_hub_packet_connected_hub_new_hub_fails() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -2444,19 +2667,33 @@ fn handle_hub_packet_enabled_hub_new_hub_fails() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x11, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x13, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2492,7 +2729,7 @@ fn handle_hub_packet_enabled_hub_new_hub_fails() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2500,7 +2737,7 @@ fn handle_hub_packet_enabled_hub_new_hub_fails() {
 }
 
 #[test]
-fn handle_hub_packet_enabled_hub_new_hub_pends() {
+fn handle_hub_packet_connected_hub_new_hub_pends() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
     let mut hc = MockHostController::default();
@@ -2508,19 +2745,33 @@ fn handle_hub_packet_enabled_hub_new_hub_pends() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x11, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x13, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2556,7 +2807,7 @@ fn handle_hub_packet_enabled_hub_new_hub_pends() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p));
+    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -2573,19 +2824,33 @@ fn handle_hub_packet_enabled_too_many_devices() {
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
 
-    // Get port status
+    // Get port status (connected)
     hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_get_port_status::<1>)
-        .returning(control_transfer_ok_with(port_status::<0x11, 0x10>));
+        .returning(control_transfer_ok_with(port_status::<0x11, 1>));
 
-    // Clear C_PORT_RESET
+    // Set PORT_RESET
     hc.inner
         .expect_control_transfer()
         .times(1)
-        .withf(is_clear_port_feature::<1, 20>)
+        .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_ok::<0>);
+
+    // Clear C_PORT_CONNECTION
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_clear_port_feature::<1, 16>)
+        .returning(control_transfer_ok::<0>);
+
+    // Get port status again (enabled)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_port_status::<1>)
+        .returning(control_transfer_ok_with(port_status::<0x13, 0>));
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2614,7 +2879,7 @@ fn handle_hub_packet_enabled_too_many_devices() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p));
+    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Err(UsbError::TooManyDevices));
@@ -2635,6 +2900,9 @@ fn device_events_nh() {
         });
         mdd
     });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2659,7 +2927,7 @@ fn device_events_nh() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events_no_hubs());
+    let stream = pin!(bus.device_events_no_hubs(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2680,6 +2948,63 @@ fn device_events_nh() {
 }
 
 #[test]
+fn device_events_nh_first_delay_pends() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_device_detect().returning(|| {
+        let mut mdd = MockDeviceDetect::new();
+        mdd.expect_poll_next().returning(|_| {
+            Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+        });
+        mdd
+    });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+
+    let bus = UsbBus::new(hc);
+
+    let mut stream = pin!(bus.device_events_no_hubs(long_delay));
+
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+}
+
+#[test]
+fn device_events_nh_second_delay_pends() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_device_detect().returning(|| {
+        let mut mdd = MockDeviceDetect::new();
+        mdd.expect_poll_next().returning(|_| {
+            Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+        });
+        mdd
+    });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
+    let bus = UsbBus::new(hc);
+
+    let mut stream = pin!(bus.device_events_no_hubs(short_delay));
+
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+}
+
+#[test]
 fn device_events_nh_new_device_fails() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
@@ -2695,6 +3020,9 @@ fn device_events_nh_new_device_fails() {
         mdd
     });
 
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -2704,7 +3032,7 @@ fn device_events_nh_new_device_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events_no_hubs());
+    let stream = pin!(bus.device_events_no_hubs(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2730,6 +3058,9 @@ fn device_events_nh_new_device_pends() {
         mdd
     });
 
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -2739,7 +3070,7 @@ fn device_events_nh_new_device_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events_no_hubs());
+    let mut stream = pin!(bus.device_events_no_hubs(no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -2762,6 +3093,9 @@ fn device_events_nh_set_address_fails() {
         });
         mdd
     });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2786,7 +3120,7 @@ fn device_events_nh_set_address_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events_no_hubs());
+    let stream = pin!(bus.device_events_no_hubs(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2812,6 +3146,9 @@ fn device_events_nh_set_address_pends() {
         mdd
     });
 
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -2835,7 +3172,7 @@ fn device_events_nh_set_address_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events_no_hubs());
+    let mut stream = pin!(bus.device_events_no_hubs(no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -2860,7 +3197,7 @@ fn device_events_nh_disconnect() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events_no_hubs());
+    let stream = pin!(bus.device_events_no_hubs(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2882,6 +3219,9 @@ fn device_events_root_connect() {
         });
         mdd
     });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2906,7 +3246,7 @@ fn device_events_root_connect() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2927,6 +3267,63 @@ fn device_events_root_connect() {
 }
 
 #[test]
+fn device_events_first_delay_pends() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_device_detect().returning(|| {
+        let mut mdd = MockDeviceDetect::new();
+        mdd.expect_poll_next().returning(|_| {
+            Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+        });
+        mdd
+    });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+
+    let bus = UsbBus::new(hc);
+
+    let mut stream = pin!(bus.device_events(long_delay));
+
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+}
+
+#[test]
+fn device_events_second_delay_pends() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_device_detect().returning(|| {
+        let mut mdd = MockDeviceDetect::new();
+        mdd.expect_poll_next().returning(|_| {
+            Poll::Ready(Some(DeviceStatus::Present(UsbSpeed::Full12)))
+        });
+        mdd
+    });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
+    let bus = UsbBus::new(hc);
+
+    let mut stream = pin!(bus.device_events(short_delay));
+
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+    let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+}
+
+#[test]
 fn device_events_new_device_fails() {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
@@ -2942,6 +3339,9 @@ fn device_events_new_device_fails() {
         mdd
     });
 
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -2951,7 +3351,7 @@ fn device_events_new_device_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2977,6 +3377,9 @@ fn device_events_new_device_pends() {
         mdd
     });
 
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -2986,7 +3389,7 @@ fn device_events_new_device_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events());
+    let mut stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3009,6 +3412,9 @@ fn device_events_set_address_fails() {
         });
         mdd
     });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3033,7 +3439,7 @@ fn device_events_set_address_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3059,6 +3465,9 @@ fn device_events_set_address_pends() {
         mdd
     });
 
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -3082,7 +3491,7 @@ fn device_events_set_address_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events());
+    let mut stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3107,7 +3516,7 @@ fn device_events_root_disconnect() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3131,6 +3540,9 @@ fn device_events_root_connect_is_hub() {
         });
         mdd
     });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3193,7 +3605,7 @@ fn device_events_root_connect_is_hub() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3229,6 +3641,9 @@ fn device_events_root_connect_new_hub_fails() {
         mdd
     });
 
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -3259,7 +3674,7 @@ fn device_events_root_connect_new_hub_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3284,6 +3699,9 @@ fn device_events_root_connect_new_hub_pends() {
         });
         mdd
     });
+
+    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3315,7 +3733,7 @@ fn device_events_root_connect_new_hub_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events());
+    let mut stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3346,7 +3764,7 @@ fn device_events_hub_packet() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3374,7 +3792,7 @@ fn device_events_hub_packet_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events());
+    let stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3415,7 +3833,7 @@ fn device_events_hub_packet_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events());
+    let mut stream = pin!(bus.device_events(no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());

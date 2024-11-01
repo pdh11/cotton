@@ -8,6 +8,7 @@ use rp_pico as _; // includes boot2
 
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
+    use core::future::Future;
     use core::pin::pin;
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
@@ -227,6 +228,12 @@ mod app {
         }
     }
 
+    fn rtic_delay(ms: usize) -> impl Future<Output = ()> {
+        Mono::delay(<Mono as rtic_monotonics::Monotonic>::Duration::millis(
+            ms as u64,
+        ))
+    }
+
     #[task(local = [regs, dpram, resets], shared = [&shared], priority = 2)]
     async fn usb_task(cx: usb_task::Context) {
         static USB_STATICS: ConstStaticCell<UsbStatics> =
@@ -242,7 +249,7 @@ mod app {
         );
         let stack = UsbBus::new(driver);
 
-        let mut p = pin!(stack.device_events());
+        let mut p = pin!(stack.device_events(rtic_delay));
 
         loop {
             let device = p.next().await;
