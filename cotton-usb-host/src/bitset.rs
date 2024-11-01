@@ -67,15 +67,14 @@ mod tests {
 
     #[test]
     fn set() {
-        let mut bs = BitSet::new();
+        let mut bs = BitSet::default();
         bs.set(4);
         assert_eq!(bs.0, 1 << 4);
     }
 
     #[test]
     fn clear() {
-        let mut bs = BitSet::default();
-        bs.0 = 0xFFFF;
+        let mut bs = BitSet(0xFFFF);
         bs.clear(7);
         assert_eq!(bs.0, 0xFF7F);
     }

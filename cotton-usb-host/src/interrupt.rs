@@ -114,7 +114,7 @@ mod tests {
         let stm = InterruptStream { pipe: ip };
 
         let stm = pin!(stm);
-        c.waker().clone().wake();
+        c.waker().wake_by_ref();
         let r = stm.poll_next(&mut c);
         assert!(r.is_ready());
     }

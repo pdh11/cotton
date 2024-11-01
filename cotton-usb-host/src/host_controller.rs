@@ -294,7 +294,7 @@ pub mod tests {
         let mut p = InterruptPacket::new();
         p.size = 10;
         p.data[9] = 1;
-        assert_eq!((&p).len(), 10);
+        assert_eq!(p.len(), 10);
         assert_eq!((&p)[9], 1);
     }
 

@@ -263,7 +263,7 @@ mod tests {
             if d.is_none() {
                 break;
             }
-            hubs = hubs + 1;
+            hubs += 1;
         }
         assert_eq!(hubs, 15);
         assert_eq!(
@@ -283,7 +283,7 @@ mod tests {
             if d.is_none() {
                 break;
             }
-            devices = devices + 1;
+            devices += 1;
         }
         assert_eq!(devices, 31);
         assert_eq!(format!("{:?}", bus), "0:(1:(3 5 7 9 11 13 15 17 19 21 23 25 27 29 31) 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30)"
