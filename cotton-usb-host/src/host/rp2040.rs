@@ -136,10 +136,10 @@ impl Stream for Rp2040DeviceDetect {
 
         if device_status != self.status {
             defmt::println!(
-                "DE ready {:x} {}/{}",
+                "DE ready {:x} {}->{}",
                 status.bits(),
+                self.status,
                 device_status,
-                self.status
             );
             regs.inte().modify(|_, w| w.host_conn_dis().set_bit());
             self.status = device_status;
@@ -475,7 +475,7 @@ impl InPacketiser {
             next_prep: 0,
             remain,
             packet_size,
-            need_zero_size_packet: (remain % packet_size) == 0,
+            need_zero_size_packet: remain == 0, // !is_control && (remain % packet_size) == 0,
         }
     }
 
@@ -494,7 +494,7 @@ impl InPacketiser {
         if self.remain > self.packet_size {
             return Some((self.packet_size, false));
         }
-        Some((self.remain, false))
+        Some((self.remain, !self.need_zero_size_packet))
     }
 }
 
@@ -506,7 +506,7 @@ impl Packetiser for InPacketiser {
                 if !val.available_0().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
                         self.remain -= this_packet;
-                        //defmt::info!("Prepared {}-byte space", this_packet);
+                        //defmt::info!("Prepared {}-byte space last {}", this_packet, is_last);
                         reg.modify(|_, w| {
                             w.full_0().clear_bit();
                             w.pid_0().set_bit();
@@ -528,7 +528,7 @@ impl Packetiser for InPacketiser {
                 if !val.available_1().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
                         self.remain -= this_packet;
-                        //defmt::info!("Prepared {}-byte space", this_packet);
+                        //defmt::info!("Prepared {}-byte space last {}", this_packet, is_last);
                         reg.modify(|_, w| {
                             w.full_1().clear_bit();
                             w.pid_1().clear_bit();
