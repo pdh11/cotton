@@ -58,14 +58,6 @@ ports, are in fact multiple hubs in a trenchcoat.
 Library documentation is [on
 docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).
 
-## Known issues
-
- - If two new devices are connected at the same time (to the same hub
-   or different ones), the second connection event might be lost.
-   (Specifically, if the second device enters the Connected state
-   while the first is still in the Resetting state -- which lasts for
-   10ms.)
-
 ## Using cotton-usb-host with a Raspberry&nbsp;Pi Pico
 
 This crate supports USB host mode _only_, and not USB device mode. So
@@ -152,11 +144,12 @@ TODO before merge
  - [x] Unit tests
  - [x] Interlocking to avoid contending on pipe 0
  - [x] Rename types to wire
- - [ ] Introduce delay to process_hub_packet and do away with currently_resetting
+ - [x] Introduce delay to process_hub_packet and do away with currently_resetting
 
 TODO before 0.1.0:
 
- - [ ] System test
+ - [x] System test
+ - [ ] Allocate endpoints from device object? UnconfiguredDevice/Device?
  - [ ] Bulk in/out
  - [ ] doc-comments
  - [ ] At least one real example (MSC? HID?)

@@ -125,12 +125,12 @@ pub trait HostController {
 
     fn reset_root_port(&self, rst: bool);
 
-    fn control_transfer<'a>(
+    fn control_transfer(
         &self,
         address: u8,
         packet_size: u8,
         setup: SetupPacket,
-        data_phase: DataPhase<'a>,
+        data_phase: DataPhase<'_>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
     fn alloc_interrupt_pipe(

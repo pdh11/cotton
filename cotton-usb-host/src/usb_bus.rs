@@ -195,7 +195,7 @@ impl<HC: HostController> UsbBus<HC> {
     pub fn device_events<
         D: Future<Output = ()>,
         F: Fn(usize) -> D + 'static + Clone,
-        >(
+    >(
         &self,
         delay_ms_in: F,
     ) -> impl Stream<Item = DeviceEvent> + '_ {
@@ -213,65 +213,68 @@ impl<HC: HostController> UsbBus<HC> {
             }
             .map(InternalEvent::Packet),
         )
-            .then(move |ev| {
-                let delay_ms = delay_ms_in.clone();
-                async move {
-            match ev {
-                InternalEvent::Root(status) => {
-                    if let DeviceStatus::Present(speed) = status {
-                        self.driver.reset_root_port(true);
-                        delay_ms(50).await;
-                        self.driver.reset_root_port(false);
-                        delay_ms(10).await;
-                        let info = match self.new_device(speed).await {
-                            Ok(info) => info,
-                            Err(e) => {
-                                return DeviceEvent::EnumerationError(0, 1, e)
-                            }
-                        };
-                        let is_hub = info.class == HUB_CLASSCODE;
-                        let address = self
-                            .hub_state
-                            .borrow_mut()
-                            .topology
-                            .device_connect(0, 1, is_hub)
-                            .expect("Root connect should always succeed");
-                        let device = match self
-                            .set_address(address, &info)
-                            .await
-                        {
-                            Ok(device) => device,
-                            Err(e) => {
-                                return DeviceEvent::EnumerationError(0, 1, e);
-                            }
-                        };
-                        if is_hub {
-                            debug::println!("It's a hub");
-                            match self.new_hub(&device, &info).await {
-                                Ok(()) => (),
+        .then(move |ev| {
+            let delay_ms = delay_ms_in.clone();
+            async move {
+                match ev {
+                    InternalEvent::Root(status) => {
+                        if let DeviceStatus::Present(speed) = status {
+                            self.driver.reset_root_port(true);
+                            delay_ms(50).await;
+                            self.driver.reset_root_port(false);
+                            delay_ms(10).await;
+                            let info = match self.new_device(speed).await {
+                                Ok(info) => info,
                                 Err(e) => {
                                     return DeviceEvent::EnumerationError(
                                         0, 1, e,
                                     )
                                 }
                             };
+                            let is_hub = info.class == HUB_CLASSCODE;
+                            let address = self
+                                .hub_state
+                                .borrow_mut()
+                                .topology
+                                .device_connect(0, 1, is_hub)
+                                .expect("Root connect should always succeed");
+                            let device =
+                                match self.set_address(address, &info).await {
+                                    Ok(device) => device,
+                                    Err(e) => {
+                                        return DeviceEvent::EnumerationError(
+                                            0, 1, e,
+                                        );
+                                    }
+                                };
+                            if is_hub {
+                                debug::println!("It's a hub");
+                                match self.new_hub(&device, &info).await {
+                                    Ok(()) => (),
+                                    Err(e) => {
+                                        return DeviceEvent::EnumerationError(
+                                            0, 1, e,
+                                        )
+                                    }
+                                };
+                            }
+                            DeviceEvent::Connect(device, info)
+                        } else {
+                            self.hub_state
+                                .borrow_mut()
+                                .topology
+                                .device_disconnect(0, 1);
+                            DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                         }
-                        DeviceEvent::Connect(device, info)
-                    } else {
-                        self.hub_state
-                            .borrow_mut()
-                            .topology
-                            .device_disconnect(0, 1);
-                        DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                     }
-                }
-                InternalEvent::Packet(packet) => {
-                    self.handle_hub_packet(&packet, delay_ms).await.unwrap_or_else(|e| {
-                        DeviceEvent::EnumerationError(0, 1, e)
-                    })
+                    InternalEvent::Packet(packet) => self
+                        .handle_hub_packet(&packet, delay_ms)
+                        .await
+                        .unwrap_or_else(|e| {
+                            DeviceEvent::EnumerationError(0, 1, e)
+                        }),
                 }
             }
-                }
         })
     }
 
@@ -446,12 +449,12 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(UsbDevice { address })
     }
 
-    pub async fn control_transfer<'a>(
+    pub async fn control_transfer(
         &self,
         address: u8,
         packet_size: u8,
         setup: SetupPacket,
-        data_phase: DataPhase<'a>,
+        data_phase: DataPhase<'_>,
     ) -> Result<usize, UsbError> {
         self.driver
             .control_transfer(address, packet_size, setup, data_phase)
@@ -713,11 +716,7 @@ impl<HC: HostController> UsbBus<HC> {
                     }
 
                     // now connected
-                    self.set_port_feature(
-                        packet.address,
-                        port,
-                        PORT_RESET,
-                    )
+                    self.set_port_feature(packet.address, port, PORT_RESET)
                         .await?;
 
                     delay_ms(50).await;
@@ -740,9 +739,9 @@ impl<HC: HostController> UsbBus<HC> {
                         let address = {
                             let mut state = self.hub_state.borrow_mut();
                             state
-                            .topology
+                                .topology
                                 .device_connect(packet.address, port, is_hub)
-                            .ok_or(UsbError::TooManyDevices)?
+                                .ok_or(UsbError::TooManyDevices)?
                         };
                         let device = self.set_address(address, &info).await?;
                         if is_hub {

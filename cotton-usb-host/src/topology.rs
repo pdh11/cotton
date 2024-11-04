@@ -101,20 +101,22 @@ impl Topology {
         if parent_hub >= MAX_HUBS || parent_port >= MAX_PORTS {
             return None;
         }
-
-        // @TODO: check for already present (possible if USB power glitches)
+        let entry = (parent_port << 4) + parent_hub;
+        if let Some(i) = self.parent.iter().position(|e| *e == entry) {
+            return Some(i as u8);
+        }
 
         if is_hub {
             for i in 1..MAX_HUBS {
                 if !self.is_present(i) {
-                    self.parent[i as usize] = (parent_port << 4) + parent_hub;
+                    self.parent[i as usize] = entry;
                     return Some(i);
                 }
             }
         } else {
             for i in (1..MAX_DEVICES).rev() {
                 if !self.is_present(i) {
-                    self.parent[i as usize] = (parent_port << 4) + parent_hub;
+                    self.parent[i as usize] = entry;
                     return Some(i);
                 }
             }
@@ -254,6 +256,15 @@ mod tests {
     }
 
     #[test]
+    fn repeated_connect() {
+        let mut bus = Topology::new();
+        let d = bus.device_connect(0, 1, true).unwrap();
+        assert_eq!(d, 1);
+        let d = bus.device_connect(0, 1, true).unwrap();
+        assert_eq!(d, 1);
+    }
+
+    #[test]
     fn too_many_hubs() {
         let mut bus = Topology::new();
         let mut hubs = 0;
@@ -277,17 +288,18 @@ mod tests {
         let mut bus = Topology::new();
         let mut devices = 0;
         bus.device_connect(0, 15, true);
+        bus.device_connect(0, 14, true);
+        bus.device_connect(0, 13, true);
 
         loop {
-            let d = bus.device_connect(devices & 1, devices / 2, false);
+            let d = bus.device_connect(devices & 3, (devices / 4) + 1, false);
             if d.is_none() {
                 break;
             }
             devices += 1;
         }
-        assert_eq!(devices, 31);
-        assert_eq!(format!("{:?}", bus), "0:(1:(3 5 7 9 11 13 15 17 19 21 23 25 27 29 31) 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30)"
-
+        assert_eq!(devices, 28); // plus the three hubs, is 31
+        assert_eq!(format!("{:?}", bus), "0:(1:(6 10 14 18 22 26 30) 2:(5 9 13 17 21 25 29) 3:(4 8 12 16 20 24 28) 7 11 15 19 23 27 31)"
         );
     }
 

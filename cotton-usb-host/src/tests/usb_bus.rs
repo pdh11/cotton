@@ -1763,7 +1763,6 @@ fn handle_hub_packet_connection_set_pends() {
     assert!(poll.is_pending());
 }
 
-
 #[test]
 fn handle_hub_packet_connection_second_status_fails() {
     let w = Waker::from(Arc::new(NoOpWaker));
@@ -2406,7 +2405,6 @@ fn handle_hub_packet_enabled_set_address_fails() {
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_ok_with(port_status::<0x13, 0>));
 
-
     // new_device(): first call (wLength == 8)
     hc.inner
         .expect_control_transfer()
@@ -2901,8 +2899,14 @@ fn device_events_nh() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -2963,7 +2967,10 @@ fn device_events_nh_first_delay_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
 
     let bus = UsbBus::new(hc);
 
@@ -2991,8 +2998,14 @@ fn device_events_nh_second_delay_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     let bus = UsbBus::new(hc);
 
@@ -3020,8 +3033,14 @@ fn device_events_nh_new_device_fails() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3058,8 +3077,14 @@ fn device_events_nh_new_device_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3094,8 +3119,14 @@ fn device_events_nh_set_address_fails() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3146,8 +3177,14 @@ fn device_events_nh_set_address_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3220,8 +3257,14 @@ fn device_events_root_connect() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3282,7 +3325,10 @@ fn device_events_first_delay_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
 
     let bus = UsbBus::new(hc);
 
@@ -3310,8 +3356,14 @@ fn device_events_second_delay_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     let bus = UsbBus::new(hc);
 
@@ -3339,8 +3391,14 @@ fn device_events_new_device_fails() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3377,8 +3435,14 @@ fn device_events_new_device_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3413,8 +3477,14 @@ fn device_events_set_address_fails() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3465,8 +3535,14 @@ fn device_events_set_address_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3541,8 +3617,14 @@ fn device_events_root_connect_is_hub() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3641,8 +3723,14 @@ fn device_events_root_connect_new_hub_fails() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner
@@ -3700,8 +3788,14 @@ fn device_events_root_connect_new_hub_pends() {
         mdd
     });
 
-    hc.inner.expect_reset_root_port().withf(|r| *r).return_const(());
-    hc.inner.expect_reset_root_port().withf(|r| !*r).return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| *r)
+        .return_const(());
+    hc.inner
+        .expect_reset_root_port()
+        .withf(|r| !*r)
+        .return_const(());
 
     // new_device(): first call (wLength == 8)
     hc.inner

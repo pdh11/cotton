@@ -14,9 +14,8 @@ use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
 
 pub struct UsbShared {
-    // @TODO shouldn't be pub
-    pub device_waker: CriticalSectionWakerRegistration,
-    pub pipe_wakers: [CriticalSectionWakerRegistration; 16],
+    device_waker: CriticalSectionWakerRegistration,
+    pipe_wakers: [CriticalSectionWakerRegistration; 16],
 }
 
 impl UsbShared {
