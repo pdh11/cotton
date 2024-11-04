@@ -71,3 +71,16 @@ fn arm_rp2040_w5500macraw_ssdp_rtic() {
         }
     );
 }
+
+#[test]
+#[serial(rp2040_w5500)]
+#[cfg_attr(miri, ignore)]
+fn arm_rp2040_usb_otge() {
+    rp2040_test(
+        "../cross/rp2040-w5500-rtic2/target/thumbv6m-none-eabi/debug/rp2040-usb-otge100",
+        |nt| {
+            nt.expect_stderr("Finished in", Duration::from_secs(45));
+            nt.expect("AX88772 OK", Duration::from_secs(20));
+        }
+    );
+}
