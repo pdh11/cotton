@@ -13,12 +13,10 @@ mod app {
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
     use cotton_usb_host::usb_bus::{
-        DataPhase, DeviceEvent, DeviceInfo, UsbBus, UsbDevice, UsbError,
+        DataPhase, DeviceEvent, UsbBus, UsbDevice, UsbError,
     };
     use cotton_usb_host::wire::{
-        parse_descriptors, ConfigurationDescriptor, SetupPacket,
-        ShowDescriptors, CONFIGURATION_DESCRIPTOR, DEVICE_TO_HOST,
-        GET_DESCRIPTOR, HOST_TO_DEVICE, VENDOR_REQUEST,
+        SetupPacket, DEVICE_TO_HOST, HOST_TO_DEVICE, VENDOR_REQUEST,
     };
     use futures_util::StreamExt;
     use rp_pico::pac;
@@ -122,8 +120,7 @@ mod app {
 
     struct AX88772<'a, T: HostController> {
         bus: &'a UsbBus<T>,
-        device: &'a UsbDevice,
-        info: &'a DeviceInfo,
+        device: UsbDevice,
     }
 
     const MII_ADVERTISE: u8 = 4;
@@ -133,12 +130,8 @@ mod app {
     const BMCR_ANRESTART: u16 = 0x200;
 
     impl<'a, T: HostController> AX88772<'a, T> {
-        pub fn new(
-            bus: &'a UsbBus<T>,
-            device: &'a UsbDevice,
-            info: &'a DeviceInfo,
-        ) -> Self {
-            Self { bus, device, info }
+        pub fn new(bus: &'a UsbBus<T>, device: UsbDevice) -> Self {
+            Self { bus, device }
         }
 
         async fn vendor_command(
@@ -159,8 +152,7 @@ mod app {
             };
             self.bus
                 .control_transfer(
-                    self.device.address,
-                    self.info.packet_size_ep0,
+                    &self.device,
                     SetupPacket {
                         bmRequestType: request_type,
                         bRequest: request,
@@ -268,61 +260,12 @@ mod app {
             if let Some(DeviceEvent::Connect(device, info)) = device {
                 defmt::println!("Got device {:x} {:x}", device, info);
 
-                defmt::trace!("fetching2");
-                let mut descriptors = [0u8; 64];
-                let rc = stack
-                    .control_transfer(
-                        device.address,
-                        info.packet_size_ep0,
-                        SetupPacket {
-                            bmRequestType: DEVICE_TO_HOST,
-                            bRequest: GET_DESCRIPTOR,
-                            wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
-                            wIndex: 0,
-                            wLength: core::mem::size_of::<
-                                ConfigurationDescriptor,
-                            >() as u16,
-                        },
-                        DataPhase::In(&mut descriptors),
-                    )
-                    .await;
-                if let Ok(_sz) = rc {
-                    let total_length =
-                        u16::from_le_bytes([descriptors[2], descriptors[3]]);
-                    defmt::println!(
-                        "{} bytes of configuration total",
-                        total_length
-                    );
-                    let bytes = core::cmp::min(total_length, 64);
-                    let rc = stack
-                        .control_transfer(
-                            device.address,
-                            info.packet_size_ep0,
-                            SetupPacket {
-                                bmRequestType: DEVICE_TO_HOST,
-                                bRequest: GET_DESCRIPTOR,
-                                wValue: ((CONFIGURATION_DESCRIPTOR as u16)
-                                    << 8),
-                                wIndex: 0,
-                                wLength: bytes,
-                            },
-                            DataPhase::In(&mut descriptors),
-                        )
-                        .await;
-                    if rc.is_ok() {
-                        parse_descriptors(
-                            &descriptors[0..(bytes as usize)],
-                            &mut ShowDescriptors,
-                        );
-                    }
-                } else {
-                    defmt::println!("fetched {:?}", rc);
-                }
-
                 if info.vid == 0x0B95 && info.pid == 0x7720 {
-                    let otge = AX88772::new(&stack, &device, &info);
-                    if let Err(e) = otge.init().await {
-                        defmt::println!("error {}", e);
+                    if let Ok(device) = stack.configure(device, 1).await {
+                        let otge = AX88772::new(&stack, device);
+                        if let Err(e) = otge.init().await {
+                            defmt::println!("error {}", e);
+                        }
                     }
                 }
             }

@@ -5,7 +5,7 @@ use crate::host_controller::tests::{
 };
 use crate::wire::{
     EndpointDescriptor, InterfaceDescriptor, ENDPOINT_DESCRIPTOR,
-    INTERFACE_DESCRIPTOR,
+    INTERFACE_DESCRIPTOR, VENDOR_REQUEST,
 };
 use futures::{future, Future};
 use std::pin::{pin, Pin};
@@ -102,13 +102,30 @@ fn example_config_descriptor(buf: &mut [u8]) {
     buf[18..25].copy_from_slice(bytemuck::bytes_of(&e));
 }
 
-const EXAMPLE_DEVICE: UsbDevice = UsbDevice { address: 5 };
-const EXAMPLE_INFO: DeviceInfo = DeviceInfo {
-    vid: 1,
-    pid: 2,
-    class: 3,
-    subclass: 4,
-    speed: UsbSpeed::Full12,
+const UNCONFIGURED_DEVICE: UnconfiguredDevice = UnconfiguredDevice {
+    usb_address: 5,
+    usb_speed: UsbSpeed::Full12,
+    packet_size_ep0: 8,
+};
+
+fn unconfigured_device() -> UnconfiguredDevice {
+    UnconfiguredDevice {
+        usb_address: 5,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+    }
+}
+
+fn unaddressed_device() -> UnaddressedDevice {
+    UnaddressedDevice {
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+    }
+}
+
+const EXAMPLE_DEVICE: UsbDevice = UsbDevice {
+    usb_address: 5,
+    usb_speed: UsbSpeed::Full12,
     packet_size_ep0: 8,
 };
 
@@ -117,6 +134,19 @@ fn unwrap_poll<T>(p: Poll<T>) -> Option<T> {
     match p {
         Poll::Ready(t) => Some(t),
         _ => None,
+    }
+}
+
+trait PollExtras<T> {
+    fn to_option(self) -> Option<T>;
+}
+
+impl<T> PollExtras<T> for Poll<T> {
+    fn to_option(self) -> Option<T> {
+        match self {
+            Poll::Ready(t) => Some(t),
+            _ => None,
+        }
     }
 }
 
@@ -231,9 +261,9 @@ fn configure() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.configure(&EXAMPLE_DEVICE, &EXAMPLE_INFO, 6));
-    let rr = r.poll(&mut c);
-    assert_eq!(rr, Poll::Ready(Ok(())));
+    let r = pin!(bus.configure(unconfigured_device(), 6));
+    let rr = r.poll(&mut c).to_option().unwrap();
+    assert_eq!(rr, Ok(EXAMPLE_DEVICE));
 }
 
 #[test]
@@ -254,7 +284,7 @@ fn configure_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.configure(&EXAMPLE_DEVICE, &EXAMPLE_INFO, 6));
+    let mut r = pin!(bus.configure(unconfigured_device(), 6));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Pending);
     let rr = r.as_mut().poll(&mut c);
@@ -279,7 +309,7 @@ fn configure_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.configure(&EXAMPLE_DEVICE, &EXAMPLE_INFO, 6));
+    let r = pin!(bus.configure(unconfigured_device(), 6));
     let rr = r.poll(&mut c);
     assert_eq!(rr, Poll::Ready(Err(UsbError::Timeout)));
 }
@@ -321,7 +351,7 @@ fn get_basic_configuration() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.get_basic_configuration(&UNCONFIGURED_DEVICE));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert!(rc.is_ok());
@@ -345,7 +375,7 @@ fn get_basic_configuration_bad_descriptors() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.get_basic_configuration(&UNCONFIGURED_DEVICE));
     let rr = r.poll(&mut c);
     assert_eq!(rr, Poll::Ready(Err(UsbError::ProtocolError)));
 }
@@ -372,7 +402,7 @@ fn get_basic_configuration_bad_configuration_value() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.get_basic_configuration(&UNCONFIGURED_DEVICE));
     let rr = r.poll(&mut c);
     assert_eq!(rr, Poll::Ready(Err(UsbError::ProtocolError)));
 }
@@ -395,8 +425,7 @@ fn get_basic_configuration_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut r =
-        pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let mut r = pin!(bus.get_basic_configuration(&UNCONFIGURED_DEVICE));
     let rr = r.as_mut().poll(&mut c);
     assert!(rr.is_pending());
     let rr = r.as_mut().poll(&mut c);
@@ -421,8 +450,7 @@ fn get_basic_configuration_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let mut r =
-        pin!(bus.get_basic_configuration(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let mut r = pin!(bus.get_basic_configuration(&UNCONFIGURED_DEVICE));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Ready(Err(UsbError::Timeout)));
 }
@@ -461,9 +489,9 @@ fn set_address() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.set_address(5, &EXAMPLE_INFO));
+    let r = pin!(bus.set_address(unaddressed_device(), 5));
     let rr = r.poll(&mut c);
-    assert!(rr == Poll::Ready(Ok(UsbDevice { address: 5 })));
+    assert!(rr == Poll::Ready(Ok(unconfigured_device())));
 }
 
 #[test]
@@ -484,7 +512,7 @@ fn set_address_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.set_address(5, &EXAMPLE_INFO));
+    let mut r = pin!(bus.set_address(unaddressed_device(), 5));
     let rr = r.as_mut().poll(&mut c);
     assert!(rr.is_pending());
     let rr = r.as_mut().poll(&mut c);
@@ -509,7 +537,7 @@ fn set_address_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.set_address(5, &EXAMPLE_INFO));
+    let r = pin!(bus.set_address(unaddressed_device(), 5));
     let rr = r.poll(&mut c);
     assert!(rr.is_ready());
     assert!(rr == Poll::Ready(Err(UsbError::Timeout)));
@@ -625,7 +653,7 @@ fn new_device() {
 
     let r = pin!(bus.new_device(UsbSpeed::Full12));
     let rr = r.poll(&mut c);
-    let di = unwrap_poll(rr).unwrap().unwrap();
+    let (_device, di) = unwrap_poll(rr).unwrap().unwrap();
     assert_eq!(di.vid, 0x1234);
     assert_eq!(di.pid, 0x5678);
 }
@@ -879,7 +907,7 @@ fn new_hub() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert!(rc.is_ok());
@@ -931,7 +959,7 @@ fn new_hub_giant() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert!(rc.is_ok());
@@ -956,7 +984,7 @@ fn new_hub_get_configuration_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -993,7 +1021,7 @@ fn new_hub_configure_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -1030,7 +1058,7 @@ fn new_hub_configure_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let mut r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Pending);
     let rr = r.as_mut().poll(&mut c);
@@ -1071,7 +1099,7 @@ fn new_hub_try_add_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::TooManyDevices));
@@ -1117,7 +1145,7 @@ fn new_hub_get_descriptor_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -1163,7 +1191,7 @@ fn new_hub_get_descriptor_short() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::ProtocolError));
@@ -1209,7 +1237,7 @@ fn new_hub_get_descriptor_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let mut r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Pending);
     let rr = r.as_mut().poll(&mut c);
@@ -1263,7 +1291,7 @@ fn new_hub_set_port_power_fails() {
 
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -1316,7 +1344,7 @@ fn new_hub_set_port_power_pends() {
 
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.new_hub(&EXAMPLE_DEVICE, &EXAMPLE_INFO));
+    let mut r = pin!(bus.new_hub(unconfigured_device()));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Pending);
     let rr = r.as_mut().poll(&mut c);
@@ -1471,14 +1499,16 @@ fn handle_hub_packet_connection() {
     assert_eq!(
         result,
         Ok(DeviceEvent::Connect(
-            UsbDevice { address: 31 },
+            UnconfiguredDevice {
+                usb_address: 31,
+                usb_speed: UsbSpeed::Full12,
+                packet_size_ep0: 8
+            },
             DeviceInfo {
                 vid: 0x1234,
                 pid: 0x5678,
                 class: 0,
-                subclass: 0,
-                speed: UsbSpeed::Full12,
-                packet_size_ep0: 8
+                subclass: 0
             }
         ))
     );
@@ -2081,14 +2111,16 @@ fn handle_hub_packet_connected_high_speed() {
     assert_eq!(
         result,
         Ok(DeviceEvent::Connect(
-            UsbDevice { address: 31 },
+            UnconfiguredDevice {
+                usb_address: 31,
+                usb_speed: UsbSpeed::High480,
+                packet_size_ep0: 8
+            },
             DeviceInfo {
                 vid: 0x1234,
                 pid: 0x5678,
                 class: 0,
                 subclass: 0,
-                speed: UsbSpeed::High480,
-                packet_size_ep0: 8
             }
         ))
     );
@@ -2167,14 +2199,16 @@ fn handle_hub_packet_connected_low_speed() {
     assert_eq!(
         result,
         Ok(DeviceEvent::Connect(
-            UsbDevice { address: 31 },
+            UnconfiguredDevice {
+                usb_address: 31,
+                usb_speed: UsbSpeed::Low1_5,
+                packet_size_ep0: 8
+            },
             DeviceInfo {
                 vid: 0x1234,
                 pid: 0x5678,
                 class: 0,
                 subclass: 0,
-                speed: UsbSpeed::Low1_5,
-                packet_size_ep0: 8
             }
         ))
     );
@@ -2642,17 +2676,11 @@ fn handle_hub_packet_connected_hub() {
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(
         result,
-        Ok(DeviceEvent::Connect(
-            UsbDevice { address: 1 },
-            DeviceInfo {
-                vid: 0x1234,
-                pid: 0x5678,
-                class: 9,
-                subclass: 0,
-                speed: UsbSpeed::Full12,
-                packet_size_ep0: 8
-            }
-        ))
+        Ok(DeviceEvent::HubConnect(UsbDevice {
+            usb_address: 1,
+            usb_speed: UsbSpeed::Full12,
+            packet_size_ep0: 8
+        },))
     );
 }
 
@@ -2938,14 +2966,16 @@ fn device_events_nh() {
     assert_eq!(
         result,
         Some(DeviceEvent::Connect(
-            UsbDevice { address: 1 },
+            UnconfiguredDevice {
+                usb_address: 1,
+                usb_speed: UsbSpeed::Full12,
+                packet_size_ep0: 8
+            },
             DeviceInfo {
                 vid: 0x1234,
                 pid: 0x5678,
                 class: 0,
                 subclass: 0,
-                speed: UsbSpeed::Full12,
-                packet_size_ep0: 8
             }
         ))
     );
@@ -3296,14 +3326,16 @@ fn device_events_root_connect() {
     assert_eq!(
         result,
         Some(DeviceEvent::Connect(
-            UsbDevice { address: 31 },
+            UnconfiguredDevice {
+                usb_address: 31,
+                usb_speed: UsbSpeed::Low1_5,
+                packet_size_ep0: 8
+            },
             DeviceInfo {
                 vid: 0x1234,
                 pid: 0x5678,
                 class: 0,
                 subclass: 0,
-                speed: UsbSpeed::Low1_5,
-                packet_size_ep0: 8
             }
         ))
     );
@@ -3693,17 +3725,11 @@ fn device_events_root_connect_is_hub() {
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(
         result,
-        Some(DeviceEvent::Connect(
-            UsbDevice { address: 1 },
-            DeviceInfo {
-                vid: 0x1234,
-                pid: 0x5678,
-                class: 9,
-                subclass: 0,
-                speed: UsbSpeed::Low1_5,
-                packet_size_ep0: 8
-            }
-        ))
+        Some(DeviceEvent::HubConnect(UsbDevice {
+            usb_address: 1,
+            usb_speed: UsbSpeed::Low1_5,
+            packet_size_ep0: 8
+        },))
     );
 }
 
@@ -3932,5 +3958,90 @@ fn device_events_hub_packet_pends() {
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
     let poll = stream.as_mut().poll_next(&mut c);
+    assert!(poll.is_pending());
+}
+
+fn is_read_mac_address(
+    a: &u8,
+    p: &u8,
+    s: &SetupPacket,
+    d: &DataPhase,
+) -> bool {
+    *a == 5
+        && *p == 8
+        && s.bmRequestType == DEVICE_TO_HOST | VENDOR_REQUEST
+        && s.bRequest == 0x13
+        && s.wValue == 0
+        && s.wIndex == 0
+        && s.wLength == 6
+        && d.is_in()
+}
+
+#[test]
+fn control_transfer() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_read_mac_address)
+        .returning(control_transfer_ok_with(|b| {
+            b[0] = 1;
+            6
+        }));
+    let bus = UsbBus::new(hc);
+
+    let mut data = [0u8; 6];
+    let fut = pin!(bus.control_transfer(
+        &EXAMPLE_DEVICE,
+        SetupPacket {
+            bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
+            bRequest: 0x13,
+            wValue: 0,
+            wIndex: 0,
+            wLength: 6,
+        },
+        DataPhase::In(&mut data),
+    ));
+
+    let poll = fut.poll(&mut c);
+    assert!(poll.is_ready());
+}
+
+#[test]
+fn control_transfer_pends() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_multi_interrupt_pipe()
+        .returning(MockMultiInterruptPipe::new);
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_read_mac_address)
+        .returning(control_transfer_pending);
+    let bus = UsbBus::new(hc);
+
+    let mut data = [0u8; 6];
+    let mut fut = pin!(bus.control_transfer(
+        &EXAMPLE_DEVICE,
+        SetupPacket {
+            bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
+            bRequest: 0x13,
+            wValue: 0,
+            wIndex: 0,
+            wLength: 6,
+        },
+        DataPhase::In(&mut data),
+    ));
+
+    let poll = fut.as_mut().poll(&mut c);
+    assert!(poll.is_pending());
+    let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
 }

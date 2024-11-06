@@ -149,7 +149,8 @@ TODO before merge
 TODO before 0.1.0:
 
  - [x] System test
- - [ ] Allocate endpoints from device object? UnconfiguredDevice/Device?
+ - [ ] Allocate endpoints from device object?
+ - [x] UnconfiguredDevice/Device?
  - [ ] Bulk in/out
  - [ ] doc-comments
  - [ ] At least one real example (MSC? HID?)

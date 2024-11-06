@@ -25,8 +25,7 @@ use crate::debug;
 /// # async fn foo<HC: HostController>(bus: UsbBus<HC>, device: UsbDevice, info: DeviceInfo) {
 /// let mut data = [0u8; 6];
 /// let rc = bus.control_transfer(
-///         device.address,
-///         info.packet_size_ep0,
+///         &device,
 ///         SetupPacket {
 ///             bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
 ///             bRequest: 0x13,

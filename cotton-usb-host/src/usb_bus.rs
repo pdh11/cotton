@@ -27,15 +27,44 @@ pub struct DeviceInfo {
     pub pid: u16,
     pub class: u8,
     pub subclass: u8,
-    pub speed: UsbSpeed,
-    pub packet_size_ep0: u8,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct UnaddressedDevice {
+    usb_speed: UsbSpeed,
+    packet_size_ep0: u8,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
+pub struct UnconfiguredDevice {
+    usb_address: u8,
+    usb_speed: UsbSpeed,
+    packet_size_ep0: u8,
+}
+
+impl UnconfiguredDevice {
+    pub fn address(&self) -> u8 {
+        self.usb_address
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(PartialEq, Eq)]
 pub struct UsbDevice {
-    pub address: u8,
+    usb_address: u8,
+    usb_speed: UsbSpeed,
+    packet_size_ep0: u8,
+}
+
+impl UsbDevice {
+    pub fn address(&self) -> u8 {
+        self.usb_address
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -62,7 +91,17 @@ pub enum DeviceEvent {
     /// address. Basic information about the device -- sufficient, perhaps, to
     /// select an appropriate driver from those available -- is in the
     /// supplied `DeviceInfo`.
-    Connect(UsbDevice, DeviceInfo),
+    Connect(UnconfiguredDevice, DeviceInfo),
+
+    /// A new hub has been connected and configured (when using
+    /// [`UsbBus::device_events()`] and not
+    /// [`UsbBus::device_events_no_hubs()`]).
+    ///
+    /// This event can be ignored unless you want to take special
+    /// actions e.g. powering-down particular ports. Normal
+    /// powering-up and enumerating of hub ports is done by this crate
+    /// in the [`UsbBus::device_events`] call.
+    HubConnect(UsbDevice),
 
     /// A previously-reported device has become disconnected. This event
     /// includes a _set_ of affected devices -- if a hub has become
@@ -223,14 +262,15 @@ impl<HC: HostController> UsbBus<HC> {
                             delay_ms(50).await;
                             self.driver.reset_root_port(false);
                             delay_ms(10).await;
-                            let info = match self.new_device(speed).await {
-                                Ok(info) => info,
-                                Err(e) => {
-                                    return DeviceEvent::EnumerationError(
-                                        0, 1, e,
-                                    )
-                                }
-                            };
+                            let (device, info) =
+                                match self.new_device(speed).await {
+                                    Ok((device, info)) => (device, info),
+                                    Err(e) => {
+                                        return DeviceEvent::EnumerationError(
+                                            0, 1, e,
+                                        )
+                                    }
+                                };
                             let is_hub = info.class == HUB_CLASSCODE;
                             let address = self
                                 .hub_state
@@ -238,19 +278,23 @@ impl<HC: HostController> UsbBus<HC> {
                                 .topology
                                 .device_connect(0, 1, is_hub)
                                 .expect("Root connect should always succeed");
-                            let device =
-                                match self.set_address(address, &info).await {
-                                    Ok(device) => device,
-                                    Err(e) => {
-                                        return DeviceEvent::EnumerationError(
-                                            0, 1, e,
-                                        );
-                                    }
-                                };
+                            let device = match self
+                                .set_address(device, address)
+                                .await
+                            {
+                                Ok(device) => device,
+                                Err(e) => {
+                                    return DeviceEvent::EnumerationError(
+                                        0, 1, e,
+                                    );
+                                }
+                            };
                             if is_hub {
                                 debug::println!("It's a hub");
-                                match self.new_hub(&device, &info).await {
-                                    Ok(()) => (),
+                                match self.new_hub(device).await {
+                                    Ok(device) => {
+                                        return DeviceEvent::HubConnect(device)
+                                    }
                                     Err(e) => {
                                         return DeviceEvent::EnumerationError(
                                             0, 1, e,
@@ -335,7 +379,10 @@ impl<HC: HostController> UsbBus<HC> {
                     self.driver.reset_root_port(false);
                     delay_ms(10).await;
                     match self.new_device(speed).await {
-                        Ok(info) => match self.set_address(1, &info).await {
+                        Ok((device, info)) => match self
+                            .set_address(device, 1)
+                            .await
+                        {
                             Ok(device) => DeviceEvent::Connect(device, info),
                             Err(e) => DeviceEvent::EnumerationError(0, 1, e),
                         },
@@ -350,33 +397,40 @@ impl<HC: HostController> UsbBus<HC> {
 
     pub async fn configure(
         &self,
-        device: &UsbDevice,
-        info: &DeviceInfo,
+        device: UnconfiguredDevice,
         configuration_value: u8,
-    ) -> Result<(), UsbError> {
-        self.control_transfer(
-            device.address,
-            info.packet_size_ep0,
-            SetupPacket {
-                bmRequestType: HOST_TO_DEVICE,
-                bRequest: SET_CONFIGURATION,
-                wValue: configuration_value as u16,
-                wIndex: 0,
-                wLength: 0,
-            },
-            DataPhase::None,
-        )
-        .map(|r| r.map(|_| ()))
-        .await
+    ) -> Result<UsbDevice, UsbError> {
+        self.driver
+            .control_transfer(
+                device.address(),
+                device.packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: HOST_TO_DEVICE,
+                    bRequest: SET_CONFIGURATION,
+                    wValue: configuration_value as u16,
+                    wIndex: 0,
+                    wLength: 0,
+                },
+                DataPhase::None,
+            )
+            .map(|r| {
+                r.map(|_| UsbDevice {
+                    usb_address: device.usb_address,
+                    usb_speed: device.usb_speed,
+                    packet_size_ep0: device.packet_size_ep0,
+                })
+            })
+            .await
     }
 
     async fn new_device(
         &self,
         speed: UsbSpeed,
-    ) -> Result<DeviceInfo, UsbError> {
+    ) -> Result<(UnaddressedDevice, DeviceInfo), UsbError> {
         // Read prefix of device descriptor
         let mut descriptors = [0u8; 18];
         let sz = self
+            .driver
             .control_transfer(
                 0,
                 8,
@@ -398,6 +452,7 @@ impl<HC: HostController> UsbBus<HC> {
 
         // Fetch rest of device descriptor
         let sz = self
+            .driver
             .control_transfer(
                 0,
                 packet_size_ep0,
@@ -418,46 +473,59 @@ impl<HC: HostController> UsbBus<HC> {
         let vid = u16::from_le_bytes([descriptors[8], descriptors[9]]);
         let pid = u16::from_le_bytes([descriptors[10], descriptors[11]]);
 
-        Ok(DeviceInfo {
-            packet_size_ep0,
-            vid,
-            pid,
-            speed,
-            class: descriptors[4],
-            subclass: descriptors[5],
-        })
+        Ok((
+            UnaddressedDevice {
+                usb_speed: speed,
+                packet_size_ep0,
+            },
+            DeviceInfo {
+                vid,
+                pid,
+                class: descriptors[4],
+                subclass: descriptors[5],
+            },
+        ))
     }
 
     async fn set_address(
         &self,
+        device: UnaddressedDevice,
         address: u8,
-        info: &DeviceInfo,
-    ) -> Result<UsbDevice, UsbError> {
-        self.control_transfer(
-            0,
-            info.packet_size_ep0,
-            SetupPacket {
-                bmRequestType: HOST_TO_DEVICE,
-                bRequest: SET_ADDRESS,
-                wValue: address as u16,
-                wIndex: 0,
-                wLength: 0,
-            },
-            DataPhase::None,
-        )
-        .await?;
-        Ok(UsbDevice { address })
+    ) -> Result<UnconfiguredDevice, UsbError> {
+        self.driver
+            .control_transfer(
+                0,
+                device.packet_size_ep0,
+                SetupPacket {
+                    bmRequestType: HOST_TO_DEVICE,
+                    bRequest: SET_ADDRESS,
+                    wValue: address as u16,
+                    wIndex: 0,
+                    wLength: 0,
+                },
+                DataPhase::None,
+            )
+            .await?;
+        Ok(UnconfiguredDevice {
+            usb_address: address,
+            usb_speed: device.usb_speed,
+            packet_size_ep0: device.packet_size_ep0,
+        })
     }
 
     pub async fn control_transfer(
         &self,
-        address: u8,
-        packet_size: u8,
+        device: &UsbDevice,
         setup: SetupPacket,
         data_phase: DataPhase<'_>,
     ) -> Result<usize, UsbError> {
         self.driver
-            .control_transfer(address, packet_size, setup, data_phase)
+            .control_transfer(
+                device.usb_address,
+                device.packet_size_ep0,
+                setup,
+                data_phase,
+            )
             .await
     }
 
@@ -483,15 +551,15 @@ impl<HC: HostController> UsbBus<HC> {
 
     pub async fn get_basic_configuration(
         &self,
-        device: &UsbDevice,
-        info: &DeviceInfo,
+        device: &UnconfiguredDevice,
     ) -> Result<BasicConfiguration, UsbError> {
         // TODO: descriptor suites >64 byte (Ella!)
         let mut buf = [0u8; 64];
         let sz = self
+            .driver
             .control_transfer(
-                device.address,
-                info.packet_size_ep0,
+                device.address(),
+                device.packet_size_ep0,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
                     bRequest: GET_DESCRIPTOR,
@@ -513,25 +581,25 @@ impl<HC: HostController> UsbBus<HC> {
 
     async fn new_hub(
         &self,
-        device: &UsbDevice,
-        info: &DeviceInfo,
-    ) -> Result<(), UsbError> {
+        device: UnconfiguredDevice,
+    ) -> Result<UsbDevice, UsbError> {
         debug::println!("gbc!");
-        let bc = self.get_basic_configuration(device, info).await?;
+        let bc = self.get_basic_configuration(&device).await?;
         debug::println!("cfg: {:?}", &bc);
-        self.configure(device, info, bc.configuration_value).await?;
+        let device = self.configure(device, bc.configuration_value).await?;
         self.hub_pipes.borrow_mut().try_add(
-            device.address,
+            device.address(),
             bc.in_endpoints.trailing_zeros() as u8,
-            info.packet_size_ep0,
+            device.packet_size_ep0,
             9,
         )?;
 
         let mut descriptors = [0u8; 64];
         let sz = self
+            .driver
             .control_transfer(
-                device.address,
-                info.packet_size_ep0,
+                device.address(),
+                device.packet_size_ep0,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST | CLASS_REQUEST,
                     bRequest: GET_DESCRIPTOR,
@@ -552,11 +620,11 @@ impl<HC: HostController> UsbBus<HC> {
 
         // Ports are numbered from 1..=N (not 0..N)
         for port in 1..=ports {
-            self.set_port_feature(device.address, port, PORT_POWER)
+            self.set_port_feature(device.address(), port, PORT_POWER)
                 .await?;
         }
 
-        Ok(())
+        Ok(device)
     }
 
     /// Return a snapshot of the current physical bus layout
@@ -575,21 +643,22 @@ impl<HC: HostController> UsbBus<HC> {
         port: u8,
     ) -> Result<(u16, u16), UsbError> {
         let mut data = [0u8; 4];
-        self.control_transfer(
-            hub_address,
-            8,
-            SetupPacket {
-                bmRequestType: DEVICE_TO_HOST
-                    | CLASS_REQUEST
-                    | RECIPIENT_OTHER,
-                bRequest: GET_STATUS,
-                wValue: 0,
-                wIndex: port as u16,
-                wLength: 4,
-            },
-            DataPhase::In(&mut data),
-        )
-        .await?;
+        self.driver
+            .control_transfer(
+                hub_address,
+                8,
+                SetupPacket {
+                    bmRequestType: DEVICE_TO_HOST
+                        | CLASS_REQUEST
+                        | RECIPIENT_OTHER,
+                    bRequest: GET_STATUS,
+                    wValue: 0,
+                    wIndex: port as u16,
+                    wLength: 4,
+                },
+                DataPhase::In(&mut data),
+            )
+            .await?;
 
         Ok((
             u16::from_le_bytes([data[0], data[1]]),
@@ -605,21 +674,22 @@ impl<HC: HostController> UsbBus<HC> {
         port: u8,
         feature: u16,
     ) -> Result<(), UsbError> {
-        self.control_transfer(
-            hub_address,
-            8,
-            SetupPacket {
-                bmRequestType: HOST_TO_DEVICE
-                    | CLASS_REQUEST
-                    | RECIPIENT_OTHER,
-                bRequest: CLEAR_FEATURE,
-                wValue: feature,
-                wIndex: port as u16,
-                wLength: 0,
-            },
-            DataPhase::None,
-        )
-        .await?;
+        self.driver
+            .control_transfer(
+                hub_address,
+                8,
+                SetupPacket {
+                    bmRequestType: HOST_TO_DEVICE
+                        | CLASS_REQUEST
+                        | RECIPIENT_OTHER,
+                    bRequest: CLEAR_FEATURE,
+                    wValue: feature,
+                    wIndex: port as u16,
+                    wLength: 0,
+                },
+                DataPhase::None,
+            )
+            .await?;
         Ok(())
     }
 
@@ -629,21 +699,22 @@ impl<HC: HostController> UsbBus<HC> {
         port: u8,
         feature: u16,
     ) -> Result<(), UsbError> {
-        self.control_transfer(
-            hub_address,
-            8,
-            SetupPacket {
-                bmRequestType: HOST_TO_DEVICE
-                    | CLASS_REQUEST
-                    | RECIPIENT_OTHER,
-                bRequest: SET_FEATURE,
-                wValue: feature,
-                wIndex: port as u16,
-                wLength: 0,
-            },
-            DataPhase::None,
-        )
-        .await?;
+        self.driver
+            .control_transfer(
+                hub_address,
+                8,
+                SetupPacket {
+                    bmRequestType: HOST_TO_DEVICE
+                        | CLASS_REQUEST
+                        | RECIPIENT_OTHER,
+                    bRequest: SET_FEATURE,
+                    wValue: feature,
+                    wIndex: port as u16,
+                    wLength: 0,
+                },
+                DataPhase::None,
+            )
+            .await?;
         Ok(())
     }
 
@@ -734,7 +805,7 @@ impl<HC: HostController> UsbBus<HC> {
                             _ => UsbSpeed::Low1_5,
                         };
 
-                        let info = self.new_device(speed).await?;
+                        let (device, info) = self.new_device(speed).await?;
                         let is_hub = info.class == HUB_CLASSCODE;
                         let address = {
                             let mut state = self.hub_state.borrow_mut();
@@ -743,10 +814,12 @@ impl<HC: HostController> UsbBus<HC> {
                                 .device_connect(packet.address, port, is_hub)
                                 .ok_or(UsbError::TooManyDevices)?
                         };
-                        let device = self.set_address(address, &info).await?;
+                        let device = self.set_address(device, address).await?;
                         if is_hub {
                             debug::println!("It's a hub");
-                            self.new_hub(&device, &info).await?;
+                            return Ok(DeviceEvent::HubConnect(
+                                self.new_hub(device).await?,
+                            ));
                         }
 
                         return Ok(DeviceEvent::Connect(device, info));
