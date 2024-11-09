@@ -1,7 +1,7 @@
 use super::*;
 use crate::host_controller::tests::{
-    MockDeviceDetect, MockHostController, MockInterruptPipe,
-    MockMultiInterruptPipe,
+    MockDeviceDetect, MockHostController, MockHostControllerInner,
+    MockInterruptPipe, MockMultiInterruptPipe,
 };
 use crate::wire::{
     EndpointDescriptor, InterfaceDescriptor, ENDPOINT_DESCRIPTOR,
@@ -855,62 +855,109 @@ fn is_set_port_power<const ADDR: u8, const N: u8>(
         && d.is_none()
 }
 
-#[test]
-fn new_hub() {
+fn do_test<
+    F1: FnMut(&mut MockHostControllerInner),
+    F2: FnMut(
+        &mut core::task::Context,
+        &HubState<MockHostController>,
+        &UsbBus<MockHostController>,
+    ),
+>(
+    mut f1: F1,
+    mut f2: F2,
+) {
     let w = Waker::from(Arc::new(NoOpWaker));
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner.expect_multi_interrupt_pipe().returning(|| {
-        let mut mip = MockMultiInterruptPipe::new();
-        mip.expect_try_add().returning(|_, _, _, _| Ok(()));
-        mip
-    });
 
-    // Call to get_basic_configuration
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_get_configuration_descriptor::<5>)
-        .returning(|_, _, _, mut d| {
-            d.in_with(|bytes| {
-                example_config_descriptor(bytes);
-            });
-            Box::pin(future::ready(Ok(25)))
-        });
+    f1(&mut hc.inner);
 
-    // Call to configure
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_set_configuration::<5, 1>)
-        .returning(control_transfer_ok::<0>);
-
-    // Get hub descriptor
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_get_hub_descriptor::<5>)
-        .returning(control_transfer_ok_with(hub_descriptor));
-
-    // Set port power
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_set_port_power::<5, 1>)
-        .returning(control_transfer_ok::<0>);
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_set_port_power::<5, 2>)
-        .returning(control_transfer_ok::<0>);
-
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
-    let rr = r.poll(&mut c);
-    let rc = unwrap_poll(rr).unwrap();
-    assert!(rc.is_ok());
+    f2(&mut c, &hub_state, &bus);
+}
+
+trait ExtraExpectations {
+    /// Expect a call to get_basic_configuration (for a certain address),
+    /// which reads the configuration descriptor.
+    fn expect_get_basic_configuration<const ADDR: u8>(&mut self);
+
+    /// Expect a call to configure (for a certain address and
+    /// configuration number) which does a control transfer.
+    fn expect_set_configuration<const ADDR: u8, const VALUE: u16>(&mut self);
+
+    /// Expect a control transfer to read the hub descriptor from a certain
+    /// address.
+    fn expect_get_hub_descriptor<const ADDR: u8>(&mut self);
+
+    /// Expect a control transfer (for a certain address and port number) to set a port power feature.
+    fn expect_set_port_power<const ADDR: u8, const PORT: u8>(&mut self);
+}
+
+impl ExtraExpectations for MockHostControllerInner {
+    fn expect_get_basic_configuration<const ADDR: u8>(&mut self) {
+        self.expect_control_transfer()
+            .times(1)
+            .withf(is_get_configuration_descriptor::<ADDR>)
+            .returning(|_, _, _, mut d| {
+                d.in_with(|bytes| {
+                    example_config_descriptor(bytes);
+                });
+                Box::pin(future::ready(Ok(25)))
+            });
+    }
+
+    /// Expect a call to configure (for a certain address and
+    /// configuration number) which does a control transfer.
+    fn expect_set_configuration<const ADDR: u8, const VALUE: u16>(&mut self) {
+        self.expect_control_transfer()
+            .times(1)
+            .withf(is_set_configuration::<ADDR, VALUE>)
+            .returning(control_transfer_ok::<0>);
+    }
+
+    /// Expect a control transfer to read the hub descriptor from a certain
+    /// address.
+    fn expect_get_hub_descriptor<const ADDR: u8>(&mut self) {
+        self.expect_control_transfer()
+            .times(1)
+            .withf(is_get_hub_descriptor::<ADDR>)
+            .returning(control_transfer_ok_with(hub_descriptor));
+    }
+
+    fn expect_set_port_power<const ADDR: u8, const PORT: u8>(&mut self) {
+        self.expect_control_transfer()
+            .times(1)
+            .withf(is_set_port_power::<ADDR, PORT>)
+            .returning(control_transfer_ok::<0>);
+    }
+}
+
+#[test]
+fn new_hub() {
+    do_test(
+        |hc| {
+            hc.expect_multi_interrupt_pipe().returning(|| {
+                let mut mip = MockMultiInterruptPipe::new();
+                mip.expect_try_add().returning(|_, _, _, _| Ok(()));
+                mip
+            });
+
+            hc.expect_get_basic_configuration::<5>();
+            hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_hub_descriptor::<5>();
+            hc.expect_set_port_power::<5, 1>();
+            hc.expect_set_port_power::<5, 2>();
+        },
+        |c, hub_state, bus| {
+            let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
+            let rr = r.poll(c);
+            let rc = unwrap_poll(rr).unwrap();
+            assert!(rc.is_ok());
+        },
+    );
 }
 
 #[test]
@@ -957,9 +1004,10 @@ fn new_hub_giant() {
         .times(15)
         .returning(control_transfer_ok::<0>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
+    let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert!(rc.is_ok());
@@ -982,9 +1030,10 @@ fn new_hub_get_configuration_fails() {
         .withf(is_get_configuration_descriptor::<5>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
+    let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -1019,9 +1068,10 @@ fn new_hub_configure_fails() {
         .withf(is_set_configuration::<5, 1>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
+    let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -1056,9 +1106,10 @@ fn new_hub_configure_pends() {
         .withf(is_set_configuration::<5, 1>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.new_hub(unconfigured_device()));
+    let mut r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Pending);
     let rr = r.as_mut().poll(&mut c);
@@ -1097,9 +1148,10 @@ fn new_hub_try_add_fails() {
         .withf(is_set_configuration::<5, 1>)
         .returning(control_transfer_ok::<0>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
+    let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::TooManyDevices));
@@ -1143,9 +1195,10 @@ fn new_hub_get_descriptor_fails() {
         .withf(is_get_hub_descriptor::<5>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
+    let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -1189,9 +1242,10 @@ fn new_hub_get_descriptor_short() {
         .withf(is_get_hub_descriptor::<5>)
         .returning(control_transfer_ok::<8>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
+    let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::ProtocolError));
@@ -1235,9 +1289,10 @@ fn new_hub_get_descriptor_pends() {
         .withf(is_get_hub_descriptor::<5>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.new_hub(unconfigured_device()));
+    let mut r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Pending);
     let rr = r.as_mut().poll(&mut c);
@@ -1289,9 +1344,10 @@ fn new_hub_set_port_power_fails() {
         .withf(is_set_port_power::<5, 1>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.new_hub(unconfigured_device()));
+    let r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.poll(&mut c);
     let rc = unwrap_poll(rr).unwrap();
     assert_eq!(rc, Err(UsbError::Timeout));
@@ -1342,9 +1398,10 @@ fn new_hub_set_port_power_pends() {
         .withf(is_set_port_power::<5, 1>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.new_hub(unconfigured_device()));
+    let mut r = pin!(bus.new_hub(&hub_state, unconfigured_device()));
     let rr = r.as_mut().poll(&mut c);
     assert_eq!(rr, Poll::Pending);
     let rr = r.as_mut().poll(&mut c);
@@ -1359,11 +1416,12 @@ fn handle_hub_packet_empty() {
     hc.inner
         .expect_multi_interrupt_pipe()
         .returning(MockMultiInterruptPipe::new);
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.size = 1;
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1486,13 +1544,14 @@ fn handle_hub_packet_connection() {
 
     // The new device is NOT a hub so we're now done
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1530,6 +1589,7 @@ fn handle_hub_packet_no_changes() {
         .withf(is_get_port_status::<8>)
         .returning(control_transfer_ok_with(port_status::<0, 0>));
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
@@ -1537,7 +1597,7 @@ fn handle_hub_packet_no_changes() {
     p.size = 2;
     p.data[0] = 0;
     p.data[1] = 1; // bit 8 set => port 8 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1560,6 +1620,7 @@ fn handle_hub_packet_crazy_changes() {
         .withf(is_get_port_status::<8>)
         .returning(control_transfer_ok_with(port_status::<0, 0x20>));
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
@@ -1567,7 +1628,7 @@ fn handle_hub_packet_crazy_changes() {
     p.size = 2;
     p.data[0] = 0;
     p.data[1] = 1; // bit 8 set => port 8 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1590,13 +1651,14 @@ fn handle_hub_packet_connection_status_fails() {
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1619,13 +1681,14 @@ fn handle_hub_packet_connection_status_pends() {
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1656,13 +1719,14 @@ fn handle_hub_packet_connection_clear_fails() {
         .withf(is_clear_port_feature::<1, 16>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1692,13 +1756,14 @@ fn handle_hub_packet_connection_clear_pends() {
         .withf(is_clear_port_feature::<1, 16>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1736,13 +1801,14 @@ fn handle_hub_packet_connection_set_fails() {
         .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1779,13 +1845,14 @@ fn handle_hub_packet_connection_set_pends() {
         .withf(is_set_port_feature::<1, 4>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1830,13 +1897,14 @@ fn handle_hub_packet_connection_second_status_fails() {
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -1873,13 +1941,14 @@ fn handle_hub_packet_connection_delay_pends() {
         .withf(is_clear_port_feature::<1, 16>)
         .returning(control_transfer_ok::<0>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, long_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, long_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1924,13 +1993,14 @@ fn handle_hub_packet_connection_second_status_pends() {
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -1975,13 +2045,14 @@ fn handle_hub_packet_connection_second_status_not_connected() {
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_ok_with(port_status::<0, 0>));
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Ok(DeviceEvent::None));
@@ -2010,26 +2081,30 @@ fn handle_hub_packet_disconnection() {
         .withf(is_clear_port_feature::<1, 16>)
         .returning(control_transfer_ok::<0>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     {
         // Set up topology so there's a device (31) on hub 5 port 1
-        let mut b = bus.hub_state.borrow_mut();
-        b.topology.device_connect(0, 1, true); // 1
-        b.topology.device_connect(1, 1, true); // 2
-        b.topology.device_connect(1, 2, true); // 3
-        b.topology.device_connect(1, 3, true); // 4
-        b.topology.device_connect(1, 4, true); // 5
-        b.topology.device_connect(5, 1, false); // 31
+        let mut b = hub_state.topology.borrow_mut();
+        b.device_connect(0, 1, true); // 1
+        b.device_connect(1, 1, true); // 2
+        b.device_connect(1, 2, true); // 3
+        b.device_connect(1, 3, true); // 4
+        b.device_connect(1, 4, true); // 5
+        b.device_connect(5, 1, false); // 31
     }
 
-    assert_eq!(format!("{:?}", bus.topology()), "0:(1:(2 3 4 5:(31)))");
+    assert_eq!(
+        format!("{:?}", hub_state.topology()),
+        "0:(1:(2 3 4 5:(31)))"
+    );
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2098,13 +2173,14 @@ fn handle_hub_packet_connected_high_speed() {
 
     // The new device is NOT a hub so we're now done
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2186,13 +2262,14 @@ fn handle_hub_packet_connected_low_speed() {
 
     // The new device is NOT a hub so we're now done
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2237,13 +2314,14 @@ fn handle_hub_packet_enabled_port_reset_fails() {
         .withf(is_clear_port_feature::<1, 20>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2273,13 +2351,14 @@ fn handle_hub_packet_enabled_port_reset_pends() {
         .withf(is_clear_port_feature::<1, 20>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -2331,13 +2410,14 @@ fn handle_hub_packet_connected_new_device_fails() {
         .withf(is_get_device_descriptor::<8>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2388,13 +2468,14 @@ fn handle_hub_packet_connected_new_device_pends() {
         .withf(is_get_device_descriptor::<8>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -2462,13 +2543,14 @@ fn handle_hub_packet_enabled_set_address_fails() {
 
     // The new device is NOT a hub so we're now done
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2535,13 +2617,14 @@ fn handle_hub_packet_connected_set_address_pends() {
 
     // The new device is NOT a hub so we're now done
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -2664,13 +2747,14 @@ fn handle_hub_packet_connected_hub() {
         .withf(is_set_port_power::<1, 2>)
         .returning(control_transfer_ok::<0>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2749,13 +2833,14 @@ fn handle_hub_packet_connected_hub_new_hub_fails() {
         .withf(is_get_configuration_descriptor::<1>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -2827,13 +2912,14 @@ fn handle_hub_packet_connected_hub_new_hub_pends() {
         .withf(is_get_configuration_descriptor::<1>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     let mut p = InterruptPacket::new();
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let mut fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let mut fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
 
     let poll = fut.as_mut().poll(&mut c);
     assert!(poll.is_pending());
@@ -2892,12 +2978,13 @@ fn handle_hub_packet_enabled_too_many_devices() {
         .withf(is_get_device_descriptor::<18>)
         .returning(control_transfer_ok_with(device_descriptor_hub));
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
     {
-        let mut state = bus.hub_state.borrow_mut();
+        let mut state = hub_state.topology.borrow_mut();
         for i in 1..16 {
-            state.topology.device_connect(0, i, true);
+            state.device_connect(0, i, true);
         }
     }
 
@@ -2905,7 +2992,7 @@ fn handle_hub_packet_enabled_too_many_devices() {
     p.address = 5;
     p.size = 1;
     p.data[0] = 0b10; // bit 1 set => port 1 needs attention
-    let fut = pin!(bus.handle_hub_packet(&p, no_delay));
+    let fut = pin!(bus.handle_hub_packet(&hub_state, &p, no_delay));
     let poll = fut.poll(&mut c);
     let result = unwrap_poll(poll).unwrap();
     assert_eq!(result, Err(UsbError::TooManyDevices));
@@ -3317,9 +3404,10 @@ fn device_events_root_connect() {
         .withf(is_set_address::<31>)
         .returning(control_transfer_ok::<0>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3362,9 +3450,10 @@ fn device_events_first_delay_pends() {
         .withf(|r| *r)
         .return_const(());
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events(long_delay));
+    let mut stream = pin!(bus.device_events(&hub_state, long_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3397,9 +3486,10 @@ fn device_events_second_delay_pends() {
         .withf(|r| !*r)
         .return_const(());
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events(short_delay));
+    let mut stream = pin!(bus.device_events(&hub_state, short_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3439,9 +3529,10 @@ fn device_events_new_device_fails() {
         .withf(is_get_device_descriptor::<8>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3483,9 +3574,10 @@ fn device_events_new_device_pends() {
         .withf(is_get_device_descriptor::<8>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events(no_delay));
+    let mut stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3539,9 +3631,10 @@ fn device_events_set_address_fails() {
         .withf(is_set_address::<31>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3597,9 +3690,10 @@ fn device_events_set_address_pends() {
         .withf(is_set_address::<31>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events(no_delay));
+    let mut stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3622,9 +3716,10 @@ fn device_events_root_disconnect() {
         mdd
     });
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3717,9 +3812,10 @@ fn device_events_root_connect_is_hub() {
         .withf(is_set_port_power::<1, 2>)
         .returning(control_transfer_ok::<0>);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3786,9 +3882,10 @@ fn device_events_root_connect_new_hub_fails() {
         .withf(is_get_configuration_descriptor::<1>)
         .returning(control_transfer_timeout);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3851,9 +3948,10 @@ fn device_events_root_connect_new_hub_pends() {
         .withf(is_get_configuration_descriptor::<1>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events(no_delay));
+    let mut stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());
@@ -3882,9 +3980,10 @@ fn device_events_hub_packet() {
         mdd
     });
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3910,9 +4009,10 @@ fn device_events_hub_packet_fails() {
         mdd
     });
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let stream = pin!(bus.device_events(no_delay));
+    let stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.poll_next(&mut c);
     let result = unwrap_poll(poll).unwrap();
@@ -3951,9 +4051,10 @@ fn device_events_hub_packet_pends() {
         .withf(is_get_port_status::<1>)
         .returning(control_transfer_pending);
 
+    let hub_state = HubState::new(&hc);
     let bus = UsbBus::new(hc);
 
-    let mut stream = pin!(bus.device_events(no_delay));
+    let mut stream = pin!(bus.device_events(&hub_state, no_delay));
 
     let poll = stream.as_mut().poll_next(&mut c);
     assert!(poll.is_pending());

@@ -150,10 +150,28 @@ impl DescriptorVisitor for BasicConfiguration {
     }
 }
 
-#[derive(Default)]
-struct HubState {
-    topology: Topology,
-    //needs_reset: BitSet,
+pub struct HubState<HC: HostController> {
+    topology: RefCell<Topology>,
+    pipes: RefCell<HC::MultiInterruptPipe>,
+}
+
+impl<HC: HostController> HubState<HC> {
+    pub fn new(host_controller: &HC) -> Self {
+        Self {
+            topology: Default::default(),
+            pipes: RefCell::new(host_controller.multi_interrupt_pipe()),
+        }
+    }
+
+    /// Return a snapshot of the current physical bus layout
+    ///
+    /// This snapshot includes a representation of all the hubs and
+    /// devices currently detected, and how they are linked together.
+    ///
+    /// This is useful for logging/debugging.
+    pub fn topology(&self) -> Topology {
+        self.topology.borrow().clone()
+    }
 }
 
 /// A USB host bus.
@@ -172,20 +190,12 @@ struct HubState {
 ///
 pub struct UsbBus<HC: HostController> {
     driver: HC,
-    hub_pipes: RefCell<HC::MultiInterruptPipe>,
-    hub_state: RefCell<HubState>,
 }
 
 impl<HC: HostController> UsbBus<HC> {
     /// Create a new USB host bus from a host-controller driver
     pub fn new(driver: HC) -> Self {
-        let hp = driver.multi_interrupt_pipe();
-
-        Self {
-            driver,
-            hub_pipes: RefCell::new(hp),
-            hub_state: Default::default(),
-        }
+        Self { driver }
     }
 
     /// Obtain a stream of hotplug/hot-unplug events
@@ -198,14 +208,15 @@ impl<HC: HostController> UsbBus<HC> {
     /// ```no_run
     /// # use cotton_usb_host::host_controller::HostController;
     /// # use std::pin::{pin, Pin};
-    /// # use cotton_usb_host::usb_bus::UsbBus;
+    /// # use cotton_usb_host::usb_bus::{HubState, UsbBus};
     /// # use futures::{future, Future, Stream, StreamExt};
     /// # fn delay_ms(_ms: usize) -> impl Future<Output = ()> {
     /// #  future::ready(())
     /// # }
     /// # async fn foo<D: HostController>(driver: D) -> () {
+    /// let hub_state = HubState::new(&driver);
     /// let bus = UsbBus::new(driver);
-    /// let mut device_stream = pin!(bus.device_events(delay_ms));
+    /// let mut device_stream = pin!(bus.device_events(&hub_state, delay_ms));
     /// loop {
     ///     let event = device_stream.next().await;
     ///     // ... process the event ...
@@ -232,12 +243,14 @@ impl<HC: HostController> UsbBus<HC> {
     /// instead of `device_events()` and get smaller, simpler code.
     ///
     pub fn device_events<
+        'a,
         D: Future<Output = ()>,
         F: Fn(usize) -> D + 'static + Clone,
     >(
-        &self,
+        &'a self,
+        hub_state: &'a HubState<HC>,
         delay_ms_in: F,
-    ) -> impl Stream<Item = DeviceEvent> + '_ {
+    ) -> impl Stream<Item = DeviceEvent> + 'a {
         let root_device = self.driver.device_detect();
 
         enum InternalEvent {
@@ -248,7 +261,7 @@ impl<HC: HostController> UsbBus<HC> {
         futures::stream::select(
             root_device.map(InternalEvent::Root),
             MultiInterruptStream::<HC::MultiInterruptPipe> {
-                pipe: &self.hub_pipes,
+                pipe: &hub_state.pipes,
             }
             .map(InternalEvent::Packet),
         )
@@ -272,10 +285,9 @@ impl<HC: HostController> UsbBus<HC> {
                                     }
                                 };
                             let is_hub = info.class == HUB_CLASSCODE;
-                            let address = self
-                                .hub_state
-                                .borrow_mut()
+                            let address = hub_state
                                 .topology
+                                .borrow_mut()
                                 .device_connect(0, 1, is_hub)
                                 .expect("Root connect should always succeed");
                             let device = match self
@@ -291,7 +303,7 @@ impl<HC: HostController> UsbBus<HC> {
                             };
                             if is_hub {
                                 debug::println!("It's a hub");
-                                match self.new_hub(device).await {
+                                match self.new_hub(hub_state, device).await {
                                     Ok(device) => {
                                         return DeviceEvent::HubConnect(device)
                                     }
@@ -304,15 +316,15 @@ impl<HC: HostController> UsbBus<HC> {
                             }
                             DeviceEvent::Connect(device, info)
                         } else {
-                            self.hub_state
-                                .borrow_mut()
+                            hub_state
                                 .topology
+                                .borrow_mut()
                                 .device_disconnect(0, 1);
                             DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                         }
                     }
                     InternalEvent::Packet(packet) => self
-                        .handle_hub_packet(&packet, delay_ms)
+                        .handle_hub_packet(hub_state, &packet, delay_ms)
                         .await
                         .unwrap_or_else(|e| {
                             DeviceEvent::EnumerationError(0, 1, e)
@@ -359,7 +371,7 @@ impl<HC: HostController> UsbBus<HC> {
     ///
     /// If you would rather let the cotton-usb-host crate take care of
     /// hubs automatically, you can use
-    /// [`device_events()`](`UsbBus::device_events_no_hubs()`) instead
+    /// [`device_events()`](`UsbBus::device_events()`) instead
     /// of `device_events_no_hubs()`.
     ///
     pub fn device_events_no_hubs<
@@ -581,13 +593,14 @@ impl<HC: HostController> UsbBus<HC> {
 
     async fn new_hub(
         &self,
+        hub_state: &HubState<HC>,
         device: UnconfiguredDevice,
     ) -> Result<UsbDevice, UsbError> {
         debug::println!("gbc!");
         let bc = self.get_basic_configuration(&device).await?;
         debug::println!("cfg: {:?}", &bc);
         let device = self.configure(device, bc.configuration_value).await?;
-        self.hub_pipes.borrow_mut().try_add(
+        hub_state.pipes.borrow_mut().try_add(
             device.address(),
             bc.in_endpoints.trailing_zeros() as u8,
             device.packet_size_ep0,
@@ -625,16 +638,6 @@ impl<HC: HostController> UsbBus<HC> {
         }
 
         Ok(device)
-    }
-
-    /// Return a snapshot of the current physical bus layout
-    ///
-    /// This snapshot includes a representation of all the hubs and
-    /// devices currently detected, and how they are linked together.
-    ///
-    /// This is useful for logging/debugging.
-    pub fn topology(&self) -> Topology {
-        self.hub_state.borrow().topology.clone()
     }
 
     async fn get_hub_port_status(
@@ -723,6 +726,7 @@ impl<HC: HostController> UsbBus<HC> {
         F: Fn(usize) -> D + 'static + Clone,
     >(
         &self,
+        hub_state: &HubState<HC>,
         packet: &InterruptPacket,
         delay_ms: F,
     ) -> Result<DeviceEvent, UsbError> {
@@ -777,10 +781,9 @@ impl<HC: HostController> UsbBus<HC> {
                     // C_PORT_CONNECTION
                     if (state & 1) == 0 {
                         // now disconnected
-                        let mask = self
-                            .hub_state
-                            .borrow_mut()
+                        let mask = hub_state
                             .topology
+                            .borrow_mut()
                             .device_disconnect(packet.address, port);
 
                         return Ok(DeviceEvent::Disconnect(BitSet(mask)));
@@ -807,18 +810,16 @@ impl<HC: HostController> UsbBus<HC> {
 
                         let (device, info) = self.new_device(speed).await?;
                         let is_hub = info.class == HUB_CLASSCODE;
-                        let address = {
-                            let mut state = self.hub_state.borrow_mut();
-                            state
-                                .topology
-                                .device_connect(packet.address, port, is_hub)
-                                .ok_or(UsbError::TooManyDevices)?
-                        };
+                        let address = hub_state
+                            .topology
+                            .borrow_mut()
+                            .device_connect(packet.address, port, is_hub)
+                            .ok_or(UsbError::TooManyDevices)?;
                         let device = self.set_address(device, address).await?;
                         if is_hub {
                             debug::println!("It's a hub");
                             return Ok(DeviceEvent::HubConnect(
-                                self.new_hub(device).await?,
+                                self.new_hub(hub_state, device).await?,
                             ));
                         }
 

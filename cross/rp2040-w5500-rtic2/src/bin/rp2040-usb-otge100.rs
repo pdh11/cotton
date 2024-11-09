@@ -13,7 +13,7 @@ mod app {
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
     use cotton_usb_host::usb_bus::{
-        DataPhase, DeviceEvent, UsbBus, UsbDevice, UsbError,
+        DataPhase, DeviceEvent, HubState, UsbBus, UsbDevice, UsbError,
     };
     use cotton_usb_host::wire::{
         SetupPacket, DEVICE_TO_HOST, HOST_TO_DEVICE, VENDOR_REQUEST,
@@ -239,9 +239,10 @@ mod app {
             cx.shared.shared,
             statics,
         );
+        let hub_state = HubState::new(&driver);
         let stack = UsbBus::new(driver);
 
-        let mut p = pin!(stack.device_events(rtic_delay));
+        let mut p = pin!(stack.device_events(&hub_state, rtic_delay));
 
         loop {
             let device = p.next().await;
@@ -255,7 +256,7 @@ mod app {
                 );
             }
 
-            defmt::println!("{:?}", stack.topology());
+            defmt::println!("{:?}", hub_state.topology());
 
             if let Some(DeviceEvent::Connect(device, info)) = device {
                 defmt::println!("Got device {:x} {:x}", device, info);
