@@ -82,14 +82,15 @@ impl Default for UsbShared {
 }
 
 pub struct UsbStatics {
-    // @TODO shouldn't be pub
-    pub bulk_pipes: Pool,
+    bulk_pipes: Pool,
+    control_pipes: Pool,
 }
 
 impl UsbStatics {
     pub const fn new() -> Self {
         Self {
             bulk_pipes: Pool::new(15),
+            control_pipes: Pool::new(1),
         }
     }
 }
@@ -200,18 +201,18 @@ impl Future for Rp2040ControlEndpoint<'_> {
     }
 }
 
-pub type Pipe<'a> = crate::async_pool::Pooled<'a>;
+pub type Pipe = crate::async_pool::Pooled<'static>;
 
-pub struct Rp2040InterruptPipe<'driver> {
-    driver: &'driver Rp2040HostController,
-    pipe: Pipe<'driver>,
+pub struct Rp2040InterruptPipe {
+    shared: &'static UsbShared,
+    pipe: Pipe,
     max_packet_size: u16,
     data_toggle: Cell<bool>,
 }
 
-impl InterruptPipe for Rp2040InterruptPipe<'_> {
+impl InterruptPipe for Rp2040InterruptPipe {
     fn set_waker(&self, waker: &core::task::Waker) {
-        self.driver.shared.pipe_wakers[self.pipe.n as usize].register(waker);
+        self.shared.pipe_wakers[self.pipe.n as usize].register(waker);
     }
 
     fn poll(&self) -> Option<InterruptPacket> {
@@ -769,7 +770,6 @@ pub struct Rp2040HostController {
     statics: &'static UsbStatics,
     regs: pac::USBCTRL_REGS,
     dpram: pac::USBCTRL_DPRAM,
-    control_pipes: Pool,
 }
 
 impl Rp2040HostController {
@@ -815,13 +815,12 @@ impl Rp2040HostController {
             dpram,
             shared,
             statics,
-            control_pipes: Pool::new(1),
         }
     }
 
     async fn alloc_pipe(&self, endpoint_type: EndpointType) -> Pipe {
         if endpoint_type == EndpointType::Control {
-            self.control_pipes.alloc().await
+            self.statics.control_pipes.alloc().await
         } else {
             let mut p = self.statics.bulk_pipes.alloc().await;
             p.n += 1;
@@ -1164,7 +1163,7 @@ impl Rp2040HostController {
 }
 
 impl HostController for Rp2040HostController {
-    type InterruptPipe<'driver> = Rp2040InterruptPipe<'driver> where Self: 'driver;
+    type InterruptPipe = Rp2040InterruptPipe;
     type MultiInterruptPipe = Rp2040MultiInterruptPipe;
     type DeviceDetect = Rp2040DeviceDetect;
 
@@ -1225,7 +1224,7 @@ impl HostController for Rp2040HostController {
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
-    ) -> Rp2040InterruptPipe<'_> {
+    ) -> Rp2040InterruptPipe {
         let mut pipe = self.statics.bulk_pipes.alloc().await;
         pipe.n += 1;
         debug::println!("interrupt_endpoint on pipe {}", pipe.n);
@@ -1273,7 +1272,7 @@ impl HostController for Rp2040HostController {
             .modify(|_, w| w.available_0().set_bit());
 
         Self::InterruptPipe {
-            driver: self,
+            shared: self.shared,
             pipe,
             max_packet_size,
             data_toggle: Cell::new(false),

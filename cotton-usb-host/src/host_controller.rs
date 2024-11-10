@@ -115,9 +115,7 @@ pub trait MultiInterruptPipe: InterruptPipe {
 }
 
 pub trait HostController {
-    type InterruptPipe<'driver>: InterruptPipe
-    where
-        Self: 'driver;
+    type InterruptPipe: InterruptPipe;
     type MultiInterruptPipe: MultiInterruptPipe;
     type DeviceDetect: Stream<Item = DeviceStatus>;
 
@@ -139,7 +137,7 @@ pub trait HostController {
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
-    ) -> impl core::future::Future<Output = Self::InterruptPipe<'_>>;
+    ) -> impl core::future::Future<Output = Self::InterruptPipe>;
 
     fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe;
 }
@@ -236,8 +234,7 @@ pub mod tests {
     }
 
     impl HostController for MockHostController {
-        type InterruptPipe<'hc> = MockInterruptPipe
-                where Self: 'hc;
+        type InterruptPipe = MockInterruptPipe;
         type MultiInterruptPipe = MockMultiInterruptPipe;
         type DeviceDetect = MockDeviceDetect;
 
@@ -271,7 +268,7 @@ pub mod tests {
             endpoint: u8,
             max_packet_size: u16,
             interval_ms: u8,
-        ) -> impl Future<Output = Self::InterruptPipe<'_>> {
+        ) -> impl Future<Output = Self::InterruptPipe> {
             self.inner.alloc_interrupt_pipe(
                 address,
                 endpoint,

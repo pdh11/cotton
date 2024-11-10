@@ -153,13 +153,17 @@ impl DescriptorVisitor for BasicConfiguration {
 pub struct HubState<HC: HostController> {
     topology: RefCell<Topology>,
     pipes: RefCell<HC::MultiInterruptPipe>,
+    //pipes2: RefCell<[Option<HC::InterruptPipe>; 15]>,
 }
 
 impl<HC: HostController> HubState<HC> {
+    //const NONE: Option<HC::InterruptPipe> = None;
+
     pub fn new(host_controller: &HC) -> Self {
         Self {
             topology: Default::default(),
             pipes: RefCell::new(host_controller.multi_interrupt_pipe()),
+            //pipes2: RefCell::new([Self::NONE; 15]),
         }
     }
 
@@ -556,7 +560,7 @@ impl<HC: HostController> UsbBus<HC> {
         );
         async move {
             let pipe = pipe.await;
-            InterruptStream::<HC::InterruptPipe<'_>> { pipe }
+            InterruptStream::<HC::InterruptPipe> { pipe }
         }
         .flatten_stream()
     }
