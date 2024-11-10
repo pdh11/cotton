@@ -1,6 +1,6 @@
 use crate::bitset::{BitIterator, BitSet};
 use crate::debug;
-use crate::interrupt::{InterruptStream, MultiInterruptStream};
+use crate::interrupt::InterruptStream;
 use crate::topology::Topology;
 use crate::wire::{
     ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
@@ -11,12 +11,14 @@ use crate::wire::{
     SET_FEATURE,
 };
 use core::cell::RefCell;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use futures::future::FutureExt;
 use futures::{Future, Stream, StreamExt};
 
 pub use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket,
-    MultiInterruptPipe, UsbError, UsbSpeed,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
+    UsbError, UsbSpeed,
 };
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -152,21 +154,19 @@ impl DescriptorVisitor for BasicConfiguration {
 
 pub struct HubState<HC: HostController> {
     topology: RefCell<Topology>,
-    pipes: RefCell<HC::MultiInterruptPipe>,
-    //pipes2: RefCell<[Option<HC::InterruptPipe>; 15]>,
+    pipes: RefCell<[Option<HC::InterruptPipe>; 15]>,
+}
+
+impl<HC: HostController> Default for HubState<HC> {
+    fn default() -> Self {
+        Self {
+            topology: Default::default(),
+            pipes: Default::default(),
+        }
+    }
 }
 
 impl<HC: HostController> HubState<HC> {
-    //const NONE: Option<HC::InterruptPipe> = None;
-
-    pub fn new(host_controller: &HC) -> Self {
-        Self {
-            topology: Default::default(),
-            pipes: RefCell::new(host_controller.multi_interrupt_pipe()),
-            //pipes2: RefCell::new([Self::NONE; 15]),
-        }
-    }
-
     /// Return a snapshot of the current physical bus layout
     ///
     /// This snapshot includes a representation of all the hubs and
@@ -175,6 +175,52 @@ impl<HC: HostController> HubState<HC> {
     /// This is useful for logging/debugging.
     pub fn topology(&self) -> Topology {
         self.topology.borrow().clone()
+    }
+
+    fn try_add(
+        &self,
+        hc: &HC,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u8,
+        interval_ms: u8,
+    ) -> Result<(), UsbError> {
+        for p in self.pipes.borrow_mut().iter_mut() {
+            if p.is_none() {
+                *p = Some(hc.try_alloc_interrupt_pipe(
+                    address,
+                    endpoint,
+                    max_packet_size as u16,
+                    interval_ms,
+                )?);
+                return Ok(());
+            }
+        }
+        Err(UsbError::TooManyDevices)
+    }
+}
+
+struct HubStateStream<'a, HC: HostController> {
+    state: &'a HubState<HC>,
+}
+
+impl<HC: HostController> Stream for HubStateStream<'_, HC> {
+    type Item = InterruptPacket;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Self::Item>> {
+        for pipe in self.state.pipes.borrow().iter().flatten() {
+            pipe.set_waker(cx.waker());
+        }
+
+        for pipe in self.state.pipes.borrow().iter().flatten() {
+            if let Some(packet) = pipe.poll() {
+                return Poll::Ready(Some(packet));
+            }
+        }
+        Poll::Pending
     }
 }
 
@@ -218,7 +264,7 @@ impl<HC: HostController> UsbBus<HC> {
     /// #  future::ready(())
     /// # }
     /// # async fn foo<D: HostController>(driver: D) -> () {
-    /// let hub_state = HubState::new(&driver);
+    /// let hub_state = HubState::default();
     /// let bus = UsbBus::new(driver);
     /// let mut device_stream = pin!(bus.device_events(&hub_state, delay_ms));
     /// loop {
@@ -264,10 +310,12 @@ impl<HC: HostController> UsbBus<HC> {
 
         futures::stream::select(
             root_device.map(InternalEvent::Root),
-            MultiInterruptStream::<HC::MultiInterruptPipe> {
-                pipe: &hub_state.pipes,
-            }
-            .map(InternalEvent::Packet),
+            HubStateStream { state: hub_state }
+                /*
+                MultiInterruptStream::<HC::MultiInterruptPipe> {
+                    pipe: &hub_state.pipes,
+                } */
+                .map(InternalEvent::Packet),
         )
         .then(move |ev| {
             let delay_ms = delay_ms_in.clone();
@@ -604,7 +652,8 @@ impl<HC: HostController> UsbBus<HC> {
         let bc = self.get_basic_configuration(&device).await?;
         debug::println!("cfg: {:?}", &bc);
         let device = self.configure(device, bc.configuration_value).await?;
-        hub_state.pipes.borrow_mut().try_add(
+        hub_state.try_add(
+            &self.driver,
             device.address(),
             bc.in_endpoints.trailing_zeros() as u8,
             device.packet_size_ep0,

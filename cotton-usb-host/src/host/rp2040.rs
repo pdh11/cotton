@@ -2,7 +2,7 @@ use crate::async_pool::Pool;
 use crate::debug;
 use crate::host_controller::{
     DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    MultiInterruptPipe, UsbError, UsbSpeed,
+    UsbError, UsbSpeed,
 };
 use crate::wire::{Direction, EndpointType, SetupPacket};
 use core::cell::Cell;
@@ -217,9 +217,14 @@ impl InterruptPipe for Rp2040InterruptPipe {
 
     fn poll(&self) -> Option<InterruptPacket> {
         let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let bc = dpram.ep_buffer_control((self.pipe.n * 2) as usize).read();
         if bc.full_0().bit() {
+            let addr_endp =
+                regs.host_addr_endp((self.pipe.n - 1) as usize).read();
             let mut result = InterruptPacket {
+                address: addr_endp.address().bits() as u8,
+                endpoint: addr_endp.endpoint().bits() as u8,
                 size: core::cmp::min(bc.length_0().bits(), 64) as u8,
                 ..Default::default()
             };
@@ -249,7 +254,6 @@ impl InterruptPipe for Rp2040InterruptPipe {
             dpram
                 .ep_buffer_control((self.pipe.n * 2) as usize)
                 .modify(|_, w| w.available_0().set_bit());
-            let regs = unsafe { pac::USBCTRL_REGS::steal() };
             defmt::println!(
                 "IE ready inte {:x} iec {:x} ecr {:x} epbc {:x}",
                 regs.inte().read().bits(),
@@ -266,7 +270,6 @@ impl InterruptPipe for Rp2040InterruptPipe {
 
             Some(result)
         } else {
-            let regs = unsafe { pac::USBCTRL_REGS::steal() };
             regs.inte().modify(|_, w| w.buff_status().set_bit());
             regs.int_ep_ctrl().modify(|r, w| unsafe {
                 w.bits(r.bits() | (1 << self.pipe.n))
@@ -289,172 +292,6 @@ impl InterruptPipe for Rp2040InterruptPipe {
 
             None
         }
-    }
-}
-
-type MultiPooled<'a> = crate::async_pool::MultiPooled<'a>;
-
-struct PipeInfo {
-    address: u8,
-    endpoint: u8,
-    max_packet_size: u8,
-    data_toggle: Cell<bool>,
-}
-
-pub struct Rp2040MultiInterruptPipe {
-    shared: &'static UsbShared,
-    //statics: &'static UsbStatics,
-    pipes: MultiPooled<'static>,
-    pipe_info: [Option<PipeInfo>; 16],
-}
-
-impl InterruptPipe for Rp2040MultiInterruptPipe {
-    fn set_waker(&self, waker: &core::task::Waker) {
-        for i in self.pipes.iter() {
-            self.shared.pipe_wakers[(i + 1) as usize].register(waker);
-        }
-    }
-
-    fn poll(&self) -> Option<InterruptPacket> {
-        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
-        for i in self.pipes.iter() {
-            let pipe = i + 1;
-            let bc = dpram.ep_buffer_control((pipe * 2) as usize).read();
-            if bc.full_0().bit() {
-                let info = self.pipe_info[pipe as usize].as_ref().unwrap();
-                let mut result = InterruptPacket {
-                    address: info.address,
-                    endpoint: info.endpoint,
-                    size: core::cmp::min(bc.length_0().bits(), 64) as u8,
-                    ..Default::default()
-                };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        (0x5010_0200 + (pipe as u32) * 64) as *const u8,
-                        &mut result.data[0] as *mut u8,
-                        result.size as usize,
-                    )
-                };
-                info.data_toggle.set(!info.data_toggle.get());
-                dpram.ep_buffer_control((pipe * 2) as usize).write(
-                    |w| unsafe {
-                        w.full_0()
-                            .clear_bit()
-                            .pid_0()
-                            .bit(info.data_toggle.get())
-                            .length_0()
-                            .bits(info.max_packet_size as u16)
-                            .last_0()
-                            .set_bit()
-                    },
-                );
-
-                cortex_m::asm::delay(12);
-
-                dpram
-                    .ep_buffer_control((pipe * 2) as usize)
-                    .modify(|_, w| w.available_0().set_bit());
-                let regs = unsafe { pac::USBCTRL_REGS::steal() };
-                defmt::println!(
-                    "ME ready inte {:x} iec {:x} ecr {:x} epbc {:x}",
-                    regs.inte().read().bits(),
-                    regs.int_ep_ctrl().read().bits(),
-                    dpram.ep_control((pipe * 2) as usize - 2).read().bits(),
-                    dpram.ep_buffer_control((pipe * 2) as usize).read().bits(),
-                );
-
-                return Some(result);
-            }
-        }
-
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
-        regs.inte().modify(|_, w| w.buff_status().set_bit());
-        // shift pipes.bits left because we don't use pipe 0
-        regs.int_ep_ctrl().modify(|r, w| unsafe {
-            w.bits(r.bits() | (self.pipes.bits() * 2))
-        });
-        defmt::trace!(
-            "ME pending bits {:x} inte {:x} iec {:x}",
-            self.pipes.bits() * 2,
-            regs.inte().read().bits(),
-            regs.int_ep_ctrl().read().bits(),
-        );
-        let mut mask = 0;
-        for i in self.pipes.iter() {
-            mask |= 3 << (i * 2);
-        }
-        regs.ep_status_stall_nak()
-            .write(|w| unsafe { w.bits(mask) });
-
-        None
-    }
-}
-
-impl MultiInterruptPipe for Rp2040MultiInterruptPipe {
-    fn try_add(
-        &mut self,
-        address: u8,
-        endpoint: u8,
-        max_packet_size: u8,
-        interval_ms: u8,
-    ) -> Result<(), UsbError> {
-        let p = self.pipes.try_alloc().ok_or(UsbError::AllPipesInUse)? + 1;
-        defmt::println!("ME got pipe {}", p);
-        let pi = PipeInfo {
-            address,
-            endpoint,
-            max_packet_size,
-            data_toggle: Cell::new(false),
-        };
-
-        self.pipe_info[p as usize] = Some(pi);
-
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
-        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
-        regs.host_addr_endp((p - 1) as usize).write(|w| unsafe {
-            w.address()
-                .bits(address)
-                .endpoint()
-                .bits(endpoint)
-                .intep_dir()
-                .clear_bit() // IN
-        });
-
-        dpram.ep_control((p * 2 - 2) as usize).write(|w| unsafe {
-            w.enable()
-                .set_bit()
-                .interrupt_per_buff()
-                .set_bit()
-                .endpoint_type()
-                .interrupt()
-                .buffer_address()
-                .bits(0x200 + (p as u16) * 64)
-                .host_poll_interval()
-                .bits(core::cmp::min(interval_ms as u16, 9))
-        });
-
-        dpram.ep_buffer_control((p * 2) as usize).write(|w| unsafe {
-            w.full_0()
-                .clear_bit()
-                .length_0()
-                .bits(max_packet_size as u16)
-                .pid_0()
-                .clear_bit()
-                .last_0()
-                .set_bit()
-        });
-
-        cortex_m::asm::delay(12);
-
-        dpram
-            .ep_buffer_control((p * 2) as usize)
-            .modify(|_, w| w.available_0().set_bit());
-
-        Ok(())
-    }
-
-    fn remove(&mut self, _address: u8) {
-        todo!()
     }
 }
 
@@ -1160,11 +997,68 @@ impl Rp2040HostController {
 
         Ok(buf.len())
     }
+
+    fn interrupt_pipe(
+        &self,
+        pipe: Pipe,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u16,
+        interval_ms: u8,
+    ) -> Rp2040InterruptPipe {
+        let n = pipe.n;
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        regs.host_addr_endp((n - 1) as usize).write(|w| unsafe {
+            w.address()
+                .bits(address)
+                .endpoint()
+                .bits(endpoint)
+                .intep_dir()
+                .clear_bit() // IN
+        });
+
+        dpram.ep_control((n * 2 - 2) as usize).write(|w| unsafe {
+            w.enable()
+                .set_bit()
+                .interrupt_per_buff()
+                .set_bit()
+                .endpoint_type()
+                .interrupt()
+                .buffer_address()
+                .bits(0x200 + (n as u16) * 64)
+                .host_poll_interval()
+                .bits(core::cmp::min(interval_ms as u16, 9))
+        });
+
+        dpram.ep_buffer_control((n * 2) as usize).write(|w| unsafe {
+            w.full_0()
+                .clear_bit()
+                .length_0()
+                .bits(max_packet_size)
+                .pid_0()
+                .clear_bit()
+                .last_0()
+                .set_bit()
+        });
+
+        cortex_m::asm::delay(12);
+
+        dpram
+            .ep_buffer_control((n * 2) as usize)
+            .modify(|_, w| w.available_0().set_bit());
+
+        Rp2040InterruptPipe {
+            shared: self.shared,
+            pipe,
+            max_packet_size,
+            data_toggle: Cell::new(false),
+        }
+    }
 }
 
 impl HostController for Rp2040HostController {
     type InterruptPipe = Rp2040InterruptPipe;
-    type MultiInterruptPipe = Rp2040MultiInterruptPipe;
     type DeviceDetect = Rp2040DeviceDetect;
 
     fn device_detect(&self) -> Self::DeviceDetect {
@@ -1228,64 +1122,34 @@ impl HostController for Rp2040HostController {
         let mut pipe = self.statics.bulk_pipes.alloc().await;
         pipe.n += 1;
         debug::println!("interrupt_endpoint on pipe {}", pipe.n);
-
-        let n = pipe.n;
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
-        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
-        regs.host_addr_endp((n - 1) as usize).write(|w| unsafe {
-            w.address()
-                .bits(address)
-                .endpoint()
-                .bits(endpoint)
-                .intep_dir()
-                .clear_bit() // IN
-        });
-
-        dpram.ep_control((n * 2 - 2) as usize).write(|w| unsafe {
-            w.enable()
-                .set_bit()
-                .interrupt_per_buff()
-                .set_bit()
-                .endpoint_type()
-                .interrupt()
-                .buffer_address()
-                .bits(0x200 + (n as u16) * 64)
-                .host_poll_interval()
-                .bits(core::cmp::min(interval_ms as u16, 9))
-        });
-
-        dpram.ep_buffer_control((n * 2) as usize).write(|w| unsafe {
-            w.full_0()
-                .clear_bit()
-                .length_0()
-                .bits(max_packet_size)
-                .pid_0()
-                .clear_bit()
-                .last_0()
-                .set_bit()
-        });
-
-        cortex_m::asm::delay(12);
-
-        dpram
-            .ep_buffer_control((n * 2) as usize)
-            .modify(|_, w| w.available_0().set_bit());
-
-        Self::InterruptPipe {
-            shared: self.shared,
+        self.interrupt_pipe(
             pipe,
+            address,
+            endpoint,
             max_packet_size,
-            data_toggle: Cell::new(false),
-        }
+            interval_ms,
+        )
     }
 
-    fn multi_interrupt_pipe(&self) -> Rp2040MultiInterruptPipe {
-        const N: Option<PipeInfo> = None;
-        Self::MultiInterruptPipe {
-            shared: self.shared,
-            //statics: self.statics,
-            pipes: MultiPooled::new(&self.statics.bulk_pipes),
-            pipe_info: [N; 16],
+    fn try_alloc_interrupt_pipe(
+        &self,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u16,
+        interval_ms: u8,
+    ) -> Result<Self::InterruptPipe, UsbError> {
+        if let Some(mut pipe) = self.statics.bulk_pipes.try_alloc() {
+            pipe.n += 1;
+            debug::println!("interrupt_endpoint on pipe {}", pipe.n);
+            Ok(self.interrupt_pipe(
+                pipe,
+                address,
+                endpoint,
+                max_packet_size,
+                interval_ms,
+            ))
+        } else {
+            Err(UsbError::TooManyDevices)
         }
     }
 }

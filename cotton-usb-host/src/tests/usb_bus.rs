@@ -1,7 +1,7 @@
 use super::*;
 use crate::host_controller::tests::{
     MockDeviceDetect, MockHostController, MockHostControllerInner,
-    MockInterruptPipe, MockMultiInterruptPipe,
+    MockInterruptPipe,
 };
 use crate::wire::{
     EndpointDescriptor, InterfaceDescriptor, ENDPOINT_DESCRIPTOR,
@@ -174,15 +174,6 @@ fn basic_configuration() {
     assert_eq!(bc.out_endpoints, 0b1100000100);
 }
 
-#[test]
-fn new_bus() {
-    let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
-    let _bus = UsbBus::new(hc);
-}
-
 fn is_set_configuration<const ADDR: u8, const N: u16>(
     a: &u8,
     p: &u8,
@@ -293,16 +284,12 @@ trait ExtraExpectations {
 
 impl ExtraExpectations for MockHostControllerInner {
     fn expect_add_to_multi_interrupt_pipe(&mut self) {
-        self.expect_multi_interrupt_pipe().returning(|| {
-            let mut mip = MockMultiInterruptPipe::new();
-            mip.expect_try_add().returning(|_, _, _, _| Ok(()));
-            mip
-        });
+        self.expect_try_alloc_interrupt_pipe()
+            .returning(|_, _, _, _| Ok(MockInterruptPipe::new()));
     }
 
     fn expect_multi_interrupt_pipe_ignored(&mut self) {
-        self.expect_multi_interrupt_pipe()
-            .returning(MockMultiInterruptPipe::new);
+        self.expect_try_alloc_interrupt_pipe().times(0);
     }
 
     fn expect_get_configuration<const ADDR: u8>(&mut self) {
@@ -417,11 +404,18 @@ fn do_test<
 
     let f = Fixture {
         c: &mut c,
-        hub_state: HubState::new(&hc),
+        hub_state: HubState::default(),
         bus: UsbBus::new(hc),
     };
 
     test(f);
+}
+
+#[test]
+fn new_bus() {
+    let mut hc = MockHostController::default();
+    hc.inner.expect_multi_interrupt_pipe_ignored();
+    let _bus = UsbBus::new(hc);
 }
 
 #[test]
@@ -515,9 +509,7 @@ fn get_basic_configuration_bad_descriptors() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_multi_interrupt_pipe_ignored();
 
     hc.inner
         .expect_control_transfer()
@@ -538,9 +530,7 @@ fn get_basic_configuration_bad_configuration_value() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_multi_interrupt_pipe_ignored();
 
     hc.inner
         .expect_control_transfer()
@@ -565,9 +555,7 @@ fn get_basic_configuration_pends() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_multi_interrupt_pipe_ignored();
 
     hc.inner
         .expect_control_transfer()
@@ -590,9 +578,7 @@ fn get_basic_configuration_fails() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
+    hc.inner.expect_multi_interrupt_pipe_ignored();
 
     hc.inner
         .expect_control_transfer()
@@ -630,10 +616,6 @@ fn set_address() {
 
     let mut hc = MockHostController::default();
     hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
-
-    hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_set_address::<5>)
@@ -652,10 +634,6 @@ fn set_address_pends() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
-
     hc.inner
         .expect_control_transfer()
         .times(1)
@@ -678,10 +656,6 @@ fn set_address_fails() {
 
     let mut hc = MockHostController::default();
     hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
-
-    hc.inner
         .expect_control_transfer()
         .times(1)
         .withf(is_set_address::<5>)
@@ -701,9 +675,6 @@ fn interrupt_endpoint_in() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
     hc.inner
         .expect_alloc_interrupt_pipe()
         .withf(|a, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
@@ -729,9 +700,6 @@ fn interrupt_endpoint_in_pends() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
     hc.inner
         .expect_alloc_interrupt_pipe()
         .withf(|a, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
@@ -783,9 +751,6 @@ fn new_device() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
 
     // First call (wLength == 8)
     hc.inner
@@ -816,9 +781,6 @@ fn new_device_first_call_errors() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
 
     // First call (wLength == 8)
     hc.inner
@@ -843,9 +805,6 @@ fn new_device_first_call_short() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
 
     // First call (wLength == 8)
     hc.inner
@@ -870,9 +829,6 @@ fn new_device_second_call_errors() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
 
     // First call (wLength == 8)
     hc.inner
@@ -902,9 +858,6 @@ fn new_device_second_call_pends() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
 
     // First call (wLength == 8)
     hc.inner
@@ -935,9 +888,6 @@ fn new_device_second_call_short() {
     let mut c = core::task::Context::from_waker(&w);
 
     let mut hc = MockHostController::default();
-    hc.inner
-        .expect_multi_interrupt_pipe()
-        .returning(MockMultiInterruptPipe::new);
 
     // First call (wLength == 8)
     hc.inner
@@ -1059,8 +1009,6 @@ fn new_hub_giant() {
 fn new_hub_get_configuration_fails() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe_ignored();
-
             // Call to get_basic_configuration
             hc.expect_control_transfer()
                 .times(1)
@@ -1080,7 +1028,6 @@ fn new_hub_get_configuration_fails() {
 fn new_hub_configure_fails() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe_ignored();
             hc.expect_get_configuration::<5>();
 
             // Call to configure
@@ -1102,7 +1049,6 @@ fn new_hub_configure_fails() {
 fn new_hub_configure_pends() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe_ignored();
             hc.expect_get_configuration::<5>();
 
             // Call to configure
@@ -1126,12 +1072,8 @@ fn new_hub_configure_pends() {
 fn new_hub_try_add_fails() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe().returning(|| {
-                let mut mip = MockMultiInterruptPipe::new();
-                mip.expect_try_add()
-                    .returning(|_, _, _, _| Err(UsbError::TooManyDevices));
-                mip
-            });
+            hc.expect_try_alloc_interrupt_pipe()
+                .returning(|_, _, _, _| Err(UsbError::TooManyDevices));
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
         },
@@ -2799,16 +2741,6 @@ fn device_events_root_connect_new_hub_pends() {
 fn device_events_hub_packet() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe().returning(|| {
-                let mut mip = MockMultiInterruptPipe::new();
-                mip.expect_set_waker().return_const(());
-                mip.expect_poll().returning(|| {
-                    let mut ip = InterruptPacket::new();
-                    ip.size = 1;
-                    Some(ip)
-                });
-                mip
-            });
             hc.expect_device_detect().returning(|| {
                 let mut mdd = MockDeviceDetect::new();
                 mdd.expect_poll_next().returning(|_| Poll::Pending);
@@ -2816,6 +2748,16 @@ fn device_events_hub_packet() {
             });
         },
         |f| {
+            f.hub_state.pipes.borrow_mut()[0] = {
+                let mut ip = MockInterruptPipe::new();
+                ip.expect_set_waker().return_const(());
+                ip.expect_poll().returning(|| {
+                    let mut ip = InterruptPacket::new();
+                    ip.size = 1;
+                    Some(ip)
+                });
+                Some(ip)
+            };
             let stream = pin!(f.bus.device_events(&f.hub_state, no_delay));
 
             let poll = stream.poll_next(f.c);
@@ -2829,14 +2771,6 @@ fn device_events_hub_packet() {
 fn device_events_hub_packet_fails() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe().returning(|| {
-                let mut mip = MockMultiInterruptPipe::new();
-                mip.expect_set_waker().return_const(());
-                mip.expect_poll().returning(|| {
-                    Some(InterruptPacket::new()) // a 0-length packet
-                });
-                mip
-            });
             hc.expect_device_detect().returning(|| {
                 let mut mdd = MockDeviceDetect::new();
                 mdd.expect_poll_next().returning(|_| Poll::Pending);
@@ -2844,6 +2778,14 @@ fn device_events_hub_packet_fails() {
             });
         },
         |f| {
+            f.hub_state.pipes.borrow_mut()[0] = {
+                let mut ip = MockInterruptPipe::new();
+                ip.expect_set_waker().return_const(());
+                ip.expect_poll().returning(|| {
+                    Some(InterruptPacket::new()) // 0-length packet
+                });
+                Some(ip)
+            };
             let stream = pin!(f.bus.device_events(&f.hub_state, no_delay));
             let poll = stream.poll_next(f.c);
             let result = unwrap_poll(poll).unwrap();
@@ -2863,18 +2805,6 @@ fn device_events_hub_packet_fails() {
 fn device_events_hub_packet_pends() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe().returning(|| {
-                let mut mip = MockMultiInterruptPipe::new();
-                mip.expect_set_waker().return_const(());
-                mip.expect_poll().returning(|| {
-                    let mut ip = InterruptPacket::new();
-                    ip.size = 1;
-                    ip.address = 5;
-                    ip.data[0] = 2;
-                    Some(ip)
-                });
-                mip
-            });
             hc.expect_device_detect().returning(|| {
                 let mut mdd = MockDeviceDetect::new();
                 mdd.expect_poll_next().returning(|_| Poll::Pending);
@@ -2887,6 +2817,18 @@ fn device_events_hub_packet_pends() {
                 .returning(control_transfer_pending);
         },
         |f| {
+            f.hub_state.pipes.borrow_mut()[0] = {
+                let mut mip = MockInterruptPipe::new();
+                mip.expect_set_waker().return_const(());
+                mip.expect_poll().returning(|| {
+                    let mut ip = InterruptPacket::new();
+                    ip.size = 1;
+                    ip.address = 5;
+                    ip.data[0] = 2;
+                    Some(ip)
+                });
+                Some(mip)
+            };
             let mut stream = pin!(f.bus.device_events(&f.hub_state, no_delay));
             let poll = stream.as_mut().poll_next(f.c);
             assert!(poll.is_pending());
@@ -2916,8 +2858,6 @@ fn is_read_mac_address(
 fn control_transfer() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe()
-                .returning(MockMultiInterruptPipe::new);
             hc.expect_control_transfer()
                 .times(1)
                 .withf(is_read_mac_address)
@@ -2950,8 +2890,6 @@ fn control_transfer() {
 fn control_transfer_pends() {
     do_test(
         |hc| {
-            hc.expect_multi_interrupt_pipe()
-                .returning(MockMultiInterruptPipe::new);
             hc.expect_control_transfer()
                 .times(1)
                 .withf(is_read_mac_address)
@@ -2975,6 +2913,56 @@ fn control_transfer_pends() {
             assert!(poll.is_pending());
             let poll = fut.as_mut().poll(f.c);
             assert!(poll.is_pending());
+        },
+    );
+}
+
+#[test]
+fn hub_state_fills_up() {
+    let mut hc = MockHostController::default();
+    hc.inner
+        .expect_try_alloc_interrupt_pipe()
+        .returning(|_, _, _, _| Ok(MockInterruptPipe::default()));
+    let hub_state = HubState::default();
+
+    for i in 0..15 {
+        hub_state.try_add(&hc, i, i, i, i).unwrap();
+    }
+
+    let r = hub_state.try_add(&hc, 0, 0, 0, 0);
+    assert_eq!(r, Err(UsbError::TooManyDevices));
+}
+
+#[test]
+fn empty_hub_state_pends() {
+    do_test(
+        |_hc| {},
+        |f| {
+            let stream = pin!(HubStateStream {
+                state: &f.hub_state
+            });
+            let r = stream.poll_next(f.c);
+            assert!(r.is_pending());
+        },
+    );
+}
+
+#[test]
+fn hub_state_passes_on_pend() {
+    do_test(
+        |_hc| {},
+        |f| {
+            f.hub_state.pipes.borrow_mut()[0] = {
+                let mut ip = MockInterruptPipe::new();
+                ip.expect_set_waker().return_const(());
+                ip.expect_poll().returning(|| None);
+                Some(ip)
+            };
+            let stream = pin!(HubStateStream {
+                state: &f.hub_state
+            });
+            let r = stream.poll_next(f.c);
+            assert!(r.is_pending());
         },
     );
 }

@@ -102,21 +102,8 @@ pub trait InterruptPipe {
     fn poll(&self) -> Option<InterruptPacket>;
 }
 
-pub trait MultiInterruptPipe: InterruptPipe {
-    fn try_add(
-        &mut self,
-        address: u8,
-        endpoint: u8,
-        max_packet_size: u8,
-        interval_ms: u8,
-    ) -> Result<(), UsbError>;
-
-    fn remove(&mut self, address: u8);
-}
-
 pub trait HostController {
     type InterruptPipe: InterruptPipe;
-    type MultiInterruptPipe: MultiInterruptPipe;
     type DeviceDetect: Stream<Item = DeviceStatus>;
 
     fn device_detect(&self) -> Self::DeviceDetect;
@@ -139,7 +126,13 @@ pub trait HostController {
         interval_ms: u8,
     ) -> impl core::future::Future<Output = Self::InterruptPipe>;
 
-    fn multi_interrupt_pipe(&self) -> Self::MultiInterruptPipe;
+    fn try_alloc_interrupt_pipe(
+        &self,
+        address: u8,
+        endpoint: u8,
+        max_packet_size: u16,
+        interval_ms: u8,
+    ) -> Result<Self::InterruptPipe, UsbError>;
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -158,27 +151,6 @@ pub mod tests {
         impl InterruptPipe for InterruptPipe {
             fn set_waker(&self, waker: &core::task::Waker);
             fn poll(&self) -> Option<InterruptPacket>;
-        }
-    }
-
-    mock! {
-        pub MultiInterruptPipe {}
-
-        impl InterruptPipe for MultiInterruptPipe {
-            fn set_waker(&self, waker: &core::task::Waker);
-            fn poll(&self) -> Option<InterruptPacket>;
-        }
-
-        impl MultiInterruptPipe for MultiInterruptPipe {
-            fn try_add(
-                &mut self,
-                address: u8,
-                endpoint: u8,
-                max_packet_size: u8,
-                interval_ms: u8,
-            ) -> Result<(), UsbError>;
-
-            fn remove(&mut self, address: u8);
         }
     }
 
@@ -217,7 +189,13 @@ pub mod tests {
                 interval_ms: u8,
             ) -> impl core::future::Future<Output = MockInterruptPipe>;
 
-            pub fn multi_interrupt_pipe(&self) -> MockMultiInterruptPipe;
+            pub fn try_alloc_interrupt_pipe(
+                &self,
+                address: u8,
+                endpoint: u8,
+                max_packet_size: u16,
+                interval_ms: u8,
+            ) -> Result<MockInterruptPipe, UsbError>;
         }
     }
 
@@ -235,7 +213,6 @@ pub mod tests {
 
     impl HostController for MockHostController {
         type InterruptPipe = MockInterruptPipe;
-        type MultiInterruptPipe = MockMultiInterruptPipe;
         type DeviceDetect = MockDeviceDetect;
 
         fn device_detect(&self) -> Self::DeviceDetect {
@@ -277,8 +254,19 @@ pub mod tests {
             )
         }
 
-        fn multi_interrupt_pipe(&self) -> MockMultiInterruptPipe {
-            self.inner.multi_interrupt_pipe()
+        fn try_alloc_interrupt_pipe(
+            &self,
+            address: u8,
+            endpoint: u8,
+            max_packet_size: u16,
+            interval_ms: u8,
+        ) -> Result<Self::InterruptPipe, UsbError> {
+            self.inner.try_alloc_interrupt_pipe(
+                address,
+                endpoint,
+                max_packet_size,
+                interval_ms,
+            )
         }
     }
 

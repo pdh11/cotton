@@ -239,7 +239,7 @@ mod app {
             cx.shared.shared,
             statics,
         );
-        let hub_state = HubState::new(&driver);
+        let hub_state = HubState::default();
         let stack = UsbBus::new(driver);
 
         let mut p = pin!(stack.device_events(&hub_state, rtic_delay));

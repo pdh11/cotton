@@ -37,42 +37,6 @@ impl Drop for Pooled<'_> {
     }
 }
 
-pub struct MultiPooled<'a> {
-    bitmap: BitSet,
-    pool: &'a Pool,
-}
-
-impl<'a> MultiPooled<'a> {
-    pub const fn new(pool: &'a Pool) -> Self {
-        Self {
-            bitmap: BitSet::new(),
-            pool,
-        }
-    }
-
-    pub fn try_alloc(&mut self) -> Option<u8> {
-        let n = self.pool.alloc_internal()?;
-        self.bitmap.set(n);
-        Some(n)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = u8> {
-        self.bitmap.iter()
-    }
-
-    pub fn bits(&self) -> u32 {
-        self.bitmap.0
-    }
-}
-
-impl Drop for MultiPooled<'_> {
-    fn drop(&mut self) {
-        for n in self.bitmap.iter() {
-            self.pool.dealloc_internal(n);
-        }
-    }
-}
-
 pub struct PoolFuture<'a> {
     pool: &'a Pool,
 }
@@ -181,41 +145,12 @@ mod tests {
     }
 
     #[test]
-    fn alloc_dealloc_multi() {
-        let p = Pool::new(4);
-        {
-            let mut m = MultiPooled::new(&p);
-            assert_eq!(m.bits(), 0);
-            assert_eq!(m.try_alloc().unwrap(), 0);
-            assert_eq!(m.try_alloc().unwrap(), 1);
-            assert_eq!(m.try_alloc().unwrap(), 2);
-            assert_eq!(m.try_alloc().unwrap(), 3);
-            assert_eq!(m.try_alloc(), None);
-            assert_eq!(m.bits(), 0b1111);
-
-            let mut i = m.iter();
-            assert_eq!(i.next(), Some(0));
-            assert_eq!(i.next(), Some(1));
-            assert_eq!(i.next(), Some(2));
-            assert_eq!(i.next(), Some(3));
-            assert_eq!(i.next(), None);
-
-            assert_eq!(m.bits(), 0b1111); // i.e. not changed by iterator
-
-            assert_eq!(p.allocated.get().0, 0b1111);
-        }
-        assert_eq!(p.allocated.get().0, 0);
-    }
-
-    #[test]
     fn alloc_setany_fails() {
+        // setany only fails if we fill all 32 bits of the bitset
         let p = Pool::new(32);
-        let mut m = MultiPooled::new(&p);
-        assert_eq!(m.bits(), 0);
-        for i in 0..32 {
-            assert_eq!(m.try_alloc().unwrap(), i);
-        }
-        assert_eq!(m.try_alloc(), None);
+        let _a: [Pooled; 32] =
+            core::array::from_fn(|_| p.try_alloc().unwrap());
+        assert!(p.try_alloc().is_none());
     }
 
     #[test]
