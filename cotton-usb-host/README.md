@@ -146,7 +146,7 @@ TODO before merge
  - [x] Rename types to wire
  - [x] Introduce delay to process_hub_packet and do away with currently_resetting
  - [ ] Remove from HubEventStream on disconnect
- - [ ] Move all tests to src/tests
+ - [x] Move all tests to src/tests
 
 TODO before 0.1.0:
 
