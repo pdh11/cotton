@@ -61,11 +61,21 @@ pub struct UsbDevice {
     usb_address: u8,
     usb_speed: UsbSpeed,
     packet_size_ep0: u8,
+    in_endpoints_bitmap: u16,
+    out_endpoints_bitmap: u16,
 }
 
 impl UsbDevice {
     pub fn address(&self) -> u8 {
         self.usb_address
+    }
+
+    pub fn in_endpoints(&self) -> BitSet {
+        BitSet(self.in_endpoints_bitmap as u32)
+    }
+
+    pub fn out_endpoints(&self) -> BitSet {
+        BitSet(self.out_endpoints_bitmap as u32)
     }
 }
 
@@ -148,6 +158,39 @@ impl DescriptorVisitor for BasicConfiguration {
             self.in_endpoints |= 1 << (i.bEndpointAddress & 15);
         } else {
             self.out_endpoints |= 1 << (i.bEndpointAddress & 15);
+        }
+    }
+}
+
+struct SpecificConfiguration {
+    configuration_value: u8,
+    ok: bool,
+    in_endpoints: u16,
+    out_endpoints: u16,
+}
+
+impl SpecificConfiguration {
+    const fn new(configuration_value: u8) -> Self {
+        Self {
+            configuration_value,
+            ok: false,
+            in_endpoints: 0,
+            out_endpoints: 0,
+        }
+    }
+}
+
+impl DescriptorVisitor for SpecificConfiguration {
+    fn on_configuration(&mut self, c: &ConfigurationDescriptor) {
+        self.ok = c.bConfigurationValue == self.configuration_value;
+    }
+    fn on_endpoint(&mut self, i: &EndpointDescriptor) {
+        if self.ok {
+            if (i.bEndpointAddress & 0x80) == 0x80 {
+                self.in_endpoints |= 1 << (i.bEndpointAddress & 15);
+            } else {
+                self.out_endpoints |= 1 << (i.bEndpointAddress & 15);
+            }
         }
     }
 }
@@ -477,14 +520,16 @@ impl<HC: HostController> UsbBus<HC> {
                 },
                 DataPhase::None,
             )
-            .map(|r| {
-                r.map(|_| UsbDevice {
-                    usb_address: device.usb_address,
-                    usb_speed: device.usb_speed,
-                    packet_size_ep0: device.packet_size_ep0,
-                })
-            })
-            .await
+            .await?;
+        let mut endpoints = SpecificConfiguration::new(configuration_value);
+        self.get_configuration(&device, &mut endpoints).await?;
+        Ok(UsbDevice {
+            usb_address: device.usb_address,
+            usb_speed: device.usb_speed,
+            packet_size_ep0: device.packet_size_ep0,
+            in_endpoints_bitmap: endpoints.in_endpoints,
+            out_endpoints_bitmap: endpoints.out_endpoints,
+        })
     }
 
     async fn new_device(
@@ -613,10 +658,11 @@ impl<HC: HostController> UsbBus<HC> {
         .flatten_stream()
     }
 
-    pub async fn get_basic_configuration(
+    async fn get_configuration(
         &self,
         device: &UnconfiguredDevice,
-    ) -> Result<BasicConfiguration, UsbError> {
+        visitor: &mut impl DescriptorVisitor,
+    ) -> Result<(), UsbError> {
         // TODO: descriptor suites >64 byte (Ella!)
         let mut buf = [0u8; 64];
         let sz = self
@@ -634,8 +680,16 @@ impl<HC: HostController> UsbBus<HC> {
                 DataPhase::In(&mut buf),
             )
             .await?;
+        crate::wire::parse_descriptors(&buf[0..sz], visitor);
+        Ok(())
+    }
+
+    pub async fn get_basic_configuration(
+        &self,
+        device: &UnconfiguredDevice,
+    ) -> Result<BasicConfiguration, UsbError> {
         let mut bd = BasicConfiguration::default();
-        crate::wire::parse_descriptors(&buf[0..sz], &mut bd);
+        self.get_configuration(device, &mut bd).await?;
         if bd.num_configurations == 0 || bd.configuration_value == 0 {
             Err(UsbError::ProtocolError)
         } else {

@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::host_controller::tests::MockInterruptPipe;
 use futures::Stream;

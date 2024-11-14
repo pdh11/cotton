@@ -60,6 +60,7 @@ const ELLA: &[u8] = &[
 fn example_config_descriptor(buf: &mut [u8]) -> usize {
     let total_length = (core::mem::size_of::<ConfigurationDescriptor>()
         + core::mem::size_of::<InterfaceDescriptor>()
+        + core::mem::size_of::<EndpointDescriptor>()
         + core::mem::size_of::<EndpointDescriptor>())
         as u16;
 
@@ -73,8 +74,110 @@ fn example_config_descriptor(buf: &mut [u8]) -> usize {
         bmAttributes: 0,
         bMaxPower: 0,
     };
-
     buf[0..9].copy_from_slice(bytemuck::bytes_of(&c));
+
+    let i = InterfaceDescriptor {
+        bLength: core::mem::size_of::<InterfaceDescriptor>() as u8,
+        bDescriptorType: INTERFACE_DESCRIPTOR,
+        bInterfaceNumber: 1,
+        bAlternateSetting: 0,
+        bNumEndpoints: 2,
+        bInterfaceClass: 0,
+        bInterfaceSubClass: 0,
+        bInterfaceProtocol: 0,
+        iInterface: 0,
+    };
+    buf[9..18].copy_from_slice(bytemuck::bytes_of(&i));
+
+    let e = EndpointDescriptor {
+        bLength: core::mem::size_of::<EndpointDescriptor>() as u8,
+        bDescriptorType: ENDPOINT_DESCRIPTOR,
+        bEndpointAddress: 1,
+        bmAttributes: 0,
+        wMaxPacketSize: 64u16.to_le_bytes(),
+        bInterval: 0,
+    };
+    buf[18..25].copy_from_slice(bytemuck::bytes_of(&e));
+
+    let e = EndpointDescriptor {
+        bLength: core::mem::size_of::<EndpointDescriptor>() as u8,
+        bDescriptorType: ENDPOINT_DESCRIPTOR,
+        bEndpointAddress: 0x82,
+        bmAttributes: 0,
+        wMaxPacketSize: 64u16.to_le_bytes(),
+        bInterval: 0,
+    };
+    buf[25..32].copy_from_slice(bytemuck::bytes_of(&e));
+
+    32
+}
+
+fn double_config_descriptor(buf: &mut [u8]) -> usize {
+    let total_length = (core::mem::size_of::<ConfigurationDescriptor>()
+        + core::mem::size_of::<InterfaceDescriptor>()
+        + core::mem::size_of::<EndpointDescriptor>()
+        + core::mem::size_of::<EndpointDescriptor>()
+        + core::mem::size_of::<ConfigurationDescriptor>()
+        + core::mem::size_of::<InterfaceDescriptor>()
+        + core::mem::size_of::<EndpointDescriptor>())
+        as u16;
+
+    let c = ConfigurationDescriptor {
+        bLength: core::mem::size_of::<ConfigurationDescriptor>() as u8,
+        bDescriptorType: CONFIGURATION_DESCRIPTOR,
+        wTotalLength: total_length.to_le_bytes(),
+        bNumInterfaces: 1,
+        bConfigurationValue: 1,
+        iConfiguration: 0,
+        bmAttributes: 0,
+        bMaxPower: 0,
+    };
+    buf[0..9].copy_from_slice(bytemuck::bytes_of(&c));
+
+    let i = InterfaceDescriptor {
+        bLength: core::mem::size_of::<InterfaceDescriptor>() as u8,
+        bDescriptorType: INTERFACE_DESCRIPTOR,
+        bInterfaceNumber: 1,
+        bAlternateSetting: 0,
+        bNumEndpoints: 2,
+        bInterfaceClass: 0,
+        bInterfaceSubClass: 0,
+        bInterfaceProtocol: 0,
+        iInterface: 0,
+    };
+    buf[9..18].copy_from_slice(bytemuck::bytes_of(&i));
+
+    let e = EndpointDescriptor {
+        bLength: core::mem::size_of::<EndpointDescriptor>() as u8,
+        bDescriptorType: ENDPOINT_DESCRIPTOR,
+        bEndpointAddress: 1,
+        bmAttributes: 0,
+        wMaxPacketSize: 64u16.to_le_bytes(),
+        bInterval: 0,
+    };
+    buf[18..25].copy_from_slice(bytemuck::bytes_of(&e));
+
+    let e = EndpointDescriptor {
+        bLength: core::mem::size_of::<EndpointDescriptor>() as u8,
+        bDescriptorType: ENDPOINT_DESCRIPTOR,
+        bEndpointAddress: 0x82,
+        bmAttributes: 0,
+        wMaxPacketSize: 64u16.to_le_bytes(),
+        bInterval: 0,
+    };
+    buf[25..32].copy_from_slice(bytemuck::bytes_of(&e));
+
+    let c = ConfigurationDescriptor {
+        bLength: core::mem::size_of::<ConfigurationDescriptor>() as u8,
+        bDescriptorType: CONFIGURATION_DESCRIPTOR,
+        wTotalLength: total_length.to_le_bytes(),
+        bNumInterfaces: 1,
+        bConfigurationValue: 2,
+        iConfiguration: 0,
+        bmAttributes: 0,
+        bMaxPower: 0,
+    };
+    buf[32..41].copy_from_slice(bytemuck::bytes_of(&c));
 
     let i = InterfaceDescriptor {
         bLength: core::mem::size_of::<InterfaceDescriptor>() as u8,
@@ -87,20 +190,19 @@ fn example_config_descriptor(buf: &mut [u8]) -> usize {
         bInterfaceProtocol: 0,
         iInterface: 0,
     };
-
-    buf[9..18].copy_from_slice(bytemuck::bytes_of(&i));
+    buf[41..50].copy_from_slice(bytemuck::bytes_of(&i));
 
     let e = EndpointDescriptor {
         bLength: core::mem::size_of::<EndpointDescriptor>() as u8,
         bDescriptorType: ENDPOINT_DESCRIPTOR,
-        bEndpointAddress: 1,
+        bEndpointAddress: 3,
         bmAttributes: 0,
         wMaxPacketSize: 64u16.to_le_bytes(),
         bInterval: 0,
     };
+    buf[50..57].copy_from_slice(bytemuck::bytes_of(&e));
 
-    buf[18..25].copy_from_slice(bytemuck::bytes_of(&e));
-    25
+    57
 }
 
 const UNCONFIGURED_DEVICE: UnconfiguredDevice = UnconfiguredDevice {
@@ -128,6 +230,8 @@ const EXAMPLE_DEVICE: UsbDevice = UsbDevice {
     usb_address: 5,
     usb_speed: UsbSpeed::Full12,
     packet_size_ep0: 8,
+    in_endpoints_bitmap: 4,
+    out_endpoints_bitmap: 2,
 };
 
 // Not sure why this isn't in the standard library
@@ -243,6 +347,10 @@ trait ExtraExpectations {
     /// which reads the configuration descriptor.
     fn expect_get_configuration<const ADDR: u8>(&mut self);
 
+    /// Expect a call to get_basic_configuration (for a certain address),
+    /// which reads the configuration descriptor.
+    fn expect_get_double_configuration<const ADDR: u8>(&mut self);
+
     /// Expect a call to configure (for a certain address and
     /// configuration number) which does a control transfer.
     fn expect_set_configuration<const ADDR: u8, const VALUE: u16>(&mut self);
@@ -297,6 +405,13 @@ impl ExtraExpectations for MockHostControllerInner {
             .times(1)
             .withf(is_get_configuration_descriptor::<ADDR>)
             .returning(control_transfer_ok_with(example_config_descriptor));
+    }
+
+    fn expect_get_double_configuration<const ADDR: u8>(&mut self) {
+        self.expect_control_transfer()
+            .times(1)
+            .withf(is_get_configuration_descriptor::<ADDR>)
+            .returning(control_transfer_ok_with(double_config_descriptor));
     }
 
     fn expect_set_configuration<const ADDR: u8, const VALUE: u16>(&mut self) {
@@ -423,10 +538,11 @@ fn configure() {
     do_test(
         |hc| {
             hc.expect_multi_interrupt_pipe_ignored();
-            hc.expect_set_configuration::<5, 6>();
+            hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_double_configuration::<5>();
         },
         |f| {
-            let r = pin!(f.bus.configure(unconfigured_device(), 6));
+            let r = pin!(f.bus.configure(unconfigured_device(), 1));
             let rr = r.poll(f.c).to_option().unwrap();
             assert_eq!(rr, Ok(EXAMPLE_DEVICE));
         },
@@ -467,6 +583,48 @@ fn configure_fails() {
             let r = pin!(f.bus.configure(unconfigured_device(), 6));
             let rr = r.poll(f.c);
             assert_eq!(rr, Poll::Ready(Err(UsbError::Timeout)));
+        },
+    );
+}
+
+#[test]
+fn configure_get_configuration_fails() {
+    do_test(
+        |hc| {
+            hc.expect_multi_interrupt_pipe_ignored();
+            hc.expect_set_configuration::<5, 1>();
+
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor::<5>)
+                .returning(control_transfer_timeout);
+        },
+        |f| {
+            let r = pin!(f.bus.configure(unconfigured_device(), 1));
+            let rr = r.poll(f.c).to_option().unwrap();
+            assert_eq!(rr, Err(UsbError::Timeout));
+        },
+    );
+}
+
+#[test]
+fn configure_get_configuration_pends() {
+    do_test(
+        |hc| {
+            hc.expect_multi_interrupt_pipe_ignored();
+            hc.expect_set_configuration::<5, 1>();
+
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor::<5>)
+                .returning(control_transfer_pending);
+        },
+        |f| {
+            let mut r = pin!(f.bus.configure(unconfigured_device(), 1));
+            let rr = r.as_mut().poll(f.c);
+            assert!(rr.is_pending());
+            let rr = r.as_mut().poll(f.c);
+            assert!(rr.is_pending());
         },
     );
 }
@@ -964,6 +1122,7 @@ fn new_hub() {
             hc.expect_add_to_multi_interrupt_pipe();
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
             hc.expect_get_hub_descriptor::<5>();
             hc.expect_set_port_power::<5, 1>();
             hc.expect_set_port_power::<5, 2>();
@@ -984,6 +1143,7 @@ fn new_hub_giant() {
             hc.expect_add_to_multi_interrupt_pipe();
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
 
             // Get hub descriptor
             hc.expect_control_transfer()
@@ -1076,6 +1236,7 @@ fn new_hub_try_add_fails() {
                 .returning(|_, _, _, _| Err(UsbError::TooManyDevices));
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
         },
         |f| {
             let r = pin!(f.bus.new_hub(&f.hub_state, unconfigured_device()));
@@ -1093,6 +1254,7 @@ fn new_hub_get_descriptor_fails() {
             hc.expect_add_to_multi_interrupt_pipe();
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
 
             // Get hub descriptor
             hc.expect_control_transfer()
@@ -1116,6 +1278,7 @@ fn new_hub_get_descriptor_short() {
             hc.expect_add_to_multi_interrupt_pipe();
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
 
             // Get hub descriptor
             hc.expect_control_transfer()
@@ -1139,6 +1302,7 @@ fn new_hub_get_descriptor_pends() {
             hc.expect_add_to_multi_interrupt_pipe();
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
 
             // Get hub descriptor
             hc.expect_control_transfer()
@@ -1164,6 +1328,7 @@ fn new_hub_set_port_power_fails() {
             hc.expect_add_to_multi_interrupt_pipe();
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
             hc.expect_get_hub_descriptor::<5>();
 
             // Set port power
@@ -1188,6 +1353,7 @@ fn new_hub_set_port_power_pends() {
             hc.expect_add_to_multi_interrupt_pipe();
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
+            hc.expect_get_configuration::<5>();
             hc.expect_get_hub_descriptor::<5>();
 
             // Set port power
@@ -1999,6 +2165,7 @@ fn handle_hub_packet_connected_hub() {
             // new_hub()
             hc.expect_get_configuration::<1>();
             hc.expect_set_configuration::<1, 1>();
+            hc.expect_get_configuration::<1>();
             hc.expect_get_hub_descriptor::<1>();
             hc.expect_set_port_power::<1, 1>();
             hc.expect_set_port_power::<1, 2>();
@@ -2018,7 +2185,9 @@ fn handle_hub_packet_connected_hub() {
                 Ok(DeviceEvent::HubConnect(UsbDevice {
                     usb_address: 1,
                     usb_speed: UsbSpeed::Full12,
-                    packet_size_ep0: 8
+                    packet_size_ep0: 8,
+                    in_endpoints_bitmap: 4,
+                    out_endpoints_bitmap: 2,
                 },))
             );
         },
@@ -2647,6 +2816,7 @@ fn device_events_root_connect_is_hub() {
             hc.expect_set_address::<1>();
             hc.expect_get_configuration::<1>();
             hc.expect_set_configuration::<1, 1>();
+            hc.expect_get_configuration::<1>();
             hc.expect_get_hub_descriptor::<1>();
             hc.expect_set_port_power::<1, 1>();
             hc.expect_set_port_power::<1, 2>();
@@ -2660,7 +2830,9 @@ fn device_events_root_connect_is_hub() {
                 Some(DeviceEvent::HubConnect(UsbDevice {
                     usb_address: 1,
                     usb_speed: UsbSpeed::Low1_5,
-                    packet_size_ep0: 8
+                    packet_size_ep0: 8,
+                    in_endpoints_bitmap: 4,
+                    out_endpoints_bitmap: 2,
                 },))
             );
         },
@@ -2965,4 +3137,21 @@ fn hub_state_passes_on_pend() {
             assert!(r.is_pending());
         },
     );
+}
+
+#[test]
+fn device_has_in_endpoints() {
+    let d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0,
+        out_endpoints_bitmap: 0x8001,
+    };
+
+    let in_endpoints = d.in_endpoints();
+    assert_eq!(in_endpoints.0, 0);
+
+    let out_endpoints = d.out_endpoints();
+    assert_eq!(out_endpoints.0, 0x8001);
 }

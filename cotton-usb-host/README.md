@@ -151,7 +151,7 @@ TODO before merge
 TODO before 0.1.0:
 
  - [x] System test
- - [ ] Allocate endpoints from device object?
+ - [x] Allocate endpoints from device object?
  - [x] UnconfiguredDevice/Device?
  - [ ] Bulk in/out
  - [ ] doc-comments
