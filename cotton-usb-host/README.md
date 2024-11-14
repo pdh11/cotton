@@ -154,6 +154,7 @@ TODO before 0.1.0:
  - [x] Allocate endpoints from device object?
  - [x] UnconfiguredDevice/Device?
  - [ ] Bulk in/out
+ - [ ] Max packet size for bulk endpoints
  - [ ] doc-comments
  - [ ] At least one real example (MSC? HID?)
  - [ ] Review register usage for contention (buff_status?)

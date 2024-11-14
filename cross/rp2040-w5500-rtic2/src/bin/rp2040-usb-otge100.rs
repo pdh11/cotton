@@ -10,13 +10,19 @@ use rp_pico as _; // includes boot2
 mod app {
     use core::future::Future;
     use core::pin::pin;
+    use cotton_usb_host::device::identify::UsbIdentify;
+    use cotton_usb_host::device::mass_storage::{
+        AsyncBlockDevice, MassStorage, ScsiBlockDevice,
+    };
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
     use cotton_usb_host::usb_bus::{
-        DataPhase, DeviceEvent, HubState, UsbBus, UsbDevice, UsbError,
+        DataPhase, DeviceEvent, DeviceInfo, HubState, UnconfiguredDevice,
+        UsbBus, UsbDevice, UsbError,
     };
     use cotton_usb_host::wire::{
-        SetupPacket, DEVICE_TO_HOST, HOST_TO_DEVICE, VENDOR_REQUEST,
+        SetupPacket, ShowDescriptors, DEVICE_TO_HOST, HOST_TO_DEVICE,
+        VENDOR_REQUEST,
     };
     use futures_util::StreamExt;
     use rp_pico::pac;
@@ -220,6 +226,20 @@ mod app {
         }
     }
 
+    impl<HC: HostController> UsbIdentify<HC> for AX88772<'_, HC> {
+        fn identify(
+            _bus: &UsbBus<HC>,
+            _device: &UnconfiguredDevice,
+            info: &DeviceInfo,
+        ) -> Option<u8> {
+            if info.vid == 0x0B95 && info.pid == 0x7720 {
+                Some(1)
+            } else {
+                None
+            }
+        }
+    }
+
     fn rtic_delay(ms: usize) -> impl Future<Output = ()> {
         Mono::delay(<Mono as rtic_monotonics::Monotonic>::Duration::millis(
             ms as u64,
@@ -261,13 +281,29 @@ mod app {
             if let Some(DeviceEvent::Connect(device, info)) = device {
                 defmt::println!("Got device {:x} {:x}", device, info);
 
-                if info.vid == 0x0B95 && info.pid == 0x7720 {
-                    if let Ok(device) = stack.configure(device, 1).await {
+                if let Some(cfg) = AX88772::identify(&stack, &device, &info) {
+                    if let Ok(device) = stack.configure(device, cfg).await {
                         let otge = AX88772::new(&stack, device);
                         if let Err(e) = otge.init().await {
                             defmt::println!("error {}", e);
                         }
                     }
+                } else if let Some(cfg) =
+                    MassStorage::identify(&stack, &device, &info)
+                {
+                    defmt::println!("Could be MSC");
+                    if let Ok(device) = stack.configure(device, cfg).await {
+                        if let Ok(ms) = MassStorage::new(&stack, device) {
+                            defmt::println!("Is MSC!");
+                            let abd = ScsiBlockDevice::new(ms);
+                            defmt::println!("{:?}", abd.capacity().await);
+                        }
+                    }
+                } else if let Err(e) = stack
+                    .get_configuration(&device, &mut ShowDescriptors)
+                    .await
+                {
+                    defmt::println!("error {}", e);
                 }
             }
         }

@@ -7,6 +7,7 @@
 pub mod async_pool;
 pub mod bitset;
 mod debug;
+pub mod device;
 pub mod host;
 pub mod host_controller;
 pub mod interrupt;

@@ -18,6 +18,7 @@ pub enum UsbError {
     AllPipesInUse,
     ProtocolError,
     TooManyDevices,
+    NoSuchEndpoint,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -116,6 +117,22 @@ pub trait HostController {
         packet_size: u8,
         setup: SetupPacket,
         data_phase: DataPhase<'_>,
+    ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
+
+    fn bulk_in_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &mut [u8],
+    ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
+
+    fn bulk_out_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &[u8],
     ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
     fn alloc_interrupt_pipe(

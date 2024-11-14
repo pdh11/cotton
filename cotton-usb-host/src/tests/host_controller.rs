@@ -42,6 +42,22 @@ mock! {
             data_phase: DataPhase<'a>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
+    fn bulk_in_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &mut [u8],
+    ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
+
+    fn bulk_out_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &[u8],
+    ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
+
         pub fn alloc_interrupt_pipe(
             &self,
             address: u8,
@@ -93,6 +109,28 @@ impl HostController for MockHostController {
     ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
         self.inner
             .control_transfer(address, packet_size, setup, data_phase)
+    }
+
+    fn bulk_in_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &mut [u8],
+    ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
+        self.inner
+            .bulk_in_transfer(address, endpoint, packet_size, data)
+    }
+
+    fn bulk_out_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &[u8],
+    ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
+        self.inner
+            .bulk_out_transfer(address, endpoint, packet_size, data)
     }
 
     fn alloc_interrupt_pipe(

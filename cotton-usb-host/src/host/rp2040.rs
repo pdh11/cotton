@@ -25,9 +25,9 @@ impl UsbShared {
         /* defmt::info!(
                     "IRQ ints={:x} inte={:x}",
                     ints.bits(),
-                    regs.inte().read().bits()
-                );
-        */
+            regs.inte().read().bits()
+        );
+         */
         if ints.buff_status().bit() {
             let bs = regs.buff_status().read().bits();
             for i in 0..15 {
@@ -44,7 +44,7 @@ impl UsbShared {
             self.device_waker.wake();
         }
         if (ints.bits() & 0x458) != 0 {
-            defmt::info!("IRQ wakes 0");
+            //defmt::info!("IRQ wakes 0 {:x}", ints.bits());
             self.pipe_wakers[0].wake();
         }
 
@@ -123,7 +123,7 @@ impl Stream for Rp2040DeviceDetect {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        defmt::trace!("DE register");
+        //defmt::trace!("DE register");
         self.waker.register(cx.waker());
 
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
@@ -145,11 +145,12 @@ impl Stream for Rp2040DeviceDetect {
             self.status = device_status;
             Poll::Ready(Some(device_status))
         } else {
-            defmt::trace!(
-                "DE pending intr={:x} st={:x}",
-                regs.intr().read().bits(),
-                status.bits()
-            );
+            /*defmt::trace!(
+                            "DE pending intr={:x} st={:x}",
+                            regs.intr().read().bits(),
+                            status.bits()
+                        );
+            */
             regs.inte().modify(|_, w| w.host_conn_dis().set_bit());
             Poll::Pending
         }
@@ -177,17 +178,17 @@ impl Future for Rp2040ControlEndpoint<'_> {
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
         if (intr.bits() & 0x458) != 0 {
-            defmt::info!("CE ready {:x}", status.bits());
+            //defmt::info!("CE ready {:x}", status.bits());
             regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
             Poll::Ready(status)
         } else {
             regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
-            defmt::trace!(
+            /*defmt::trace!(
                 "CE pending intr={:x} st={:x}->{:x}",
                 intr.bits(),
                 status.bits(),
                 regs.sie_status().read().bits(),
-            );
+            );*/
             regs.inte().modify(|_, w| {
                 w.stall()
                     .set_bit()
@@ -200,6 +201,58 @@ impl Future for Rp2040ControlEndpoint<'_> {
         }
     }
 }
+
+/*
+struct Rp2040BulkEndpoint<'a> {
+    n: u8,
+    waker: &'a CriticalSectionWakerRegistration,
+}
+
+impl<'a> Rp2040BulkEndpoint<'a> {
+    pub fn new(n: u8, waker: &'a CriticalSectionWakerRegistration) -> Self {
+        Self { n, waker }
+    }
+}
+
+impl Future for Rp2040BulkEndpoint<'_> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        defmt::trace!("BE register");
+        self.waker.register(cx.waker());
+
+        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        let intr = regs.intr().read();
+        let epc = dpram.ep_control(((self.n - 1) * 2) as usize);
+        let epbc = dpram.ep_buffer_control((self.n * 2) as usize);
+        let epbc_value = epbc.read();
+        let buf0_done = (epbc_value.bits() & 0xFFFF) != 0
+            && !epbc_value.available_0().bit();
+        let buf1_done = (epbc_value.bits() & 0xFFFF_0000) != 0
+            && !epbc_value.available_1().bit();
+        // TODO EP_STATUS_STALL_NAK
+        if buf0_done || buf1_done {
+            defmt::info!("BE ready {:x}", intr.bits());
+            regs.buff_status()
+                .write(|w| unsafe { w.bits(0x3 << self.n) });
+
+            Poll::Ready(())
+        } else {
+            regs.inte().modify(|_, w| w.buff_status().set_bit());
+            defmt::trace!(
+                "BE pending intr={:x} inte={:x} intec={:x} epc={:x} epbc={:x}",
+                intr.bits(),
+                regs.inte().read().bits(),
+                regs.int_ep_ctrl().read().bits(),
+                epc.read().bits(),
+                epbc.read().bits()
+            );
+            Poll::Pending
+        }
+    }
+}
+*/
 
 pub type Pipe = crate::async_pool::Pooled<'static>;
 
@@ -230,7 +283,7 @@ impl InterruptPipe for Rp2040InterruptPipe {
             };
             unsafe {
                 core::ptr::copy_nonoverlapping(
-                    (0x5010_0200 + (self.pipe.n as u32) * 64) as *const u8,
+                    (0x5010_0200 + (self.pipe.n as u32) * 128) as *const u8,
                     &mut result.data[0] as *mut u8,
                     result.size as usize,
                 )
@@ -304,15 +357,17 @@ struct InPacketiser {
     remain: u16,
     packet_size: u16,
     need_zero_size_packet: bool,
+    initial_toggle: bool,
 }
 
 impl InPacketiser {
-    fn new(remain: u16, packet_size: u16) -> Self {
+    fn new(remain: u16, packet_size: u16, initial_toggle: bool) -> Self {
         Self {
             next_prep: 0,
             remain,
             packet_size,
             need_zero_size_packet: remain == 0, // !is_control && (remain % packet_size) == 0,
+            initial_toggle,
         }
     }
 
@@ -346,7 +401,7 @@ impl Packetiser for InPacketiser {
                         //defmt::info!("Prepared {}-byte space last {}", this_packet, is_last);
                         reg.modify(|_, w| {
                             w.full_0().clear_bit();
-                            w.pid_0().set_bit();
+                            w.pid_0().bit(self.initial_toggle);
                             w.last_0().bit(is_last);
                             unsafe { w.length_0().bits(this_packet) };
                             w
@@ -368,7 +423,7 @@ impl Packetiser for InPacketiser {
                         //defmt::info!("Prepared {}-byte space last {}", this_packet, is_last);
                         reg.modify(|_, w| {
                             w.full_1().clear_bit();
-                            w.pid_1().clear_bit();
+                            w.pid_1().bit(!self.initial_toggle);
                             w.last_1().bit(is_last);
                             unsafe { w.length_1().bits(this_packet) };
                             w
@@ -388,6 +443,7 @@ impl Packetiser for InPacketiser {
 
 struct OutPacketiser<'a> {
     next_prep: u8,
+    initial_pid: bool,
     remain: usize,
     offset: usize,
     packet_size: usize,
@@ -396,9 +452,15 @@ struct OutPacketiser<'a> {
 }
 
 impl<'a> OutPacketiser<'a> {
-    fn new(size: u16, packet_size: u16, buf: &'a [u8]) -> Self {
+    fn new(
+        size: u16,
+        packet_size: u16,
+        buf: &'a [u8],
+        initial_pid: bool,
+    ) -> Self {
         Self {
             next_prep: 0,
+            initial_pid,
             remain: size as usize,
             offset: 0,
             packet_size: packet_size as usize,
@@ -447,7 +509,7 @@ impl Packetiser for OutPacketiser<'_> {
                             if this_packet > 0 {
                                 w.full_0().set_bit();
                             }
-                            w.pid_0().set_bit();
+                            w.pid_0().bit(self.initial_pid);
                             w.last_0().bit(is_last);
                             unsafe { w.length_0().bits(this_packet as u16) };
                             w
@@ -476,7 +538,7 @@ impl Packetiser for OutPacketiser<'_> {
                         }
                         reg.modify(|_, w| {
                             w.full_1().set_bit();
-                            w.pid_1().clear_bit();
+                            w.pid_1().bit(!self.initial_pid);
                             w.last_1().bit(is_last);
                             unsafe { w.length_1().bits(this_packet as u16) };
                             w
@@ -497,7 +559,10 @@ impl Packetiser for OutPacketiser<'_> {
 }
 
 trait Depacketiser {
-    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL);
+    fn retire(
+        &mut self,
+        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
+    ) -> Option<usize>;
 }
 
 struct InDepacketiser<'a> {
@@ -523,7 +588,10 @@ impl<'a> InDepacketiser<'a> {
 }
 
 impl Depacketiser for InDepacketiser<'_> {
-    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
+    fn retire(
+        &mut self,
+        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
+    ) -> Option<usize> {
         let val = reg.read();
         match self.next_retire {
             0 => {
@@ -546,6 +614,7 @@ impl Depacketiser for InDepacketiser<'_> {
                     self.remain -= this_packet;
                     self.offset += this_packet;
                     self.next_retire = 1;
+                    return Some(this_packet);
                 }
             }
             _ => {
@@ -568,9 +637,11 @@ impl Depacketiser for InDepacketiser<'_> {
                     self.remain -= this_packet;
                     self.offset += this_packet;
                     self.next_retire = 0;
+                    return Some(this_packet);
                 }
             }
         }
+        None
     }
 }
 
@@ -585,20 +656,26 @@ impl OutDepacketiser {
 }
 
 impl Depacketiser for OutDepacketiser {
-    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
+    fn retire(
+        &mut self,
+        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
+    ) -> Option<usize> {
         let val = reg.read();
         match self.next_retire {
             0 => {
-                if val.full_0().bit() {
+                if !val.full_0().bit() {
                     self.next_retire = 1;
+                    return Some(val.length_0().bits() as usize);
                 }
             }
             _ => {
-                if val.full_1().bit() {
+                if !val.full_1().bit() {
                     self.next_retire = 0;
+                    return Some(val.length_1().bits() as usize);
                 }
             }
         }
+        None
     }
 }
 
@@ -708,7 +785,7 @@ impl Rp2040HostController {
             w.send_setup().set_bit()
         });
 
-        defmt::trace!("S ctrl->{:x}", self.regs.sie_ctrl().read().bits());
+        //defmt::trace!("S ctrl->{:x}", self.regs.sie_ctrl().read().bits());
 
         cortex_m::asm::delay(12);
 
@@ -721,7 +798,7 @@ impl Rp2040HostController {
 
             let status = f.await;
 
-            defmt::trace!("awaited");
+            // defmt::trace!("awaited");
 
             if status.trans_complete().bit() {
                 break;
@@ -737,6 +814,7 @@ impl Rp2040HostController {
                 ctrl.bits(),
                 bstat.bits(),
             );
+
             if status.data_seq_error().bit() {
                 return Err(UsbError::DataSeqError);
             }
@@ -760,7 +838,7 @@ impl Rp2040HostController {
             }
         }
 
-        defmt::trace!("S completed");
+        //defmt::trace!("S completed");
 
         Ok(())
     }
@@ -768,6 +846,7 @@ impl Rp2040HostController {
     async fn control_transfer_inner(
         &self,
         address: u8,
+        endpoint: u8,
         packet_size: u8,
         direction: Direction,
         size: usize,
@@ -775,7 +854,7 @@ impl Rp2040HostController {
         depacketiser: &mut impl Depacketiser,
     ) -> Result<(), UsbError> {
         let packets = size / (packet_size as usize) + 1;
-        defmt::info!("we'll need {} packets", packets);
+        //defmt::info!("we'll need {} packets", packets);
 
         self.dpram.epx_control().write(|w| {
             unsafe {
@@ -784,6 +863,11 @@ impl Rp2040HostController {
             if packets > 1 {
                 w.double_buffered().set_bit();
                 w.interrupt_per_buff().set_bit();
+            }
+            if endpoint == 0 {
+                w.endpoint_type().control();
+            } else {
+                w.endpoint_type().bulk();
             }
             w.enable().set_bit()
         });
@@ -798,7 +882,7 @@ impl Rp2040HostController {
             .write(|w| unsafe { w.bits(0xFFFF_FFFF) });
 
         self.regs.addr_endp().write(|w| unsafe {
-            w.endpoint().bits(0);
+            w.endpoint().bits(endpoint);
             w.address().bits(address)
         });
 
@@ -832,30 +916,32 @@ impl Rp2040HostController {
                     .set_bit()
             });
 
-            defmt::info!(
+            /*            defmt::info!(
                 "Initial bcr {:x}",
                 self.dpram.ep_buffer_control(0).read().bits()
-            );
+            );*/
 
             if !started {
                 started = true;
 
-                defmt::trace!(
-                    "len{} {} ctrl{:x}",
-                    size,
-                    direction,
-                    self.regs.sie_ctrl().read().bits()
-                );
+                /*defmt::trace!(
+                                    "len{} {} ctrl{:x}",
+                                    size,
+                                    direction,
+                                    self.regs.sie_ctrl().read().bits()
+                                );
+                */
                 self.regs.sie_ctrl().modify(|_, w| {
                     w.receive_data().bit(direction == Direction::In);
                     w.send_data().bit(direction == Direction::Out);
                     w.send_setup().clear_bit()
                 });
 
-                defmt::trace!(
-                    "ctrl->{:x}",
-                    self.regs.sie_ctrl().read().bits()
-                );
+                /*defmt::trace!(
+                                    "ctrl->{:x}",
+                                    self.regs.sie_ctrl().read().bits()
+                                );
+                */
 
                 cortex_m::asm::delay(12);
 
@@ -868,7 +954,7 @@ impl Rp2040HostController {
 
             let status = f.await;
 
-            defmt::trace!("awaited");
+            //defmt::trace!("awaited");
 
             self.regs.buff_status().write(|w| unsafe { w.bits(0x3) });
 
@@ -894,6 +980,7 @@ impl Rp2040HostController {
                 break;
             }
 
+            /*
             let bcr = self.dpram.ep_buffer_control(0).read();
             let ctrl = self.regs.sie_ctrl().read();
             let bstat = self.regs.buff_status().read();
@@ -904,6 +991,7 @@ impl Rp2040HostController {
                 ctrl.bits(),
                 bstat.bits(),
             );
+            */
             if status.data_seq_error().bit() {
                 return Err(UsbError::DataSeqError);
             }
@@ -930,6 +1018,7 @@ impl Rp2040HostController {
             depacketiser.retire(self.dpram.ep_buffer_control(0));
         }
 
+        /*
         let bcr = self.dpram.ep_buffer_control(0).read();
         let ctrl = self.regs.sie_ctrl().read();
         defmt::trace!(
@@ -937,6 +1026,7 @@ impl Rp2040HostController {
             bcr.bits(),
             ctrl.bits()
         );
+         */
         self.regs
             .sie_status()
             .write(|w| unsafe { w.bits(0xFF00_0000) });
@@ -955,11 +1045,12 @@ impl Rp2040HostController {
             return Err(UsbError::BufferTooSmall);
         }
         let mut packetiser =
-            InPacketiser::new(size as u16, packet_size as u16);
+            InPacketiser::new(size as u16, packet_size as u16, true); // setup is PID0 so data starts with PID1
         let mut depacketiser = InDepacketiser::new(size as u16, buf);
 
         self.control_transfer_inner(
             address,
+            0,
             packet_size,
             Direction::In,
             size,
@@ -982,11 +1073,12 @@ impl Rp2040HostController {
             return Err(UsbError::BufferTooSmall);
         }
         let mut packetiser =
-            OutPacketiser::new(size as u16, packet_size as u16, buf);
+            OutPacketiser::new(size as u16, packet_size as u16, buf, true); // setup is PID0 so data starts with PID1
         let mut depacketiser = OutDepacketiser::new();
 
         self.control_transfer_inner(
             address,
+            0,
             packet_size,
             Direction::Out,
             size,
@@ -1026,7 +1118,7 @@ impl Rp2040HostController {
                 .endpoint_type()
                 .interrupt()
                 .buffer_address()
-                .bits(0x200 + (n as u16) * 64)
+                .bits(0x200 + (n as u16) * 128)
                 .host_poll_interval()
                 .bits(core::cmp::min(interval_ms as u16, 9))
         });
@@ -1055,6 +1147,114 @@ impl Rp2040HostController {
             data_toggle: Cell::new(false),
         }
     }
+
+    /*
+    async fn bulk_transfer_inner(
+        &self,
+        pipe: Pipe,
+        address: u8,
+        endpoint: u8,
+        direction: Direction,
+        size: usize,
+        packet_size: u16,
+        packetiser: &mut impl Packetiser,
+        depacketiser: &mut impl Depacketiser,
+    ) -> Result<usize, UsbError> {
+        let n = pipe.n as usize;
+        assert!(n > 0); // 0 is the control pipe, we want an "interrupt" pipe
+        let epc = self.dpram.ep_control((n-1)*2);
+        let epbc = self.dpram.ep_buffer_control(n*2);
+
+        let packets = size / (packet_size as usize) + 1;
+        defmt::info!("we'll need {} packets", packets);
+
+        epc.write(|w| {
+            if packets > 1 {
+                w.double_buffered().set_bit();
+            }
+            // TODO: IRQ-on-stall
+            w.interrupt_per_buff().set_bit();
+            w.endpoint_type().bulk();
+            unsafe { w.buffer_address().bits(0x200 + (n as u16) * 128) }
+        });
+
+        epbc
+            .write(|w| unsafe { w.bits(0) });
+        packetiser.prepare(self.dpram.ep_buffer_control(n*2));
+
+        self.regs.host_addr_endp(n - 1).write(|w| unsafe {
+            w.intep_dir().bit(direction == Direction::Out);
+            w.endpoint().bits(endpoint);
+            w.address().bits(address)
+        });
+
+        let mut started = false;
+
+        loop {
+            packetiser.prepare(epbc);
+            packetiser.prepare(epbc);
+
+            self.regs
+                .sie_status()
+                .write(|w| unsafe { w.bits(0xFF00_0000) });
+            self.regs
+                .buff_status()
+                .write(|w| unsafe { w.bits(0x3 << n) });
+            self.regs.inte().modify(|_, w| w.buff_status().set_bit());
+
+            defmt::println!(
+                "b bcr {:x} st {:x} hae {:x}",
+                epbc.read().bits(),
+                self.regs.sie_status().read().bits(),
+                self.regs.host_addr_endp(n-1).read().bits(),
+            );
+
+            if !started {
+                started = true;
+                epc.modify(|_,w| w.enable().set_bit());
+                self.regs
+                    .int_ep_ctrl()
+                    .modify(|r, w| unsafe { w.bits(r.bits() | (1 << n)) });
+            }
+            let f =
+                Rp2040BulkEndpoint::new(pipe.n, &self.shared.pipe_wakers[n]);
+            f.await;
+
+            defmt::println!("b awaited");
+
+            self.regs
+                .buff_status()
+                .write(|w| unsafe { w.bits(0x3 << n) });
+
+            defmt::println!(
+                "b bcr now {:x}",
+                epbc.read().bits()
+            );
+
+            if epbc.read().stall().bit() {
+                return Err(UsbError::Stall);
+            }
+
+            if let Some(packet) =
+                depacketiser.retire(epbc)
+            {
+                if packet < packet_size.into() {
+                    break;
+                }
+            }
+            if let Some(packet) =
+                depacketiser.retire(epbc)
+            {
+                if packet < packet_size.into() {
+                    break;
+                }
+            }
+        }
+
+
+        Ok(size)
+    }
+     */
 }
 
 impl HostController for Rp2040HostController {
@@ -1108,6 +1308,63 @@ impl HostController for Rp2040HostController {
                     .await
             }
         }
+    }
+
+    async fn bulk_in_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &mut [u8],
+    ) -> Result<usize, UsbError> {
+        let _pipe = self.alloc_pipe(EndpointType::Control).await;
+        //debug::println!("bulk in on pipe {}", pipe.n);
+        let mut packetiser =
+            InPacketiser::new(data.len() as u16, packet_size as u16, false); // TODO initial PID
+        let length = data.len() as u16;
+        let mut depacketiser = InDepacketiser::new(length, data);
+
+        self.control_transfer_inner(
+            address,
+            endpoint,
+            packet_size as u8,
+            Direction::In,
+            length as usize,
+            &mut packetiser,
+            &mut depacketiser,
+        )
+        .await?;
+        Ok(depacketiser.total())
+    }
+
+    async fn bulk_out_transfer(
+        &self,
+        address: u8,
+        endpoint: u8,
+        packet_size: u16,
+        data: &[u8],
+    ) -> Result<usize, UsbError> {
+        let _pipe = self.alloc_pipe(EndpointType::Control).await;
+        //debug::println!("bulk out on pipe {}", pipe.n);
+        let mut packetiser = OutPacketiser::new(
+            data.len() as u16,
+            packet_size as u16,
+            data,
+            false,
+        ); // TODO initial PID
+        let mut depacketiser = OutDepacketiser::new();
+
+        self.control_transfer_inner(
+            address,
+            endpoint,
+            packet_size as u8,
+            Direction::Out,
+            data.len(),
+            &mut packetiser,
+            &mut depacketiser,
+        )
+        .await?;
+        Ok(data.len())
     }
 
     // The trait defines this with "-> impl Future"-style syntax, but the one

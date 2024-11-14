@@ -10,7 +10,7 @@ use crate::wire::{
     PORT_POWER, PORT_RESET, RECIPIENT_OTHER, SET_ADDRESS, SET_CONFIGURATION,
     SET_FEATURE,
 };
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::future::FutureExt;
@@ -57,6 +57,26 @@ impl UnconfiguredDevice {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(PartialEq, Eq)]
+pub struct BulkIn {
+    usb_address: u8,
+    usb_speed: UsbSpeed,
+    endpoint: u8,
+    data_toggle: Cell<bool>,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
+pub struct BulkOut {
+    usb_address: u8,
+    usb_speed: UsbSpeed,
+    endpoint: u8,
+    data_toggle: Cell<bool>,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
 pub struct UsbDevice {
     usb_address: u8,
     usb_speed: UsbSpeed,
@@ -76,6 +96,34 @@ impl UsbDevice {
 
     pub fn out_endpoints(&self) -> BitSet {
         BitSet(self.out_endpoints_bitmap as u32)
+    }
+
+    pub fn open_in_endpoint(&mut self, ep: u8) -> Result<BulkIn, UsbError> {
+        if ep < 16 && (self.in_endpoints_bitmap & (1 << ep)) != 0 {
+            self.in_endpoints_bitmap &= !(1 << ep);
+            Ok(BulkIn {
+                usb_address: self.usb_address,
+                usb_speed: self.usb_speed,
+                endpoint: ep,
+                data_toggle: Cell::new(false),
+            })
+        } else {
+            Err(UsbError::NoSuchEndpoint)
+        }
+    }
+
+    pub fn open_out_endpoint(&mut self, ep: u8) -> Result<BulkOut, UsbError> {
+        if ep < 16 && (self.out_endpoints_bitmap & (1 << ep)) != 0 {
+            self.out_endpoints_bitmap &= !(1 << ep);
+            Ok(BulkOut {
+                usb_address: self.usb_address,
+                usb_speed: self.usb_speed,
+                endpoint: ep,
+                data_toggle: Cell::new(false),
+            })
+        } else {
+            Err(UsbError::NoSuchEndpoint)
+        }
     }
 }
 
@@ -638,6 +686,36 @@ impl<HC: HostController> UsbBus<HC> {
             .await
     }
 
+    pub async fn bulk_in_transfer(
+        &self,
+        ep: &BulkIn,
+        data: &mut [u8],
+    ) -> Result<usize, UsbError> {
+        self.driver
+            .bulk_in_transfer(
+                ep.usb_address,
+                ep.endpoint,
+                64, // @TODO max packet size
+                data,
+            )
+            .await
+    }
+
+    pub async fn bulk_out_transfer(
+        &self,
+        ep: &BulkOut,
+        data: &[u8],
+    ) -> Result<usize, UsbError> {
+        self.driver
+            .bulk_out_transfer(
+                ep.usb_address,
+                ep.endpoint,
+                64, // @TODO max packet size
+                data,
+            )
+            .await
+    }
+
     pub fn interrupt_endpoint_in(
         &self,
         address: u8,
@@ -658,7 +736,7 @@ impl<HC: HostController> UsbBus<HC> {
         .flatten_stream()
     }
 
-    async fn get_configuration(
+    pub async fn get_configuration(
         &self,
         device: &UnconfiguredDevice,
         visitor: &mut impl DescriptorVisitor,
