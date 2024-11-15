@@ -1,4 +1,5 @@
 use crate::wire::SetupPacket;
+use core::cell::Cell;
 use core::ops::Deref;
 use futures::Stream;
 
@@ -125,6 +126,7 @@ pub trait HostController {
         endpoint: u8,
         packet_size: u16,
         data: &mut [u8],
+        data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
     fn bulk_out_transfer(
@@ -133,6 +135,7 @@ pub trait HostController {
         endpoint: u8,
         packet_size: u16,
         data: &[u8],
+        data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
     fn alloc_interrupt_pipe(

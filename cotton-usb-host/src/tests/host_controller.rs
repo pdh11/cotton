@@ -42,21 +42,23 @@ mock! {
             data_phase: DataPhase<'a>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
-    fn bulk_in_transfer(
-        &self,
-        address: u8,
-        endpoint: u8,
-        packet_size: u16,
-        data: &mut [u8],
-    ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
+        fn bulk_in_transfer(
+            &self,
+            address: u8,
+            endpoint: u8,
+            packet_size: u16,
+            data: &mut [u8],
+            data_toggle: &Cell<bool>,
+        ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
-    fn bulk_out_transfer(
-        &self,
-        address: u8,
-        endpoint: u8,
-        packet_size: u16,
-        data: &[u8],
-    ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
+        fn bulk_out_transfer(
+            &self,
+            address: u8,
+            endpoint: u8,
+            packet_size: u16,
+            data: &[u8],
+            data_toggle: &Cell<bool>,
+        ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
         pub fn alloc_interrupt_pipe(
             &self,
@@ -117,9 +119,15 @@ impl HostController for MockHostController {
         endpoint: u8,
         packet_size: u16,
         data: &mut [u8],
+        data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
-        self.inner
-            .bulk_in_transfer(address, endpoint, packet_size, data)
+        self.inner.bulk_in_transfer(
+            address,
+            endpoint,
+            packet_size,
+            data,
+            data_toggle,
+        )
     }
 
     fn bulk_out_transfer(
@@ -128,9 +136,15 @@ impl HostController for MockHostController {
         endpoint: u8,
         packet_size: u16,
         data: &[u8],
+        data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
-        self.inner
-            .bulk_out_transfer(address, endpoint, packet_size, data)
+        self.inner.bulk_out_transfer(
+            address,
+            endpoint,
+            packet_size,
+            data,
+            data_toggle,
+        )
     }
 
     fn alloc_interrupt_pipe(

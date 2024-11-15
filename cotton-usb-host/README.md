@@ -141,7 +141,7 @@ belongs in those microcontrollers' HAL crates.
 TODO before merge
 
  - [x] Hub state machine
- - [x] Unit tests
+ - [ ] Unit tests
  - [x] Interlocking to avoid contending on pipe 0
  - [x] Rename types to wire
  - [x] Introduce delay to process_hub_packet and do away with currently_resetting
@@ -153,7 +153,8 @@ TODO before 0.1.0:
  - [x] System test
  - [x] Allocate endpoints from device object?
  - [x] UnconfiguredDevice/Device?
- - [ ] Bulk in/out
+ - [x] Bulk in/out
+ - [ ] Enough configuration descriptor smarts to recognise MSC when we see it
  - [ ] Max packet size for bulk endpoints
  - [ ] doc-comments
  - [ ] At least one real example (MSC? HID?)

@@ -697,6 +697,7 @@ impl<HC: HostController> UsbBus<HC> {
                 ep.endpoint,
                 64, // @TODO max packet size
                 data,
+                &ep.data_toggle,
             )
             .await
     }
@@ -712,6 +713,7 @@ impl<HC: HostController> UsbBus<HC> {
                 ep.endpoint,
                 64, // @TODO max packet size
                 data,
+                &ep.data_toggle,
             )
             .await
     }

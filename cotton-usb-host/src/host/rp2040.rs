@@ -505,10 +505,7 @@ impl Packetiser for OutPacketiser<'_> {
                             }
                         }
                         reg.modify(|_, w| {
-                            // @todo Why is this "if" necessary?
-                            if this_packet > 0 {
-                                w.full_0().set_bit();
-                            }
+                            w.full_0().set_bit();
                             w.pid_0().bit(self.initial_pid);
                             w.last_0().bit(is_last);
                             unsafe { w.length_0().bits(this_packet as u16) };
@@ -567,6 +564,7 @@ trait Depacketiser {
 
 struct InDepacketiser<'a> {
     next_retire: u8,
+    packet_parity: bool,
     remain: usize,
     offset: usize,
     buf: &'a mut [u8],
@@ -576,6 +574,7 @@ impl<'a> InDepacketiser<'a> {
     fn new(size: u16, buf: &'a mut [u8]) -> Self {
         Self {
             next_retire: 0,
+            packet_parity: false,
             remain: size as usize,
             offset: 0,
             buf,
@@ -596,6 +595,7 @@ impl Depacketiser for InDepacketiser<'_> {
         match self.next_retire {
             0 => {
                 if val.full_0().bit() {
+                    self.packet_parity = !self.packet_parity;
                     defmt::trace!("Got {} bytes", val.length_0().bits());
                     let this_packet = core::cmp::min(
                         self.remain,
@@ -619,6 +619,7 @@ impl Depacketiser for InDepacketiser<'_> {
             }
             _ => {
                 if val.full_1().bit() {
+                    self.packet_parity = !self.packet_parity;
                     defmt::trace!("Got {} bytes", val.length_1().bits());
                     let this_packet = core::cmp::min(
                         self.remain,
@@ -647,11 +648,15 @@ impl Depacketiser for InDepacketiser<'_> {
 
 struct OutDepacketiser {
     next_retire: u8,
+    packet_parity: bool,
 }
 
 impl OutDepacketiser {
     fn new() -> Self {
-        Self { next_retire: 0 }
+        Self {
+            next_retire: 0,
+            packet_parity: false,
+        }
     }
 }
 
@@ -664,12 +669,14 @@ impl Depacketiser for OutDepacketiser {
         match self.next_retire {
             0 => {
                 if !val.full_0().bit() {
+                    self.packet_parity = !self.packet_parity;
                     self.next_retire = 1;
                     return Some(val.length_0().bits() as usize);
                 }
             }
             _ => {
                 if !val.full_1().bit() {
+                    self.packet_parity = !self.packet_parity;
                     self.next_retire = 0;
                     return Some(val.length_1().bits() as usize);
                 }
@@ -1284,24 +1291,30 @@ impl HostController for Rp2040HostController {
         self.send_setup(address, &setup).await?;
         match data_phase {
             DataPhase::In(buf) => {
-                self.control_transfer_in(
-                    address,
-                    packet_size,
-                    setup.wLength as usize,
-                    buf,
-                )
-                .await
+                let sz = self
+                    .control_transfer_in(
+                        address,
+                        packet_size,
+                        setup.wLength as usize,
+                        buf,
+                    )
+                    .await?;
+                self.control_transfer_out(address, packet_size, 0, &[])
+                    .await?;
+                Ok(sz)
             }
             DataPhase::Out(buf) => {
-                self.control_transfer_out(
-                    address,
-                    packet_size,
-                    setup.wLength as usize,
-                    buf,
-                )
-                .await?;
+                let sz = self
+                    .control_transfer_out(
+                        address,
+                        packet_size,
+                        setup.wLength as usize,
+                        buf,
+                    )
+                    .await?;
                 self.control_transfer_in(address, packet_size, 0, &mut [])
-                    .await
+                    .await?;
+                Ok(sz)
             }
             DataPhase::None => {
                 self.control_transfer_in(address, packet_size, 0, &mut [])
@@ -1316,11 +1329,15 @@ impl HostController for Rp2040HostController {
         endpoint: u8,
         packet_size: u16,
         data: &mut [u8],
+        data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
         let _pipe = self.alloc_pipe(EndpointType::Control).await;
         //debug::println!("bulk in on pipe {}", pipe.n);
-        let mut packetiser =
-            InPacketiser::new(data.len() as u16, packet_size as u16, false); // TODO initial PID
+        let mut packetiser = InPacketiser::new(
+            data.len() as u16,
+            packet_size as u16,
+            data_toggle.get(),
+        );
         let length = data.len() as u16;
         let mut depacketiser = InDepacketiser::new(length, data);
 
@@ -1334,6 +1351,7 @@ impl HostController for Rp2040HostController {
             &mut depacketiser,
         )
         .await?;
+        data_toggle.set(data_toggle.get() ^ depacketiser.packet_parity);
         Ok(depacketiser.total())
     }
 
@@ -1343,6 +1361,7 @@ impl HostController for Rp2040HostController {
         endpoint: u8,
         packet_size: u16,
         data: &[u8],
+        data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
         let _pipe = self.alloc_pipe(EndpointType::Control).await;
         //debug::println!("bulk out on pipe {}", pipe.n);
@@ -1350,8 +1369,8 @@ impl HostController for Rp2040HostController {
             data.len() as u16,
             packet_size as u16,
             data,
-            false,
-        ); // TODO initial PID
+            data_toggle.get(),
+        );
         let mut depacketiser = OutDepacketiser::new();
 
         self.control_transfer_inner(
@@ -1364,6 +1383,7 @@ impl HostController for Rp2040HostController {
             &mut depacketiser,
         )
         .await?;
+        data_toggle.set(data_toggle.get() ^ depacketiser.packet_parity);
         Ok(data.len())
     }
 
