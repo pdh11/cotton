@@ -1000,9 +1000,11 @@ impl Rp2040HostController {
             );
             */
             if status.data_seq_error().bit() {
+                defmt::println!("DataSeqError");
                 return Err(UsbError::DataSeqError);
             }
             if status.stall_rec().bit() {
+                defmt::println!("Stall");
                 return Err(UsbError::Stall);
             }
             // if status.nak_rec().bit() {
@@ -1012,6 +1014,7 @@ impl Rp2040HostController {
                 return Err(UsbError::Overflow);
             }
             if status.rx_timeout().bit() {
+                defmt::println!("Timeout");
                 return Err(UsbError::Timeout);
             }
             if status.bit_stuff_error().bit() {

@@ -155,6 +155,7 @@ TODO before 0.1.0:
  - [x] UnconfiguredDevice/Device?
  - [x] Bulk in/out
  - [ ] Enough configuration descriptor smarts to recognise MSC when we see it
+ - [ ] More of MSC -- at the very least, detect DASD
  - [ ] Max packet size for bulk endpoints
  - [ ] doc-comments
  - [ ] At least one real example (MSC? HID?)

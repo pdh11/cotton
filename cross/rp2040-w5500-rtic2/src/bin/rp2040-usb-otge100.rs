@@ -12,7 +12,8 @@ mod app {
     use core::pin::pin;
     use cotton_usb_host::device::identify::UsbIdentify;
     use cotton_usb_host::device::mass_storage::{
-        AsyncBlockDevice, MassStorage, ScsiBlockDevice,
+        AsyncBlockDevice, MassStorage, PeripheralType, ScsiBlockDevice,
+        ScsiDevice,
     };
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
@@ -292,13 +293,23 @@ mod app {
                     MassStorage::identify(&stack, &device, &info)
                 {
                     defmt::println!("Could be MSC");
-                    if let Ok(device) = stack.configure(device, cfg).await {
-                        if let Ok(ms) = MassStorage::new(&stack, device) {
-                            defmt::println!("Is MSC!");
-                            let abd = ScsiBlockDevice::new(ms);
-                            defmt::println!("{:?}", abd.capacity().await);
-                        }
+                    let Ok(device) = stack.configure(device, cfg).await else {
+                        continue;
+                    };
+                    let Ok(ms) = MassStorage::new(&stack, device) else {
+                        continue;
+                    };
+                    let device = ScsiDevice::new(ms);
+                    defmt::println!("Is MSC!");
+                    let Ok(info) = device.inquiry().await else {
+                        continue;
+                    };
+                    if info.peripheral_type != PeripheralType::Disk {
+                        continue;
                     }
+                    defmt::println!("Is MSC DASD");
+                    let abd = ScsiBlockDevice::new(device);
+                    defmt::println!("{:?}", abd.capacity().await);
                 } else if let Err(e) = stack
                     .get_configuration(&device, &mut ShowDescriptors)
                     .await
