@@ -1,8 +1,9 @@
 use crate::debug;
-use crate::device::identify::UsbIdentify;
+use crate::device::identify::IdentifyFromDescriptors;
 use crate::host_controller::{DataPhase, HostController, UsbError};
-use crate::usb_bus::{
-    BulkIn, BulkOut, DeviceInfo, UnconfiguredDevice, UsbBus, UsbDevice,
+use crate::usb_bus::{BulkIn, BulkOut, UsbBus, UsbDevice};
+use crate::wire::{
+    ConfigurationDescriptor, DescriptorVisitor, InterfaceDescriptor,
 };
 use core::future::Future;
 
@@ -34,6 +35,52 @@ pub struct ScsiDevice<T: ScsiTransport> {
     transport: T,
 }
 
+/// READ CAPACITY (10)
+/// Seagate SCSI Commands Reference Manual s3.23.2
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct ReadCapacity10 {
+    operation_code: u8,
+    reserved1: u8,
+    lba_be: [u8; 4],
+    reserved6: [u8; 3],
+    control: u8,
+}
+
+impl ReadCapacity10 {
+    fn new() -> Self {
+        assert!(core::mem::size_of::<Self>() == 10);
+        Self {
+            operation_code: 0x25,
+            reserved1: 0,
+            lba_be: [0u8; 4],
+            reserved6: [0; 3],
+            control: 0,
+        }
+    }
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for ReadCapacity10 {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for ReadCapacity10 {}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct ReadCapacity10Reply {
+    lba: [u8; 4],
+    block_size: [u8; 4],
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for ReadCapacity10Reply {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for ReadCapacity10Reply {}
+
 /// READ CAPACITY (16)
 /// Seagate SCSI Commands Reference Manual s3.23.2
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -51,6 +98,7 @@ struct ReadCapacity16 {
 
 impl ReadCapacity16 {
     fn new() -> Self {
+        assert!(core::mem::size_of::<Self>() == 16);
         Self {
             operation_code: 0x9E,
             service_action: 0x10,
@@ -111,6 +159,60 @@ impl TestUnitReady {
 unsafe impl bytemuck::Zeroable for TestUnitReady {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for TestUnitReady {}
+
+/// REQUEST SENSE
+/// Seagate SCSI Commands Reference Manual s3.37
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct RequestSense {
+    operation_code: u8,
+    desc: u8,
+    reserved: [u8; 2],
+    allocation_length: u8,
+    control: u8,
+}
+
+impl RequestSense {
+    fn new() -> Self {
+        assert!(core::mem::size_of::<Self>() == 6);
+        Self {
+            operation_code: 3,
+            desc: 0,
+            reserved: [0; 2],
+            allocation_length: 18,
+            control: 0,
+        }
+    }
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for RequestSense {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for RequestSense {}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct RequestSenseReply {
+    response_code: u8,
+    reserved1: u8,
+    sense_key: u8,
+    information: [u8; 4],
+    additional_length: u8,
+    command_specific_information: [u8; 4],
+    additional_sense_code: u8,
+    additional_sense_code_qualifier: u8,
+    fru_code: u8,
+    sense_key_specific: [u8; 3],
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for RequestSenseReply {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for RequestSenseReply {}
 
 /// INQUIRY
 /// Seagate SCSI Commands Reference Manual s3.6
@@ -220,18 +322,53 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Self { transport }
     }
 
+    pub async fn read_capacity_10(&self) -> Result<(u32, u32), Error> {
+        debug::println!("rc10");
+        let cmd = ReadCapacity10::new();
+        let mut buf = [0u8; 8];
+        let sz = self
+            .transport
+            .command(bytemuck::bytes_of(&cmd), DataPhase::In(&mut buf))
+            .await?;
+        debug::println!("rc10a");
+        if sz < 8 {
+            return Err(Error::ProtocolError);
+        }
+        debug::println!("rc10b");
+        let reply = bytemuck::try_from_bytes::<ReadCapacity10Reply>(&buf)
+            .map_err(|_| Error::ProtocolError)?;
+        debug::println!("rc10c");
+        let blocks = u32::from_be_bytes(reply.lba);
+        let block_size = u32::from_be_bytes(reply.block_size);
+        let capacity = (blocks as u64) * (block_size as u64);
+        debug::println!(
+            "{} blocks x {} bytes = {} B / {} KB / {} MB / {} GB",
+            blocks,
+            block_size,
+            capacity,
+            capacity >> 10,
+            capacity >> 20,
+            capacity >> 30
+        );
+        Ok((blocks, block_size))
+    }
+
     pub async fn read_capacity_16(&self) -> Result<(u64, u32), Error> {
+        debug::println!("rc16");
         let cmd = ReadCapacity16::new();
         let mut buf = [0u8; 32];
         let sz = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::In(&mut buf))
             .await?;
+        debug::println!("rc16a");
         if sz < 32 {
             return Err(Error::ProtocolError);
         }
+        debug::println!("rc16b");
         let reply = bytemuck::try_from_bytes::<ReadCapacity16Reply>(&buf)
             .map_err(|_| Error::ProtocolError)?;
+        debug::println!("rc16c");
         let blocks = u64::from_be_bytes(reply.lba);
         let block_size = u32::from_be_bytes(reply.block_size);
         let capacity = blocks * (block_size as u64);
@@ -249,10 +386,29 @@ impl<T: ScsiTransport> ScsiDevice<T> {
 
     pub async fn test_unit_ready(&self) -> Result<(), Error> {
         let cmd = TestUnitReady::new();
-        self.transport
+        let rc = self
+            .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::None)
-            .await?;
+            .await;
+        debug::println!("tur: {:?}", rc);
+        rc?;
         Ok(())
+    }
+
+    pub async fn request_sense(&self) -> Result<u8, Error> {
+        let cmd = RequestSense::new();
+        let mut buf = [0u8; 18];
+        let sz = self
+            .transport
+            .command(bytemuck::bytes_of(&cmd), DataPhase::In(&mut buf))
+            .await?;
+        if sz < 18 {
+            return Err(Error::ProtocolError);
+        }
+        let reply = bytemuck::try_from_bytes::<RequestSenseReply>(&buf)
+            .map_err(|_| Error::ProtocolError)?;
+        debug::println!("{:?}", reply);
+        Ok(reply.sense_key)
     }
 
     pub async fn inquiry(&self) -> Result<InquiryData, Error> {
@@ -262,11 +418,9 @@ impl<T: ScsiTransport> ScsiDevice<T> {
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::In(&mut buf))
             .await?;
-        debug::println!("got {}", sz);
         if sz < 36 {
             return Err(Error::ProtocolError);
         }
-        debug::println!("casting");
         let reply = bytemuck::try_from_bytes::<StandardInquiryData>(&buf)
             .map_err(|_| Error::ProtocolError)?;
         let data = InquiryData {
@@ -277,7 +431,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
             },
             is_removable: (reply.removable & 0x80) != 0,
         };
-        debug::println!("actual len {}", reply.additional_length + 4);
+        //debug::println!("actual len {}", reply.additional_length + 4);
         debug::println!(
             "type {:x} removable {}",
             reply.peripheral_device_type,
@@ -313,18 +467,33 @@ impl<'a, HC: HostController> MassStorage<'a, HC> {
     }
 }
 
-impl<HC: HostController> UsbIdentify<HC> for MassStorage<'_, HC> {
-    fn identify(
-        _bus: &UsbBus<HC>,
-        _device: &UnconfiguredDevice,
-        info: &DeviceInfo,
-    ) -> Option<u8> {
-        // TODO: examine interface descriptor!
-        if info.vid == 0x0781 && info.pid == 0x5567 {
-            Some(1)
+#[derive(Default)]
+pub struct IdentifyMassStorage {
+    current_configuration: Option<u8>,
+    msc_configuration: Option<u8>,
+}
+
+impl DescriptorVisitor for IdentifyMassStorage {
+    fn on_configuration(&mut self, c: &ConfigurationDescriptor) {
+        self.current_configuration = Some(c.bConfigurationValue);
+    }
+    fn on_interface(&mut self, i: &InterfaceDescriptor) {
+        if i.bInterfaceClass == 8 && i.bInterfaceProtocol == 0x50 {
+            self.msc_configuration = self.current_configuration;
         } else {
-            None
+            debug::println!(
+                "class {} subclass {} protocol {}",
+                i.bInterfaceClass,
+                i.bInterfaceSubClass,
+                i.bInterfaceProtocol
+            );
         }
+    }
+}
+
+impl IdentifyFromDescriptors for IdentifyMassStorage {
+    fn identify(&self) -> Option<u8> {
+        self.msc_configuration
     }
 }
 
@@ -372,6 +541,9 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         cmd: &[u8],
         data: DataPhase<'_>,
     ) -> Result<usize, Error> {
+        //let rc = self.bus.clear_halt(&self.bulk_in).await;
+        //debug::println!("clear {:?}", rc);
+
         let len = match data {
             DataPhase::In(ref buf) => buf.len(),
             DataPhase::Out(buf) => buf.len(),
@@ -386,24 +558,36 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         // defined, but it's one byte too long (an actual, on-the-wire
         // command block wrapper is 31 bytes). So we only send a
         // partial slice of it.
-        self.bus
+        let rc = self
+            .bus
             .bulk_out_transfer(
                 &self.bulk_out,
                 &bytemuck::bytes_of(&cbw)[0..31],
             )
-            .await?;
+            .await;
+        debug::println!("bot {:?}", rc);
+        rc?;
 
         // TODO: if in and sz<13, read to cbw instead in case command errors
         let response = match data {
             DataPhase::In(buf) => {
-                let n = self.bus.bulk_in_transfer(&self.bulk_in, buf).await?;
+                debug::println!("bit");
+                let rc = self.bus.bulk_in_transfer(&self.bulk_in, buf).await;
+                debug::println!("bit {:?}", rc);
+                let n = rc?;
                 debug::println!("{}: {:?}", n, buf);
                 n
             }
             DataPhase::Out(buf) => {
                 self.bus.bulk_out_transfer(&self.bulk_out, buf).await?
             }
-            DataPhase::None => 0,
+            DataPhase::None => {
+                /*
+                let rc = self.bus.bulk_in_transfer(&self.bulk_in, &mut []).await;
+                                debug::println!("bit0 {:?}", rc);
+                */
+                0
+            }
         };
 
         let mut csw = [0u8; 13];
@@ -415,10 +599,10 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         /*
         let sig = u32::from_le_bytes(&csw[0..4]);
         let tag = u32::from_le_bytes(&csw[4..8]);
-        let residue = u32::from_le_bytes(&csw[8..12]);
          */
+        let residue = u32::from_le_bytes(csw[8..12].try_into().unwrap());
         let status = csw[12];
-        debug::println!("status {}", status);
+        debug::println!("status {} residue {}", status, residue);
         match status {
             0 => Ok(response),
             1 => Err(Error::CommandFailed),
@@ -447,6 +631,11 @@ impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
     type E = Error;
 
     async fn capacity(&self) -> Result<(u64, u32), Self::E> {
+        let capacity10 = self.scsi.read_capacity_10().await?;
+        if capacity10.0 != 0xFFFF_FFFF {
+            return Ok((capacity10.0 as u64, capacity10.1));
+        }
+        // NB 4 giga*blocks* is a lot, >=2TB
         self.scsi.read_capacity_16().await
     }
 }

@@ -2,7 +2,6 @@
 #![no_main]
 
 use defmt_rtt as _; // global logger
-use defmt_rtt as _;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 
@@ -10,16 +9,16 @@ use rp_pico as _; // includes boot2
 mod app {
     use core::future::Future;
     use core::pin::pin;
-    use cotton_usb_host::device::identify::UsbIdentify;
+    use cotton_usb_host::device::identify::IdentifyFromDescriptors;
     use cotton_usb_host::device::mass_storage::{
-        AsyncBlockDevice, MassStorage, PeripheralType, ScsiBlockDevice,
+        AsyncBlockDevice, IdentifyMassStorage, MassStorage, ScsiBlockDevice,
         ScsiDevice,
     };
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
     use cotton_usb_host::usb_bus::{
-        DataPhase, DeviceEvent, DeviceInfo, HubState, UnconfiguredDevice,
-        UsbBus, UsbDevice, UsbError,
+        DataPhase, DeviceEvent, DeviceInfo, HubState, UsbBus, UsbDevice,
+        UsbError,
     };
     use cotton_usb_host::wire::{
         SetupPacket, ShowDescriptors, DEVICE_TO_HOST, HOST_TO_DEVICE,
@@ -227,17 +226,11 @@ mod app {
         }
     }
 
-    impl<HC: HostController> UsbIdentify<HC> for AX88772<'_, HC> {
-        fn identify(
-            _bus: &UsbBus<HC>,
-            _device: &UnconfiguredDevice,
-            info: &DeviceInfo,
-        ) -> Option<u8> {
-            if info.vid == 0x0B95 && info.pid == 0x7720 {
-                Some(1)
-            } else {
-                None
-            }
+    fn identify_ax88772(info: &DeviceInfo) -> Option<u8> {
+        if info.vid == 0x0B95 && info.pid == 0x7720 {
+            Some(1)
+        } else {
+            None
         }
     }
 
@@ -266,6 +259,7 @@ mod app {
         let mut p = pin!(stack.device_events(&hub_state, rtic_delay));
 
         loop {
+            defmt::println!("loop");
             let device = p.next().await;
 
             if let Some(DeviceEvent::EnumerationError(h, p, e)) = device {
@@ -282,39 +276,60 @@ mod app {
             if let Some(DeviceEvent::Connect(device, info)) = device {
                 defmt::println!("Got device {:x} {:x}", device, info);
 
-                if let Some(cfg) = AX88772::identify(&stack, &device, &info) {
-                    if let Ok(device) = stack.configure(device, cfg).await {
-                        let otge = AX88772::new(&stack, device);
-                        if let Err(e) = otge.init().await {
-                            defmt::println!("error {}", e);
-                        }
-                    }
-                } else if let Some(cfg) =
-                    MassStorage::identify(&stack, &device, &info)
-                {
-                    defmt::println!("Could be MSC");
+                if let Some(cfg) = identify_ax88772(&info) {
                     let Ok(device) = stack.configure(device, cfg).await else {
                         continue;
                     };
-                    let Ok(ms) = MassStorage::new(&stack, device) else {
-                        continue;
-                    };
-                    let device = ScsiDevice::new(ms);
-                    defmt::println!("Is MSC!");
-                    let Ok(info) = device.inquiry().await else {
-                        continue;
-                    };
-                    if info.peripheral_type != PeripheralType::Disk {
-                        continue;
+                    let otge = AX88772::new(&stack, device);
+                    if let Err(e) = otge.init().await {
+                        defmt::println!("error {}", e);
                     }
-                    defmt::println!("Is MSC DASD");
-                    let abd = ScsiBlockDevice::new(device);
-                    defmt::println!("{:?}", abd.capacity().await);
-                } else if let Err(e) = stack
-                    .get_configuration(&device, &mut ShowDescriptors)
-                    .await
-                {
-                    defmt::println!("error {}", e);
+                } else {
+                    let mut ims = IdentifyMassStorage::default();
+                    let Ok(()) =
+                        stack.get_configuration(&device, &mut ims).await
+                    else {
+                        continue;
+                    };
+                    if let Some(cfg) = ims.identify() {
+                        defmt::println!("Could be MSC");
+                        let Ok(device) = stack.configure(device, cfg).await
+                        else {
+                            continue;
+                        };
+                        let Ok(ms) = MassStorage::new(&stack, device) else {
+                            continue;
+                        };
+                        let device = ScsiDevice::new(ms);
+                        defmt::println!("Is MSC!");
+                        rtic_delay(1500).await;
+                        /*
+                                            let Ok(info) = device.inquiry().await else {
+                                                continue;
+                                            };
+                                            if info.peripheral_type != PeripheralType::Disk {
+                                                continue;
+                                            }
+
+                                                rtic_delay(1500).await;
+                                                defmt::println!("Is MSC DASD");
+                                                rtic_delay(1500).await;
+
+                                                let Ok(()) = device.test_unit_ready().await else {
+                                                    defmt::println!("Unit NOT ready");
+                                                    device.request_sense().await;
+                                                    continue;
+                                                };
+                        */
+
+                        let abd = ScsiBlockDevice::new(device);
+                        defmt::println!("{:?}", abd.capacity().await);
+                    } else if let Err(e) = stack
+                        .get_configuration(&device, &mut ShowDescriptors)
+                        .await
+                    {
+                        defmt::println!("error {}", e);
+                    }
                 }
             }
         }

@@ -686,6 +686,25 @@ impl<HC: HostController> UsbBus<HC> {
             .await
     }
 
+    pub async fn clear_halt(&self, ep: &BulkIn) -> Result<(), UsbError> {
+        self.driver
+            .control_transfer(
+                ep.usb_address,
+                8,
+                SetupPacket {
+                    bmRequestType: 2,
+                    bRequest: CLEAR_FEATURE,
+                    wValue: 0, // EP_HALT
+                    wIndex: (ep.endpoint | 0x80) as u16,
+                    wLength: 0,
+                },
+                DataPhase::None,
+            )
+            .await?;
+        ep.data_toggle.set(false); // USB 2.0 s5.8.5
+        Ok(())
+    }
+
     pub async fn bulk_in_transfer(
         &self,
         ep: &BulkIn,

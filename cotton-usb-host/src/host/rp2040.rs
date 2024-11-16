@@ -22,12 +22,12 @@ impl UsbShared {
     pub fn on_irq(&self) {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
-        /* defmt::info!(
+        /*defmt::info!(
                     "IRQ ints={:x} inte={:x}",
                     ints.bits(),
             regs.inte().read().bits()
-        );
-         */
+        );*/
+
         if ints.buff_status().bit() {
             let bs = regs.buff_status().read().bits();
             for i in 0..15 {
@@ -178,17 +178,17 @@ impl Future for Rp2040ControlEndpoint<'_> {
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
         if (intr.bits() & 0x458) != 0 {
-            //defmt::info!("CE ready {:x}", status.bits());
+            defmt::info!("CE ready {:x} {:x}", status.bits(), intr.bits());
             regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
             Poll::Ready(status)
         } else {
             regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
-            /*defmt::trace!(
+            defmt::trace!(
                 "CE pending intr={:x} st={:x}->{:x}",
                 intr.bits(),
                 status.bits(),
                 regs.sie_status().read().bits(),
-            );*/
+            );
             regs.inte().modify(|_, w| {
                 w.stall()
                     .set_bit()
@@ -893,6 +893,11 @@ impl Rp2040HostController {
             w.address().bits(address)
         });
 
+        self.regs.nak_poll().write(|w| unsafe {
+            w.delay_fs().bits(10);
+            w.delay_ls().bits(16)
+        });
+
         let mut started = false;
 
         loop {
@@ -944,11 +949,13 @@ impl Rp2040HostController {
                     w.send_setup().clear_bit()
                 });
 
-                /*defmt::trace!(
-                                    "ctrl->{:x}",
-                                    self.regs.sie_ctrl().read().bits()
-                                );
-                */
+                defmt::trace!(
+                    "ctrl->{:x} st {:x} intr {:x} inte {:x}",
+                    self.regs.sie_ctrl().read().bits(),
+                    self.regs.sie_status().read().bits(),
+                    self.regs.intr().read().bits(),
+                    self.regs.inte().read().bits(),
+                );
 
                 cortex_m::asm::delay(12);
 
@@ -961,7 +968,7 @@ impl Rp2040HostController {
 
             let status = f.await;
 
-            //defmt::trace!("awaited");
+            defmt::trace!("awaited");
 
             self.regs.buff_status().write(|w| unsafe { w.bits(0x3) });
 
@@ -1334,8 +1341,8 @@ impl HostController for Rp2040HostController {
         data: &mut [u8],
         data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
-        let _pipe = self.alloc_pipe(EndpointType::Control).await;
-        //debug::println!("bulk in on pipe {}", pipe.n);
+        let pipe = self.alloc_pipe(EndpointType::Control).await;
+        debug::println!("bulk in on pipe {}", pipe.n);
         let mut packetiser = InPacketiser::new(
             data.len() as u16,
             packet_size as u16,
