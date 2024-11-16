@@ -304,25 +304,25 @@ mod app {
                         defmt::println!("Is MSC!");
                         rtic_delay(1500).await;
                         /*
-                                            let Ok(info) = device.inquiry().await else {
-                                                continue;
-                                            };
-                                            if info.peripheral_type != PeripheralType::Disk {
-                                                continue;
-                                            }
+                        let Ok(info) = device.inquiry().await else {
+                            continue;
+                        };
+                        if info.peripheral_type != PeripheralType::Disk {
+                            continue;
+                        }
 
-                                                rtic_delay(1500).await;
-                                                defmt::println!("Is MSC DASD");
-                                                rtic_delay(1500).await;
+                        rtic_delay(1500).await;
+                        defmt::println!("Is MSC DASD");
+                        rtic_delay(1500).await;
 
-                                                let Ok(()) = device.test_unit_ready().await else {
-                                                    defmt::println!("Unit NOT ready");
-                                                    device.request_sense().await;
-                                                    continue;
-                                                };
+                        let Ok(()) = device.test_unit_ready().await else {
+                            defmt::println!("Unit NOT ready");
+                            device.request_sense().await;
+                            continue;
+                        };
                         */
 
-                        let abd = ScsiBlockDevice::new(device);
+                        let mut abd = ScsiBlockDevice::new(device);
                         defmt::println!("{:?}", abd.capacity().await);
                     } else if let Err(e) = stack
                         .get_configuration(&device, &mut ShowDescriptors)

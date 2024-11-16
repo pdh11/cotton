@@ -9,7 +9,7 @@ use core::future::Future;
 
 pub trait ScsiTransport {
     fn command(
-        &self,
+        &mut self,
         cmd: &[u8],
         data: DataPhase,
     ) -> impl Future<Output = Result<usize, Error>>;
@@ -322,7 +322,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Self { transport }
     }
 
-    pub async fn read_capacity_10(&self) -> Result<(u32, u32), Error> {
+    pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error> {
         debug::println!("rc10");
         let cmd = ReadCapacity10::new();
         let mut buf = [0u8; 8];
@@ -353,7 +353,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok((blocks, block_size))
     }
 
-    pub async fn read_capacity_16(&self) -> Result<(u64, u32), Error> {
+    pub async fn read_capacity_16(&mut self) -> Result<(u64, u32), Error> {
         debug::println!("rc16");
         let cmd = ReadCapacity16::new();
         let mut buf = [0u8; 32];
@@ -384,7 +384,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok((blocks, block_size))
     }
 
-    pub async fn test_unit_ready(&self) -> Result<(), Error> {
+    pub async fn test_unit_ready(&mut self) -> Result<(), Error> {
         let cmd = TestUnitReady::new();
         let rc = self
             .transport
@@ -395,7 +395,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(())
     }
 
-    pub async fn request_sense(&self) -> Result<u8, Error> {
+    pub async fn request_sense(&mut self) -> Result<u8, Error> {
         let cmd = RequestSense::new();
         let mut buf = [0u8; 18];
         let sz = self
@@ -411,7 +411,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(reply.sense_key)
     }
 
-    pub async fn inquiry(&self) -> Result<InquiryData, Error> {
+    pub async fn inquiry(&mut self) -> Result<InquiryData, Error> {
         let cmd = Inquiry::new(None, 36);
         let mut buf = [0u8; 36];
         let sz = self
@@ -446,6 +446,7 @@ pub struct MassStorage<'a, HC: HostController> {
     //device: UsbDevice,
     bulk_in: BulkIn,
     bulk_out: BulkOut,
+    tag: u32,
 }
 
 impl<'a, HC: HostController> MassStorage<'a, HC> {
@@ -463,6 +464,7 @@ impl<'a, HC: HostController> MassStorage<'a, HC> {
             //device,
             bulk_in,
             bulk_out,
+            tag: 1,
         })
     }
 }
@@ -537,12 +539,14 @@ impl CommandBlockWrapper {
 
 impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
     async fn command(
-        &self,
+        &mut self,
         cmd: &[u8],
         data: DataPhase<'_>,
     ) -> Result<usize, Error> {
         //let rc = self.bus.clear_halt(&self.bulk_in).await;
         //debug::println!("clear {:?}", rc);
+
+        self.tag += 2;
 
         let len = match data {
             DataPhase::In(ref buf) => buf.len(),
@@ -553,7 +557,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
             DataPhase::In(_) => 0x80,
             _ => 0,
         };
-        let cbw = CommandBlockWrapper::new(1, len as u32, flags, cmd);
+        let cbw = CommandBlockWrapper::new(self.tag, len as u32, flags, cmd);
         // NB the CommandBlockWrapper struct has no padding as
         // defined, but it's one byte too long (an actual, on-the-wire
         // command block wrapper is 31 bytes). So we only send a
@@ -614,7 +618,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
 pub trait AsyncBlockDevice {
     type E;
 
-    fn capacity(&self) -> impl Future<Output = Result<(u64, u32), Self::E>>;
+    fn capacity(&mut self) -> impl Future<Output = Result<(u64, u32), Self::E>>;
 }
 
 pub struct ScsiBlockDevice<T: ScsiTransport> {
@@ -630,7 +634,7 @@ impl<T: ScsiTransport> ScsiBlockDevice<T> {
 impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
     type E = Error;
 
-    async fn capacity(&self) -> Result<(u64, u32), Self::E> {
+    async fn capacity(&mut self) -> Result<(u64, u32), Self::E> {
         let capacity10 = self.scsi.read_capacity_10().await?;
         if capacity10.0 != 0xFFFF_FFFF {
             return Ok((capacity10.0 as u64, capacity10.1));
