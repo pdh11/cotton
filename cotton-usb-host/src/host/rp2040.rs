@@ -1341,8 +1341,8 @@ impl HostController for Rp2040HostController {
         data: &mut [u8],
         data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
-        let pipe = self.alloc_pipe(EndpointType::Control).await;
-        debug::println!("bulk in on pipe {}", pipe.n);
+        let _pipe = self.alloc_pipe(EndpointType::Control).await;
+        //debug::println!("bulk in on pipe {}", pipe.n);
         let mut packetiser = InPacketiser::new(
             data.len() as u16,
             packet_size as u16,
@@ -1374,7 +1374,13 @@ impl HostController for Rp2040HostController {
         data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
         let _pipe = self.alloc_pipe(EndpointType::Control).await;
-        //debug::println!("bulk out on pipe {}", pipe.n);
+        /*
+        debug::println!(
+            "bulk out on pipe {} parity {}",
+            _pipe.n,
+            data_toggle.get()
+        );
+         */
         let mut packetiser = OutPacketiser::new(
             data.len() as u16,
             packet_size as u16,
@@ -1393,7 +1399,18 @@ impl HostController for Rp2040HostController {
             &mut depacketiser,
         )
         .await?;
-        data_toggle.set(data_toggle.get() ^ depacketiser.packet_parity);
+
+        // TODO: this isn't right if transmission is cut short
+        let parity = (((data.len() / (packet_size as usize)) + 1) & 1) == 1;
+        data_toggle.set(data_toggle.get() ^ parity);
+        /*
+        debug::println!(
+            "pp {} p {} toggle now {}",
+            depacketiser.packet_parity,
+            parity,
+            data_toggle.get()
+        );
+         */
         Ok(data.len())
     }
 

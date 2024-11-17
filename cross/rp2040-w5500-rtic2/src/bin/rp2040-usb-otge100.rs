@@ -11,8 +11,8 @@ mod app {
     use core::pin::pin;
     use cotton_usb_host::device::identify::IdentifyFromDescriptors;
     use cotton_usb_host::device::mass_storage::{
-        AsyncBlockDevice, IdentifyMassStorage, MassStorage, ScsiBlockDevice,
-        ScsiDevice,
+        AsyncBlockDevice, IdentifyMassStorage, MassStorage, PeripheralType,
+        ScsiBlockDevice, ScsiDevice,
     };
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
@@ -300,10 +300,10 @@ mod app {
                         let Ok(ms) = MassStorage::new(&stack, device) else {
                             continue;
                         };
-                        let device = ScsiDevice::new(ms);
+                        let mut device = ScsiDevice::new(ms);
                         defmt::println!("Is MSC!");
                         rtic_delay(1500).await;
-                        /*
+
                         let Ok(info) = device.inquiry().await else {
                             continue;
                         };
@@ -313,14 +313,14 @@ mod app {
 
                         rtic_delay(1500).await;
                         defmt::println!("Is MSC DASD");
+
                         rtic_delay(1500).await;
 
                         let Ok(()) = device.test_unit_ready().await else {
                             defmt::println!("Unit NOT ready");
-                            device.request_sense().await;
+                            let _ = device.request_sense().await;
                             continue;
                         };
-                        */
 
                         let mut abd = ScsiBlockDevice::new(device);
                         defmt::println!("{:?}", abd.capacity().await);

@@ -6,6 +6,7 @@ use crate::wire::{
     ConfigurationDescriptor, DescriptorVisitor, InterfaceDescriptor,
 };
 use core::future::Future;
+use core::str;
 
 pub trait ScsiTransport {
     fn command(
@@ -69,7 +70,7 @@ unsafe impl bytemuck::Pod for ReadCapacity10 {}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 #[repr(C)]
 struct ReadCapacity10Reply {
     lba: [u8; 4],
@@ -117,7 +118,7 @@ unsafe impl bytemuck::Pod for ReadCapacity16 {}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 #[repr(C)]
 struct ReadCapacity16Reply {
     lba: [u8; 8],
@@ -322,22 +323,30 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Self { transport }
     }
 
-    pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error> {
-        debug::println!("rc10");
-        let cmd = ReadCapacity10::new();
-        let mut buf = [0u8; 8];
+    async fn command_response<
+        C: bytemuck::Pod,
+        R: bytemuck::NoUninit + bytemuck::AnyBitPattern + Default,
+    >(
+        &mut self,
+        cmd: C,
+    ) -> Result<R, Error> {
+        let mut r = R::default();
         let sz = self
             .transport
-            .command(bytemuck::bytes_of(&cmd), DataPhase::In(&mut buf))
+            .command(
+                bytemuck::bytes_of(&cmd),
+                DataPhase::In(bytemuck::bytes_of_mut(&mut r)),
+            )
             .await?;
-        debug::println!("rc10a");
-        if sz < 8 {
+        if sz < core::mem::size_of::<R>() {
             return Err(Error::ProtocolError);
         }
-        debug::println!("rc10b");
-        let reply = bytemuck::try_from_bytes::<ReadCapacity10Reply>(&buf)
-            .map_err(|_| Error::ProtocolError)?;
-        debug::println!("rc10c");
+        Ok(r)
+    }
+
+    pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error> {
+        let reply: ReadCapacity10Reply =
+            self.command_response(ReadCapacity10::new()).await?;
         let blocks = u32::from_be_bytes(reply.lba);
         let block_size = u32::from_be_bytes(reply.block_size);
         let capacity = (blocks as u64) * (block_size as u64);
@@ -354,21 +363,8 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     }
 
     pub async fn read_capacity_16(&mut self) -> Result<(u64, u32), Error> {
-        debug::println!("rc16");
-        let cmd = ReadCapacity16::new();
-        let mut buf = [0u8; 32];
-        let sz = self
-            .transport
-            .command(bytemuck::bytes_of(&cmd), DataPhase::In(&mut buf))
-            .await?;
-        debug::println!("rc16a");
-        if sz < 32 {
-            return Err(Error::ProtocolError);
-        }
-        debug::println!("rc16b");
-        let reply = bytemuck::try_from_bytes::<ReadCapacity16Reply>(&buf)
-            .map_err(|_| Error::ProtocolError)?;
-        debug::println!("rc16c");
+        let reply: ReadCapacity16Reply =
+            self.command_response(ReadCapacity16::new()).await?;
         let blocks = u64::from_be_bytes(reply.lba);
         let block_size = u32::from_be_bytes(reply.block_size);
         let capacity = blocks * (block_size as u64);
@@ -432,6 +428,13 @@ impl<T: ScsiTransport> ScsiDevice<T> {
             is_removable: (reply.removable & 0x80) != 0,
         };
         //debug::println!("actual len {}", reply.additional_length + 4);
+        if let (Ok(v), Ok(i), Ok(r)) = (
+            str::from_utf8(&reply.vendor_id),
+            str::from_utf8(&reply.product_id),
+            str::from_utf8(&reply.product_revision),
+        ) {
+            debug::println!("v {} i {} r {}", v, i, r);
+        }
         debug::println!(
             "type {:x} removable {}",
             reply.peripheral_device_type,
@@ -562,36 +565,26 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         // defined, but it's one byte too long (an actual, on-the-wire
         // command block wrapper is 31 bytes). So we only send a
         // partial slice of it.
-        let rc = self
-            .bus
+        self.bus
             .bulk_out_transfer(
                 &self.bulk_out,
                 &bytemuck::bytes_of(&cbw)[0..31],
             )
-            .await;
-        debug::println!("bot {:?}", rc);
-        rc?;
+            .await?;
+        //debug::println!("bot {:?}", rc);
+        //rc?;
 
         // TODO: if in and sz<13, read to cbw instead in case command errors
         let response = match data {
             DataPhase::In(buf) => {
-                debug::println!("bit");
-                let rc = self.bus.bulk_in_transfer(&self.bulk_in, buf).await;
-                debug::println!("bit {:?}", rc);
-                let n = rc?;
+                let n = self.bus.bulk_in_transfer(&self.bulk_in, buf).await?;
                 debug::println!("{}: {:?}", n, buf);
                 n
             }
             DataPhase::Out(buf) => {
                 self.bus.bulk_out_transfer(&self.bulk_out, buf).await?
             }
-            DataPhase::None => {
-                /*
-                let rc = self.bus.bulk_in_transfer(&self.bulk_in, &mut []).await;
-                                debug::println!("bit0 {:?}", rc);
-                */
-                0
-            }
+            DataPhase::None => 0,
         };
 
         let mut csw = [0u8; 13];
@@ -606,7 +599,9 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
          */
         let residue = u32::from_le_bytes(csw[8..12].try_into().unwrap());
         let status = csw[12];
-        debug::println!("status {} residue {}", status, residue);
+        if status != 0 || residue != 0 {
+            debug::println!("status {} residue {}", status, residue);
+        }
         match status {
             0 => Ok(response),
             1 => Err(Error::CommandFailed),
@@ -618,7 +613,9 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
 pub trait AsyncBlockDevice {
     type E;
 
-    fn capacity(&mut self) -> impl Future<Output = Result<(u64, u32), Self::E>>;
+    fn capacity(
+        &mut self,
+    ) -> impl Future<Output = Result<(u64, u32), Self::E>>;
 }
 
 pub struct ScsiBlockDevice<T: ScsiTransport> {
