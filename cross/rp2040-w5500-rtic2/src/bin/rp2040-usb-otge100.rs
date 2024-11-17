@@ -316,7 +316,6 @@ mod app {
 
                         let Ok(()) = device.test_unit_ready().await else {
                             defmt::println!("Unit NOT ready");
-                            let _ = device.request_sense().await;
                             continue;
                         };
 
@@ -324,7 +323,13 @@ mod app {
                         let rc = device.read_16(0, 1, &mut buf).await;
                         defmt::println!("read: {:?}", rc);
 
+                        //defmt::println!("{:?}", device.supported_vpd_pages().await);
+                        //defmt::println!("{:?}", device.block_limits_page().await);
+
                         let mut abd = ScsiBlockDevice::new(device);
+
+                        //defmt::println!("{:?}", abd.query_commands().await);
+
                         defmt::println!("{:?}", abd.capacity().await);
 
                         rtic_delay(1500).await;
