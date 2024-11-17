@@ -18,7 +18,7 @@ use futures::{Future, Stream, StreamExt};
 
 pub use crate::host_controller::{
     DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    UsbError, UsbSpeed,
+    TransferType, UsbError, UsbSpeed,
 };
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -602,6 +602,7 @@ impl<HC: HostController> UsbBus<HC> {
             )
             .await?;
         if sz < 8 {
+            debug::println!("control in {}/8", sz);
             return Err(UsbError::ProtocolError);
         }
 
@@ -624,6 +625,7 @@ impl<HC: HostController> UsbBus<HC> {
             )
             .await?;
         if sz < 18 {
+            debug::println!("control in {}/18", sz);
             return Err(UsbError::ProtocolError);
         }
 
@@ -709,6 +711,7 @@ impl<HC: HostController> UsbBus<HC> {
         &self,
         ep: &BulkIn,
         data: &mut [u8],
+        transfer_type: TransferType,
     ) -> Result<usize, UsbError> {
         self.driver
             .bulk_in_transfer(
@@ -716,6 +719,7 @@ impl<HC: HostController> UsbBus<HC> {
                 ep.endpoint,
                 64, // @TODO max packet size
                 data,
+                transfer_type,
                 &ep.data_toggle,
             )
             .await
@@ -725,6 +729,7 @@ impl<HC: HostController> UsbBus<HC> {
         &self,
         ep: &BulkOut,
         data: &[u8],
+        transfer_type: TransferType,
     ) -> Result<usize, UsbError> {
         self.driver
             .bulk_out_transfer(
@@ -732,6 +737,7 @@ impl<HC: HostController> UsbBus<HC> {
                 ep.endpoint,
                 64, // @TODO max packet size
                 data,
+                transfer_type,
                 &ep.data_toggle,
             )
             .await

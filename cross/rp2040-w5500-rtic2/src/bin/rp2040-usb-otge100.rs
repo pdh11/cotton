@@ -314,8 +314,6 @@ mod app {
                         rtic_delay(1500).await;
                         defmt::println!("Is MSC DASD");
 
-                        rtic_delay(1500).await;
-
                         let Ok(()) = device.test_unit_ready().await else {
                             defmt::println!("Unit NOT ready");
                             let _ = device.request_sense().await;
@@ -328,6 +326,9 @@ mod app {
 
                         let mut abd = ScsiBlockDevice::new(device);
                         defmt::println!("{:?}", abd.capacity().await);
+
+                        rtic_delay(1500).await;
+                        defmt::println!("MSC OK");
                     } else if let Err(e) = stack
                         .get_configuration(&device, &mut ShowDescriptors)
                         .await

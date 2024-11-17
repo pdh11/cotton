@@ -1,7 +1,7 @@
 use crate::debug;
 use crate::device::identify::IdentifyFromDescriptors;
 use crate::host_controller::{DataPhase, HostController, UsbError};
-use crate::usb_bus::{BulkIn, BulkOut, UsbBus, UsbDevice};
+use crate::usb_bus::{BulkIn, BulkOut, TransferType, UsbBus, UsbDevice};
 use crate::wire::{
     ConfigurationDescriptor, DescriptorVisitor, InterfaceDescriptor,
 };
@@ -753,6 +753,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
             .bulk_out_transfer(
                 &self.bulk_out,
                 &bytemuck::bytes_of(&cbw)[0..31],
+                TransferType::FixedSize,
             )
             .await?;
         //debug::println!("bot {:?}", rc);
@@ -761,7 +762,14 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         // TODO: if in and sz<13, read to cbw instead in case command errors
         let response = match data {
             DataPhase::In(buf) => {
-                let n = self.bus.bulk_in_transfer(&self.bulk_in, buf).await?;
+                let n = self
+                    .bus
+                    .bulk_in_transfer(
+                        &self.bulk_in,
+                        buf,
+                        TransferType::FixedSize,
+                    )
+                    .await?;
                 if n > 128 {
                     debug::println!("{}: [...]", n);
                 } else {
@@ -770,13 +778,22 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
                 n
             }
             DataPhase::Out(buf) => {
-                self.bus.bulk_out_transfer(&self.bulk_out, buf).await?
+                self.bus
+                    .bulk_out_transfer(
+                        &self.bulk_out,
+                        buf,
+                        TransferType::FixedSize,
+                    )
+                    .await?
             }
             DataPhase::None => 0,
         };
 
         let mut csw = [0u8; 13];
-        let sz = self.bus.bulk_in_transfer(&self.bulk_in, &mut csw).await?;
+        let sz = self
+            .bus
+            .bulk_in_transfer(&self.bulk_in, &mut csw, TransferType::FixedSize)
+            .await?;
         if sz < 13 {
             debug::println!("Bad CSW {}/13", sz);
             return Err(Error::ProtocolError);

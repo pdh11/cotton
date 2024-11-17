@@ -67,6 +67,20 @@ impl DataPhase<'_> {
     }
 }
 
+/// Is this a fixed-size transfer or variable-size transfer?
+///
+/// According to USB 2.0 s5.3.2, the host must behave differently in
+/// each case, so needs to know. (In particular, a fixed-size transfer
+/// doesn't have a zero-length packet even if the data fills an exact
+/// number of packets -- whereas a variable-size transfer does have a
+/// zero-length packet in that case.)
+pub enum TransferType {
+    /// Both ends know (via other means) how long the transfer should be
+    FixedSize,
+    /// Open-ended transfer (the size given is a maximum)
+    VariableSize,
+}
+
 pub struct InterruptPacket {
     pub address: u8,
     pub endpoint: u8,
@@ -126,6 +140,7 @@ pub trait HostController {
         endpoint: u8,
         packet_size: u16,
         data: &mut [u8],
+        transfer_type: TransferType,
         data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
@@ -135,6 +150,7 @@ pub trait HostController {
         endpoint: u8,
         packet_size: u16,
         data: &[u8],
+        transfer_type: TransferType,
         data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 

@@ -48,6 +48,7 @@ mock! {
             endpoint: u8,
             packet_size: u16,
             data: &mut [u8],
+            transfer_type: TransferType,
             data_toggle: &Cell<bool>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
@@ -57,6 +58,7 @@ mock! {
             endpoint: u8,
             packet_size: u16,
             data: &[u8],
+            transfer_type: TransferType,
             data_toggle: &Cell<bool>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
@@ -119,6 +121,7 @@ impl HostController for MockHostController {
         endpoint: u8,
         packet_size: u16,
         data: &mut [u8],
+        transfer_type: TransferType,
         data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
         self.inner.bulk_in_transfer(
@@ -126,6 +129,7 @@ impl HostController for MockHostController {
             endpoint,
             packet_size,
             data,
+            transfer_type,
             data_toggle,
         )
     }
@@ -136,6 +140,7 @@ impl HostController for MockHostController {
         endpoint: u8,
         packet_size: u16,
         data: &[u8],
+        transfer_type: TransferType,
         data_toggle: &Cell<bool>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
         self.inner.bulk_out_transfer(
@@ -143,6 +148,7 @@ impl HostController for MockHostController {
             endpoint,
             packet_size,
             data,
+            transfer_type,
             data_toggle,
         )
     }

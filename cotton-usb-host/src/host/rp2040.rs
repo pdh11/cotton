@@ -2,7 +2,7 @@ use crate::async_pool::Pool;
 use crate::debug;
 use crate::host_controller::{
     DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    UsbError, UsbSpeed,
+    TransferType, UsbError, UsbSpeed,
 };
 use crate::wire::{Direction, EndpointType, SetupPacket};
 use core::cell::Cell;
@@ -177,12 +177,18 @@ impl Future for Rp2040ControlEndpoint<'_> {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
+        let bcsh = regs.buff_cpu_should_handle().read();
         if (intr.bits() & 0x458) != 0 {
-            defmt::info!("CE ready {:x} {:x}", status.bits(), intr.bits());
-            regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
+            defmt::info!(
+                "CE ready {:x} {:x} {:x}",
+                status.bits(),
+                intr.bits(),
+                bcsh.bits()
+            );
+            regs.sie_status().write(|w| unsafe { w.bits(0xFF08_0000) });
             Poll::Ready(status)
         } else {
-            regs.sie_status().write(|w| unsafe { w.bits(0xFF0C_0000) });
+            regs.sie_status().write(|w| unsafe { w.bits(0xFF08_0000) });
             defmt::trace!(
                 "CE pending intr={:x} st={:x}->{:x}",
                 intr.bits(),
@@ -348,8 +354,14 @@ impl InterruptPipe for Rp2040InterruptPipe {
     }
 }
 
+enum ZeroLengthPacket {
+    AsNeeded,
+    Never,
+}
+
 trait Packetiser {
-    fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL);
+    fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL)
+        -> bool;
 }
 
 struct InPacketiser {
@@ -361,12 +373,20 @@ struct InPacketiser {
 }
 
 impl InPacketiser {
-    fn new(remain: u16, packet_size: u16, initial_toggle: bool) -> Self {
+    fn new(
+        remain: u16,
+        packet_size: u16,
+        initial_toggle: bool,
+        zlp: ZeroLengthPacket,
+    ) -> Self {
         Self {
             next_prep: 0,
             remain,
             packet_size,
-            need_zero_size_packet: remain == 0, // !is_control && (remain % packet_size) == 0,
+            need_zero_size_packet: match zlp {
+                ZeroLengthPacket::Never => remain == 0,
+                ZeroLengthPacket::AsNeeded => (remain % packet_size) == 0,
+            },
             initial_toggle,
         }
     }
@@ -391,19 +411,22 @@ impl InPacketiser {
 }
 
 impl Packetiser for InPacketiser {
-    fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
+    fn prepare(
+        &mut self,
+        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
+    ) -> bool {
         let val = reg.read();
         match self.next_prep {
             0 => {
                 if !val.available_0().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
+                        //defmt::info!("Prepared {}/{}-byte space last {} @0", this_packet, self.remain, is_last);
                         self.remain -= this_packet;
-                        //defmt::info!("Prepared {}-byte space last {}", this_packet, is_last);
                         reg.modify(|_, w| {
                             w.full_0().clear_bit();
                             w.pid_0().bit(self.initial_toggle);
                             w.last_0().bit(is_last);
-                            unsafe { w.length_0().bits(this_packet) };
+                            unsafe { w.length_0().bits(self.packet_size) };
                             w
                         });
 
@@ -412,6 +435,7 @@ impl Packetiser for InPacketiser {
                         reg.modify(|_, w| w.available_0().set_bit());
 
                         self.next_prep = 1;
+                        return true;
                     }
                 }
             }
@@ -419,13 +443,13 @@ impl Packetiser for InPacketiser {
             _ => {
                 if !val.available_1().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
+                        //defmt::info!("Prepared {}/{}-byte space last {} @1", this_packet, self.remain, is_last);
                         self.remain -= this_packet;
-                        //defmt::info!("Prepared {}-byte space last {}", this_packet, is_last);
                         reg.modify(|_, w| {
                             w.full_1().clear_bit();
                             w.pid_1().bit(!self.initial_toggle);
                             w.last_1().bit(is_last);
-                            unsafe { w.length_1().bits(this_packet) };
+                            unsafe { w.length_1().bits(self.packet_size) };
                             w
                         });
 
@@ -434,10 +458,12 @@ impl Packetiser for InPacketiser {
                         reg.modify(|_, w| w.available_1().set_bit());
 
                         self.next_prep = 0;
+                        return true;
                     }
                 }
             }
         }
+        false
     }
 }
 
@@ -489,7 +515,10 @@ impl<'a> OutPacketiser<'a> {
 }
 
 impl Packetiser for OutPacketiser<'_> {
-    fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) {
+    fn prepare(
+        &mut self,
+        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
+    ) -> bool {
         let val = reg.read();
         match self.next_prep {
             0 => {
@@ -519,6 +548,7 @@ impl Packetiser for OutPacketiser<'_> {
                         self.remain -= this_packet;
                         self.offset += this_packet;
                         self.next_prep = 1;
+                        return true;
                     }
                 }
             }
@@ -548,18 +578,17 @@ impl Packetiser for OutPacketiser<'_> {
                         self.remain -= this_packet;
                         self.offset += this_packet;
                         self.next_prep = 0;
+                        return true;
                     }
                 }
             }
         }
+        false
     }
 }
 
 trait Depacketiser {
-    fn retire(
-        &mut self,
-        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
-    ) -> Option<usize>;
+    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) -> bool;
 }
 
 struct InDepacketiser<'a> {
@@ -587,16 +616,17 @@ impl<'a> InDepacketiser<'a> {
 }
 
 impl Depacketiser for InDepacketiser<'_> {
-    fn retire(
-        &mut self,
-        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
-    ) -> Option<usize> {
+    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
         let val = reg.read();
         match self.next_retire {
             0 => {
                 if val.full_0().bit() {
                     self.packet_parity = !self.packet_parity;
-                    defmt::trace!("Got {} bytes", val.length_0().bits());
+                    defmt::trace!(
+                        "Got {}/{} bytes @0",
+                        val.length_0().bits(),
+                        self.remain
+                    );
                     let this_packet = core::cmp::min(
                         self.remain,
                         val.length_0().bits() as usize,
@@ -614,13 +644,17 @@ impl Depacketiser for InDepacketiser<'_> {
                     self.remain -= this_packet;
                     self.offset += this_packet;
                     self.next_retire = 1;
-                    return Some(this_packet);
+                    return true;
                 }
             }
             _ => {
                 if val.full_1().bit() {
                     self.packet_parity = !self.packet_parity;
-                    defmt::trace!("Got {} bytes", val.length_1().bits());
+                    defmt::trace!(
+                        "Got {}/{} bytes @1",
+                        val.length_1().bits(),
+                        self.remain
+                    );
                     let this_packet = core::cmp::min(
                         self.remain,
                         val.length_1().bits() as usize,
@@ -638,11 +672,11 @@ impl Depacketiser for InDepacketiser<'_> {
                     self.remain -= this_packet;
                     self.offset += this_packet;
                     self.next_retire = 0;
-                    return Some(this_packet);
+                    return true;
                 }
             }
         }
-        None
+        false
     }
 }
 
@@ -661,28 +695,25 @@ impl OutDepacketiser {
 }
 
 impl Depacketiser for OutDepacketiser {
-    fn retire(
-        &mut self,
-        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
-    ) -> Option<usize> {
+    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
         let val = reg.read();
         match self.next_retire {
             0 => {
                 if !val.full_0().bit() {
                     self.packet_parity = !self.packet_parity;
                     self.next_retire = 1;
-                    return Some(val.length_0().bits() as usize);
+                    return true;
                 }
             }
             _ => {
                 if !val.full_1().bit() {
                     self.packet_parity = !self.packet_parity;
                     self.next_retire = 0;
-                    return Some(val.length_1().bits() as usize);
+                    return true;
                 }
             }
         }
-        None
+        false
     }
 }
 
@@ -882,7 +913,6 @@ impl Rp2040HostController {
         self.dpram
             .ep_buffer_control(0)
             .write(|w| unsafe { w.bits(0) });
-        packetiser.prepare(self.dpram.ep_buffer_control(0));
 
         self.regs
             .sie_status()
@@ -900,9 +930,19 @@ impl Rp2040HostController {
 
         let mut started = false;
 
+        let mut in_flight = 0;
+
         loop {
-            packetiser.prepare(self.dpram.ep_buffer_control(0));
-            packetiser.prepare(self.dpram.ep_buffer_control(0));
+            if in_flight < 2
+                && packetiser.prepare(self.dpram.ep_buffer_control(0))
+            {
+                in_flight += 1;
+            }
+            if in_flight < 2
+                && packetiser.prepare(self.dpram.ep_buffer_control(0))
+            {
+                in_flight += 1;
+            }
 
             self.regs
                 .sie_status()
@@ -968,7 +1008,7 @@ impl Rp2040HostController {
 
             let status = f.await;
 
-            defmt::trace!("awaited");
+            defmt::trace!("awaited {}", in_flight);
 
             self.regs.buff_status().write(|w| unsafe { w.bits(0x3) });
 
@@ -990,7 +1030,12 @@ impl Rp2040HostController {
             });
 
             if status.trans_complete().bit() {
-                depacketiser.retire(self.dpram.ep_buffer_control(0));
+                if in_flight > 0 {
+                    if depacketiser.retire(self.dpram.ep_buffer_control(0)) {
+                        in_flight -= 1;
+                    }
+                }
+                defmt::trace!("TC");
                 break;
             }
 
@@ -1018,6 +1063,7 @@ impl Rp2040HostController {
             //     return Err(UsbError::Nak);
             // }
             if status.rx_overflow().bit() {
+                defmt::println!("Overflow");
                 return Err(UsbError::Overflow);
             }
             if status.rx_timeout().bit() {
@@ -1025,29 +1071,42 @@ impl Rp2040HostController {
                 return Err(UsbError::Timeout);
             }
             if status.bit_stuff_error().bit() {
+                defmt::println!("BitStuff");
                 return Err(UsbError::BitStuffError);
             }
             if status.crc_error().bit() {
+                defmt::println!("CRCError");
                 return Err(UsbError::CrcError);
             }
 
-            depacketiser.retire(self.dpram.ep_buffer_control(0));
-            depacketiser.retire(self.dpram.ep_buffer_control(0));
+            if in_flight > 0 {
+                if depacketiser.retire(self.dpram.ep_buffer_control(0)) {
+                    in_flight -= 1;
+                }
+                if in_flight > 0 {
+                    if depacketiser.retire(self.dpram.ep_buffer_control(0)) {
+                        in_flight -= 1;
+                    }
+                }
+            }
         }
 
         /*
         let bcr = self.dpram.ep_buffer_control(0).read();
         let ctrl = self.regs.sie_ctrl().read();
         defmt::trace!(
-            "COMPLETE bcr=0x{:x} sie_ctrl=0x{:x}",
+            "COMPLETE bcr=0x{:x} sie_ctrl=0x{:x} in={}",
             bcr.bits(),
-            ctrl.bits()
+            ctrl.bits(),
+            in_flight,
         );
-         */
+        */
         self.regs
             .sie_status()
             .write(|w| unsafe { w.bits(0xFF00_0000) });
-        depacketiser.retire(self.dpram.ep_buffer_control(0));
+        if in_flight > 0 {
+            depacketiser.retire(self.dpram.ep_buffer_control(0));
+        }
         Ok(())
     }
 
@@ -1061,8 +1120,12 @@ impl Rp2040HostController {
         if buf.len() < size {
             return Err(UsbError::BufferTooSmall);
         }
-        let mut packetiser =
-            InPacketiser::new(size as u16, packet_size as u16, true); // setup is PID0 so data starts with PID1
+        let mut packetiser = InPacketiser::new(
+            size as u16,
+            packet_size as u16,
+            true,
+            ZeroLengthPacket::Never,
+        ); // setup is PID0 so data starts with PID1
         let mut depacketiser = InDepacketiser::new(size as u16, buf);
 
         self.control_transfer_inner(
@@ -1339,14 +1402,24 @@ impl HostController for Rp2040HostController {
         endpoint: u8,
         packet_size: u16,
         data: &mut [u8],
+        transfer_type: TransferType,
         data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
         let _pipe = self.alloc_pipe(EndpointType::Control).await;
-        //debug::println!("bulk in on pipe {}", pipe.n);
+        /*
+        debug::println!("bulk in {} on pipe {} parity {}",
+                        data.len(),
+                        _pipe.n,
+                        data_toggle.get());
+         */
         let mut packetiser = InPacketiser::new(
             data.len() as u16,
             packet_size as u16,
             data_toggle.get(),
+            match transfer_type {
+                TransferType::FixedSize => ZeroLengthPacket::Never,
+                TransferType::VariableSize => ZeroLengthPacket::AsNeeded,
+            },
         );
         let length = data.len() as u16;
         let mut depacketiser = InDepacketiser::new(length, data);
@@ -1362,6 +1435,18 @@ impl HostController for Rp2040HostController {
         )
         .await?;
         data_toggle.set(data_toggle.get() ^ depacketiser.packet_parity);
+        /*
+        let mut parity = (((depacketiser.total() / (packet_size as usize)) + 1) & 1) == 1;
+        if length == 512 {
+            parity = !parity;
+        }
+        debug::println!(
+            "pp {} p {} toggle now {}",
+            depacketiser.packet_parity,
+            parity,
+            data_toggle.get()
+        );
+         */
         Ok(depacketiser.total())
     }
 
@@ -1371,6 +1456,7 @@ impl HostController for Rp2040HostController {
         endpoint: u8,
         packet_size: u16,
         data: &[u8],
+        _transfer_type: TransferType,
         data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
         let _pipe = self.alloc_pipe(EndpointType::Control).await;
