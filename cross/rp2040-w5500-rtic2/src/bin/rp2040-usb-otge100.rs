@@ -322,6 +322,10 @@ mod app {
                             continue;
                         };
 
+                        let mut buf = [0u8; 512];
+                        let rc = device.read_16(0, 1, &mut buf).await;
+                        defmt::println!("read: {:?}", rc);
+
                         let mut abd = ScsiBlockDevice::new(device);
                         defmt::println!("{:?}", abd.capacity().await);
                     } else if let Err(e) = stack

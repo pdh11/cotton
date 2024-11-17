@@ -36,6 +36,40 @@ pub struct ScsiDevice<T: ScsiTransport> {
     transport: T,
 }
 
+/// READ (16)
+/// Seagate SCSI Commands Reference Manual s3.18
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct Read16 {
+    operation_code: u8,
+    flags: u8,
+    lba_be: [u8; 8],
+    transfer_length_be: [u8; 4],
+    group: u8,
+    control: u8,
+}
+
+impl Read16 {
+    fn new(lba: u64, count: u32) -> Self {
+        assert!(core::mem::size_of::<Self>() == 16);
+        Self {
+            operation_code: 0x88,
+            flags: 0,
+            lba_be: lba.to_be_bytes(),
+            transfer_length_be: count.to_be_bytes(),
+            group: 0,
+            control: 0,
+        }
+    }
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for Read16 {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for Read16 {}
+
 /// READ CAPACITY (10)
 /// Seagate SCSI Commands Reference Manual s3.23.2
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -215,6 +249,61 @@ unsafe impl bytemuck::Zeroable for RequestSenseReply {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for RequestSenseReply {}
 
+/// REPORT SUPPORTED OPERATION CODES
+/// Seagate SCSI Commands Reference Manual s3.34
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct ReportSupportedOperationCodes {
+    operation_code: u8,
+    service_action: u8,
+    reporting_options: u8,
+    requested_opcode: u8,
+    requested_service_action_be: [u8; 2],
+    allocation_length_be: [u8; 4],
+    reserved: u8,
+    control: u8,
+}
+
+impl ReportSupportedOperationCodes {
+    fn new(opcode: u8, service_action: Option<u16>) -> Self {
+        assert!(core::mem::size_of::<Self>() == 12);
+        Self {
+            operation_code: 0xA3,
+            service_action: 0x0C,
+            reporting_options: 3, //if service_action.is_some() { 2 } else { 1 },
+            requested_opcode: opcode,
+            requested_service_action_be: service_action
+                .unwrap_or_default()
+                .to_be_bytes(),
+            allocation_length_be: [0, 0, 0, 4],
+            reserved: 0,
+            control: 0,
+        }
+    }
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for ReportSupportedOperationCodes {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for ReportSupportedOperationCodes {}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, Default)]
+#[repr(C)]
+struct ReportSupportedOperationCodesReply {
+    reserved: u8,
+    support: u8,
+    cdb_size: [u8; 2],
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for ReportSupportedOperationCodesReply {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for ReportSupportedOperationCodesReply {}
+
 /// INQUIRY
 /// Seagate SCSI Commands Reference Manual s3.6
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -273,6 +362,42 @@ pub struct StandardInquiryData {
 unsafe impl bytemuck::Zeroable for StandardInquiryData {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for StandardInquiryData {}
+
+/// Inquiry Block Limits page
+/// Seagate SCSI Commands Reference Manual s5.4.5
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, Default)]
+#[repr(C)]
+pub struct BlockLimitsPage {
+    peripheral_device_type: u8,
+    page_code: u8,
+    page_length: [u8; 2],
+    wsnz: u8,
+    max_compare_and_write: u8,
+    optimal_transfer_length_granularity: [u8; 2],
+    maximum_transfer_length: [u8; 4],
+    optimal_transfer_length: [u8; 4], // 16
+
+    maximum_prefetch_length: [u8; 4],
+    maximum_unmap_lba_count: [u8; 4],
+    maximum_unmap_block_descriptor_count: [u8; 4],
+    optimal_unmap_granularity: [u8; 4], // 32
+
+    unmap_granularity_alignemnt: [u8; 4],
+    maximum_write_same_length: [u8; 8],
+    maximum_atomic_transfer_length: [u8; 4], // 48
+
+    atomic_alignment: [u8; 4],
+    atomic_transfer_length_granularity: [u8; 4],
+    maximum_atomic_transfer_length_with_atomic_boundary: [u8; 4],
+    maximum_atomic_boundary_size: [u8; 4],
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for BlockLimitsPage {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for BlockLimitsPage {}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
@@ -344,6 +469,13 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(r)
     }
 
+    /// Read capacity (basic version supports <2TB only)
+    ///
+    /// Support:
+    /// Sandisk cruzer blade (black 4G) Y
+    /// Sandisk cruzer blade (green 16G) Y
+    /// Handbag Y
+    /// Poker Y
     pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error> {
         let reply: ReadCapacity10Reply =
             self.command_response(ReadCapacity10::new()).await?;
@@ -362,6 +494,13 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok((blocks, block_size))
     }
 
+    /// Read capacity (extended version supports >2TB)
+    ///
+    /// Support:
+    /// Sandisk cruzer blade (black 4G) Y
+    /// Sandisk cruzer blade (green 16G) Y
+    /// Handbag N
+    /// Poker N
     pub async fn read_capacity_16(&mut self) -> Result<(u64, u32), Error> {
         let reply: ReadCapacity16Reply =
             self.command_response(ReadCapacity16::new()).await?;
@@ -378,6 +517,21 @@ impl<T: ScsiTransport> ScsiDevice<T> {
             capacity >> 30
         );
         Ok((blocks, block_size))
+    }
+
+    /// Not much supports this one
+    pub async fn report_supported_operation_codes(
+        &mut self,
+        opcode: u8,
+        service_action: Option<u16>,
+    ) -> Result<bool, Error> {
+        let reply: ReportSupportedOperationCodesReply = self
+            .command_response(ReportSupportedOperationCodes::new(
+                opcode,
+                service_action,
+            ))
+            .await?;
+        Ok((reply.support & 7) == 3)
     }
 
     pub async fn test_unit_ready(&mut self) -> Result<(), Error> {
@@ -441,6 +595,36 @@ impl<T: ScsiTransport> ScsiDevice<T> {
             reply.removable
         );
         Ok(data)
+    }
+
+    /// Not much supports this one
+    pub async fn block_limits_page(
+        &mut self,
+    ) -> Result<BlockLimitsPage, Error> {
+        let cmd = Inquiry::new(Some(0xB0), 64);
+        assert!(core::mem::size_of::<BlockLimitsPage>() == 64);
+        self.command_response(cmd).await
+    }
+
+    /// Read sector(s)
+    ///
+    /// Support:
+    /// Sandisk cruzer blade (black 4G)
+    /// Sandisk cruzer blade (green 16G) Y
+    /// Handbag
+    /// Poker
+    pub async fn read_16(
+        &mut self,
+        start_block: u64,
+        count: u32,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        let cmd = Read16::new(start_block, count);
+        let sz = self
+            .transport
+            .command(bytemuck::bytes_of(&cmd), DataPhase::In(buf))
+            .await?;
+        Ok(sz)
     }
 }
 
@@ -578,7 +762,11 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         let response = match data {
             DataPhase::In(buf) => {
                 let n = self.bus.bulk_in_transfer(&self.bulk_in, buf).await?;
-                debug::println!("{}: {:?}", n, buf);
+                if n > 128 {
+                    debug::println!("{}: [...]", n);
+                } else {
+                    debug::println!("{}: {:?}", n, buf);
+                }
                 n
             }
             DataPhase::Out(buf) => {
@@ -626,6 +814,29 @@ impl<T: ScsiTransport> ScsiBlockDevice<T> {
     pub fn new(scsi: ScsiDevice<T>) -> Self {
         Self { scsi }
     }
+
+    /*
+    pub async fn query_commands(&mut self) -> Result<(),Error> {
+        const CMDS: &[(&str, u8)] = &[
+            ("READ(6)", 0x08),
+            ("READ(10)", 0x28),
+            ("READ(12)", 0xA8),
+            ("READ(16)", 0x88),
+            ("WRITE(6)", 0x0A),
+            ("WRITE(10)", 0x2A),
+            ("WRITE(12)", 0xAA),
+            ("WRITE(16)", 0x8A),
+            ("WRITE ATOMIC(16)", 0x9C),
+            ("WRITE AND VERIFY(16)", 0x8E),
+        ];
+
+        for c in CMDS {
+            let ok = self.scsi.report_supported_operation_codes(c.1, None).await?;
+            debug::println!("{} {}", c.0, ok);
+        }
+        Ok(())
+    }
+     */
 }
 
 impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
@@ -636,6 +847,7 @@ impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
         if capacity10.0 != 0xFFFF_FFFF {
             return Ok((capacity10.0 as u64, capacity10.1));
         }
+
         // NB 4 giga*blocks* is a lot, >=2TB
         self.scsi.read_capacity_16().await
     }
