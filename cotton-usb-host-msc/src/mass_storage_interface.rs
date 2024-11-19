@@ -1,9 +1,11 @@
-use crate::debug;
-use crate::device::identify::IdentifyFromDescriptors;
-use crate::device::mass_storage::{Error, ScsiTransport};
-use crate::host_controller::{DataPhase, HostController, UsbError};
-use crate::usb_bus::{BulkIn, BulkOut, TransferType, UsbBus, UsbDevice};
-use crate::wire::{
+use super::debug;
+use super::{Error, ScsiTransport};
+use cotton_usb_host::device::identify::IdentifyFromDescriptors;
+use cotton_usb_host::host_controller::{DataPhase, HostController, UsbError};
+use cotton_usb_host::usb_bus::{
+    BulkIn, BulkOut, TransferType, UsbBus, UsbDevice,
+};
+use cotton_usb_host::wire::{
     ConfigurationDescriptor, DescriptorVisitor, InterfaceDescriptor,
 };
 

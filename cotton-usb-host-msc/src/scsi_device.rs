@@ -1,7 +1,7 @@
-use crate::debug;
-use crate::device::mass_storage::{Error, ScsiTransport};
-use crate::host_controller::DataPhase;
+use super::debug;
+use super::{Error, ScsiTransport};
 use core::str;
+use cotton_usb_host::host_controller::DataPhase;
 
 /// READ (10)
 /// Seagate SCSI Commands Reference Manual s3.16

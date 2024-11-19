@@ -1,5 +1,5 @@
-use crate::host_controller::{DataPhase, UsbError};
 use core::future::Future;
+use cotton_usb_host::host_controller::{DataPhase, UsbError};
 
 pub trait ScsiTransport {
     fn command(

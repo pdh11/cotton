@@ -41,6 +41,7 @@ Limitations:
  - maximum of 31 devices total (including hubs);
  - maximum of 15 hubs;
  - maximum of 15 ports on any one hub[^2];
+ - isochronous endpoints not yet implemented;
  - supports Low Speed (1.5Mbits/s) and Full Speed (12Mbits/s)
    operation only -- not High Speed (480Mbits/s) or above.
 
@@ -60,12 +61,13 @@ docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).
 
 ## Using cotton-usb-host with a Raspberry&nbsp;Pi Pico
 
-This crate supports USB host mode _only_, and not USB device mode. So
-before running your code, make sure that the USB connector on your
-Raspberry&nbsp;Pi Pico is plugged into a USB device, and not into
-another USB host such as a laptop[^3]. (You can still use a SWD connection
-to program and debug your Raspberry&nbsp;Pi Pico, just not the USB
-connection.)
+This crate configures the Raspberry&nbsplPi Pico's USB peripheral for
+USB host mode _only_, and not USB device mode. So before running your
+code, make sure that the USB connector on your Raspberry&nbsp;Pi Pico
+is plugged into a USB device, and not into another USB host such as a
+laptop[^3]. (You can still use a SWD connection via the 3-pin debug
+connector to program and debug your Raspberry&nbsp;Pi Pico -- just not
+the USB connection.)
 
 If your Raspberry&nbsp;Pi Pico is itself powered by USB (perhaps via a
 Pico Debug Probe), then it will not have enough power to reliably

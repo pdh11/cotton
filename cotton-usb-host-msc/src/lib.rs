@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+mod debug;
 pub mod scsi_device;
 pub use scsi_device::{PeripheralType, ScsiDevice};
 pub mod scsi_transport;

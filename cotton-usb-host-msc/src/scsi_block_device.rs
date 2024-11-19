@@ -1,7 +1,7 @@
 use super::async_block_device::{AsyncBlockDevice, DeviceInfo};
+use super::debug;
 use super::scsi_device::ScsiDevice;
 use super::scsi_transport::{Error, ScsiTransport};
-use crate::debug;
 
 pub struct ScsiBlockDevice<T: ScsiTransport> {
     pub scsi: ScsiDevice<T>,

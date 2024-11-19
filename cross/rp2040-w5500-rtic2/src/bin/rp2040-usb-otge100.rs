@@ -10,10 +10,6 @@ mod app {
     use core::future::Future;
     use core::pin::pin;
     use cotton_usb_host::device::identify::IdentifyFromDescriptors;
-    use cotton_usb_host::device::mass_storage::{
-        AsyncBlockDevice, IdentifyMassStorageInterface, MassStorageInterface,
-        PeripheralType, ScsiBlockDevice, ScsiDevice,
-    };
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
     use cotton_usb_host::usb_bus::{
@@ -23,6 +19,10 @@ mod app {
     use cotton_usb_host::wire::{
         SetupPacket, ShowDescriptors, DEVICE_TO_HOST, HOST_TO_DEVICE,
         VENDOR_REQUEST,
+    };
+    use cotton_usb_host_msc::{
+        AsyncBlockDevice, IdentifyMassStorageInterface, MassStorageInterface,
+        PeripheralType, ScsiBlockDevice, ScsiDevice,
     };
     use futures_util::StreamExt;
     use rp_pico::pac;
