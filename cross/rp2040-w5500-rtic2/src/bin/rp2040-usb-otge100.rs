@@ -319,10 +319,6 @@ mod app {
                             continue;
                         };
 
-                        let mut buf = [0u8; 512];
-                        let rc = device.read_16(0, 1, &mut buf).await;
-                        defmt::println!("read: {:?}", rc);
-
                         //defmt::println!("{:?}", device.supported_vpd_pages().await);
                         //defmt::println!("{:?}", device.block_limits_page().await);
 
@@ -330,7 +326,37 @@ mod app {
 
                         //defmt::println!("{:?}", abd.query_commands().await);
 
-                        defmt::println!("{:?}", abd.capacity().await);
+                        let device_info = match abd.device_info().await {
+                            Ok(info) => info,
+                            Err(e) => {
+                                defmt::println!("device_info: {:?}", e);
+                                continue;
+                            }
+                        };
+                        let capacity = device_info.blocks
+                            * (device_info.block_size as u64);
+                        defmt::println!(
+                            "{} blocks x {} bytes = {} B / {} KB / {} MB / {} GB",
+                            device_info.blocks,
+                            device_info.block_size,
+                            capacity,
+                            (capacity + (1<<9)) >> 10,
+                            (capacity + (1<<19)) >> 20,
+                            (capacity + (1<<29)) >> 30
+                        );
+
+                        let mut buf = [0u8; 512];
+                        buf[42] = 43;
+
+                        let rc = abd.write_blocks(2, 1, &buf).await;
+                        defmt::println!("write16: {:?}", rc);
+
+                        buf[42] = 0;
+
+                        let rc = abd.read_blocks(2, 1, &mut buf).await;
+                        defmt::println!("read10: {:?}", rc);
+
+                        assert!(buf[42] == 43);
 
                         rtic_delay(1500).await;
                         defmt::println!("MSC OK");

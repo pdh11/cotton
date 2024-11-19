@@ -76,9 +76,47 @@ impl From<UsbError> for Error {
     }
 }
 
-pub struct ScsiDevice<T: ScsiTransport> {
-    transport: T,
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, Default)]
+pub struct DeviceInfo {
+    pub blocks: u64,
+    pub block_size: u32,
 }
+
+/// READ (10)
+/// Seagate SCSI Commands Reference Manual s3.16
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct Read10 {
+    operation_code: u8,
+    flags: u8,
+    lba_be: [u8; 4],
+    group: u8,
+    transfer_length_be: [u8; 2],
+    control: u8,
+}
+
+impl Read10 {
+    fn new(lba: u32, count: u16) -> Self {
+        assert!(core::mem::size_of::<Self>() == 10);
+        Self {
+            operation_code: 0x28,
+            flags: 0,
+            lba_be: lba.to_be_bytes(),
+            transfer_length_be: count.to_be_bytes(),
+            group: 0,
+            control: 0,
+        }
+    }
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for Read10 {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for Read10 {}
 
 /// READ (16)
 /// Seagate SCSI Commands Reference Manual s3.18
@@ -113,6 +151,74 @@ impl Read16 {
 unsafe impl bytemuck::Zeroable for Read16 {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for Read16 {}
+
+/// WRITE (10)
+/// Seagate SCSI Commands Reference Manual s3.60
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct Write10 {
+    operation_code: u8,
+    flags: u8,
+    lba_be: [u8; 4],
+    group: u8,
+    transfer_length_be: [u8; 2],
+    control: u8,
+}
+
+impl Write10 {
+    fn new(lba: u32, count: u16) -> Self {
+        assert!(core::mem::size_of::<Self>() == 10);
+        Self {
+            operation_code: 0x2A,
+            flags: 0,
+            lba_be: lba.to_be_bytes(),
+            transfer_length_be: count.to_be_bytes(),
+            group: 0,
+            control: 0,
+        }
+    }
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for Write10 {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for Write10 {}
+
+/// WRITE (16)
+/// Seagate SCSI Commands Reference Manual s3.62
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct Write16 {
+    operation_code: u8,
+    flags: u8,
+    lba_be: [u8; 8],
+    transfer_length_be: [u8; 4],
+    group: u8,
+    control: u8,
+}
+
+impl Write16 {
+    fn new(lba: u64, count: u32) -> Self {
+        assert!(core::mem::size_of::<Self>() == 16);
+        Self {
+            operation_code: 0x8A,
+            flags: 0,
+            lba_be: lba.to_be_bytes(),
+            transfer_length_be: count.to_be_bytes(),
+            group: 0,
+            control: 0,
+        }
+    }
+}
+
+// SAFETY: all fields zeroable
+unsafe impl bytemuck::Zeroable for Write16 {}
+// SAFETY: no padding, no disallowed bit patterns
+unsafe impl bytemuck::Pod for Write16 {}
 
 /// READ CAPACITY (10)
 /// Seagate SCSI Commands Reference Manual s3.23.2
@@ -487,6 +593,17 @@ pub struct InquiryData {
     pub is_removable: bool,
 }
 
+/// | Test device  | {R,W,RC}(10) | {R,W,RC}(16) |  BLP  |  RSOC  |
+/// | ---          | :---:        | :---:        | :---: | :---:  |
+/// | Black (4G)   |    Y         | Y | - | - |
+/// | Green (16G)  |    Y         | Y | - | - |
+/// | Handbag (8G) |    Y         | - | - | - |
+/// | Poker (1G)   |    Y         | - | - | - |
+///
+pub struct ScsiDevice<T: ScsiTransport> {
+    transport: T,
+}
+
 impl<T: ScsiTransport> ScsiDevice<T> {
     pub fn new(transport: T) -> Self {
         Self { transport }
@@ -590,53 +707,23 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(r)
     }
 
-    /// Read capacity (basic version supports <2TB only)
-    ///
-    /// Support:
-    /// Sandisk cruzer blade (black 4G) Y
-    /// Sandisk cruzer blade (green 16G) Y
-    /// Handbag Y
-    /// Poker Y
+    /// Read capacity (32-bit LBA version, supports <2TB only)
     pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error> {
         let rc = self.command_response(ReadCapacity10::new()).await;
         let reply: ReadCapacity10Reply = self.try_upgrade_error(rc).await?;
         let blocks = u32::from_be_bytes(reply.lba);
         let block_size = u32::from_be_bytes(reply.block_size);
-        let capacity = (blocks as u64) * (block_size as u64);
-        debug::println!(
-            "{} blocks x {} bytes = {} B / {} KB / {} MB / {} GB",
-            blocks,
-            block_size,
-            capacity,
-            capacity >> 10,
-            capacity >> 20,
-            capacity >> 30
-        );
         Ok((blocks, block_size))
     }
 
-    /// Read capacity (extended version supports >2TB)
+    /// Read capacity (64-bit LBA version, supports >2TB)
     ///
-    /// Support:
-    /// Sandisk cruzer blade (black 4G) Y
-    /// Sandisk cruzer blade (green 16G) Y
-    /// Handbag N
-    /// Poker N
+    /// Not universally supported.
     pub async fn read_capacity_16(&mut self) -> Result<(u64, u32), Error> {
         let rc = self.command_response(ReadCapacity16::new()).await;
         let reply: ReadCapacity16Reply = self.try_upgrade_error(rc).await?;
         let blocks = u64::from_be_bytes(reply.lba);
         let block_size = u32::from_be_bytes(reply.block_size);
-        let capacity = blocks * (block_size as u64);
-        debug::println!(
-            "{} blocks x {} bytes = {} B / {} KB / {} MB / {} GB",
-            blocks,
-            block_size,
-            capacity,
-            capacity >> 10,
-            capacity >> 20,
-            capacity >> 30
-        );
         Ok((blocks, block_size))
     }
 
@@ -725,9 +812,12 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         }
         Ok(())
     }
-     */
+    */
 
-    /// Not much supports this one
+    /// Return Vital Product Data, Block Limits Page
+    ///
+    /// Which is meant to contain important information like maximum write
+    /// size and optimum write granularity, but not much seems to support it.
     pub async fn block_limits_page(
         &mut self,
     ) -> Result<BlockLimitsPage, Error> {
@@ -738,13 +828,26 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(page)
     }
 
-    /// Read sector(s)
+    /// Read sector(s), 32-bit LBA version
     ///
-    /// Support:
-    /// Sandisk cruzer blade (black 4G)
-    /// Sandisk cruzer blade (green 16G) Y
-    /// Handbag
-    /// Poker
+    pub async fn read_10(
+        &mut self,
+        start_block: u32,
+        count: u16,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        let cmd = Read10::new(start_block, count);
+        let rc = self
+            .transport
+            .command(bytemuck::bytes_of(&cmd), DataPhase::In(buf))
+            .await;
+        let sz = self.try_upgrade_error(rc).await?;
+        Ok(sz)
+    }
+
+    /// Read sector(s), 64-bit LBA version
+    ///
+    /// Not universally supported.
     pub async fn read_16(
         &mut self,
         start_block: u64,
@@ -755,6 +858,41 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         let rc = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::In(buf))
+            .await;
+        let sz = self.try_upgrade_error(rc).await?;
+        Ok(sz)
+    }
+
+    /// Write sector(s), 32-bit LBA version
+    ///
+    pub async fn write_10(
+        &mut self,
+        start_block: u32,
+        count: u16,
+        buf: &[u8],
+    ) -> Result<usize, Error> {
+        let cmd = Write10::new(start_block, count);
+        let rc = self
+            .transport
+            .command(bytemuck::bytes_of(&cmd), DataPhase::Out(buf))
+            .await;
+        let sz = self.try_upgrade_error(rc).await?;
+        Ok(sz)
+    }
+
+    /// Write sector(s), 64-bit LBA version
+    ///
+    /// Not universally supported.
+    pub async fn write_16(
+        &mut self,
+        start_block: u64,
+        count: u32,
+        buf: &[u8],
+    ) -> Result<usize, Error> {
+        let cmd = Write16::new(start_block, count);
+        let rc = self
+            .transport
+            .command(bytemuck::bytes_of(&cmd), DataPhase::Out(buf))
             .await;
         let sz = self.try_upgrade_error(rc).await?;
         Ok(sz)
@@ -959,9 +1097,23 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
 pub trait AsyncBlockDevice {
     type E;
 
-    fn capacity(
+    fn device_info(
         &mut self,
-    ) -> impl Future<Output = Result<(u64, u32), Self::E>>;
+    ) -> impl Future<Output = Result<DeviceInfo, Self::E>>;
+
+    fn read_blocks(
+        &mut self,
+        offset: u64,
+        count: u32,
+        data: &mut [u8],
+    ) -> impl Future<Output = Result<(), Self::E>>;
+
+    fn write_blocks(
+        &mut self,
+        offset: u64,
+        count: u32,
+        data: &[u8],
+    ) -> impl Future<Output = Result<(), Self::E>>;
 }
 
 pub struct ScsiBlockDevice<T: ScsiTransport> {
@@ -1001,13 +1153,52 @@ impl<T: ScsiTransport> ScsiBlockDevice<T> {
 impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
     type E = Error;
 
-    async fn capacity(&mut self) -> Result<(u64, u32), Self::E> {
-        let capacity10 = self.scsi.read_capacity_10().await?;
-        if capacity10.0 != 0xFFFF_FFFF {
-            return Ok((capacity10.0 as u64, capacity10.1));
-        }
+    async fn device_info(&mut self) -> Result<DeviceInfo, Self::E> {
+        let (blocks, block_size) = {
+            let capacity10 = self.scsi.read_capacity_10().await?;
+            if capacity10.0 != 0xFFFF_FFFF {
+                (capacity10.0 as u64, capacity10.1)
+            } else {
+                self.scsi.read_capacity_16().await?
+            }
+        };
 
-        // NB 4 giga*blocks* is a lot, >=2TB
-        self.scsi.read_capacity_16().await
+        Ok(DeviceInfo { blocks, block_size })
+    }
+
+    async fn read_blocks(
+        &mut self,
+        offset: u64,
+        count: u32,
+        data: &mut [u8],
+    ) -> Result<(), Self::E> {
+        let end = offset
+            .checked_add(count as u64)
+            .ok_or(Error::LogicalBlockAddressOutOfRange)?;
+        if end < u32::MAX as u64 && count < u16::MAX as u32 {
+            self.scsi.read_10(offset as u32, count as u16, data).await?;
+        } else {
+            self.scsi.read_16(offset, count, data).await?;
+        }
+        Ok(())
+    }
+
+    async fn write_blocks(
+        &mut self,
+        offset: u64,
+        count: u32,
+        data: &[u8],
+    ) -> Result<(), Self::E> {
+        let end = offset
+            .checked_add(count as u64)
+            .ok_or(Error::LogicalBlockAddressOutOfRange)?;
+        if end < u32::MAX as u64 && count < u16::MAX as u32 {
+            self.scsi
+                .write_10(offset as u32, count as u16, data)
+                .await?;
+        } else {
+            self.scsi.write_16(offset, count, data).await?;
+        }
+        Ok(())
     }
 }

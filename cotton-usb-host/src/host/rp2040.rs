@@ -483,6 +483,7 @@ impl<'a> OutPacketiser<'a> {
         packet_size: u16,
         buf: &'a [u8],
         initial_pid: bool,
+        zlp: ZeroLengthPacket,
     ) -> Self {
         Self {
             next_prep: 0,
@@ -490,7 +491,10 @@ impl<'a> OutPacketiser<'a> {
             remain: size as usize,
             offset: 0,
             packet_size: packet_size as usize,
-            need_zero_size_packet: (size % packet_size) == 0,
+            need_zero_size_packet: match zlp {
+                ZeroLengthPacket::Never => size == 0,
+                ZeroLengthPacket::AsNeeded => (size % packet_size) == 0,
+            },
             buf,
         }
     }
@@ -510,7 +514,7 @@ impl<'a> OutPacketiser<'a> {
         if self.remain > self.packet_size {
             return Some((self.packet_size, false));
         }
-        Some((self.remain, false))
+        Some((self.remain, !self.need_zero_size_packet))
     }
 }
 
@@ -524,6 +528,12 @@ impl Packetiser for OutPacketiser<'_> {
             0 => {
                 if !val.available_0().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
+                        defmt::trace!(
+                            "Preparing {}/{} @0 last {}",
+                            this_packet,
+                            self.remain,
+                            is_last
+                        );
                         if this_packet > 0 {
                             unsafe {
                                 core::ptr::copy_nonoverlapping(
@@ -556,6 +566,12 @@ impl Packetiser for OutPacketiser<'_> {
             _ => {
                 if !val.available_1().bit() {
                     if let Some((this_packet, is_last)) = self.next_packet() {
+                        defmt::trace!(
+                            "Preparing {}/{} @1 last {}",
+                            this_packet,
+                            self.remain,
+                            is_last
+                        );
                         unsafe {
                             core::ptr::copy_nonoverlapping(
                                 &self.buf[self.offset] as *const u8,
@@ -700,6 +716,7 @@ impl Depacketiser for OutDepacketiser {
         match self.next_retire {
             0 => {
                 if !val.full_0().bit() {
+                    defmt::trace!("Reaped @0");
                     self.packet_parity = !self.packet_parity;
                     self.next_retire = 1;
                     return true;
@@ -707,6 +724,7 @@ impl Depacketiser for OutDepacketiser {
             }
             _ => {
                 if !val.full_1().bit() {
+                    defmt::trace!("Reaped @1");
                     self.packet_parity = !self.packet_parity;
                     self.next_retire = 0;
                     return true;
@@ -1152,8 +1170,13 @@ impl Rp2040HostController {
         if buf.len() < size {
             return Err(UsbError::BufferTooSmall);
         }
-        let mut packetiser =
-            OutPacketiser::new(size as u16, packet_size as u16, buf, true); // setup is PID0 so data starts with PID1
+        let mut packetiser = OutPacketiser::new(
+            size as u16,
+            packet_size as u16,
+            buf,
+            true,
+            ZeroLengthPacket::Never,
+        ); // setup is PID0 so data starts with PID1
         let mut depacketiser = OutDepacketiser::new();
 
         self.control_transfer_inner(
@@ -1456,22 +1479,26 @@ impl HostController for Rp2040HostController {
         endpoint: u8,
         packet_size: u16,
         data: &[u8],
-        _transfer_type: TransferType,
+        transfer_type: TransferType,
         data_toggle: &Cell<bool>,
     ) -> Result<usize, UsbError> {
         let _pipe = self.alloc_pipe(EndpointType::Control).await;
         /*
         debug::println!(
-            "bulk out on pipe {} parity {}",
+            "bulk out {} on pipe {} parity {}", data.len(),
             _pipe.n,
             data_toggle.get()
         );
-         */
+        */
         let mut packetiser = OutPacketiser::new(
             data.len() as u16,
             packet_size as u16,
             data,
             data_toggle.get(),
+            match transfer_type {
+                TransferType::FixedSize => ZeroLengthPacket::Never,
+                TransferType::VariableSize => ZeroLengthPacket::AsNeeded,
+            },
         );
         let mut depacketiser = OutDepacketiser::new();
 
@@ -1485,18 +1512,16 @@ impl HostController for Rp2040HostController {
             &mut depacketiser,
         )
         .await?;
-
-        // TODO: this isn't right if transmission is cut short
-        let parity = (((data.len() / (packet_size as usize)) + 1) & 1) == 1;
-        data_toggle.set(data_toggle.get() ^ parity);
+        data_toggle.set(data_toggle.get() ^ depacketiser.packet_parity);
         /*
+        let parity = (((data.len() / (packet_size as usize)) + 1) & 1) == 1;
         debug::println!(
             "pp {} p {} toggle now {}",
             depacketiser.packet_parity,
             parity,
             data_toggle.get()
         );
-         */
+        */
         Ok(data.len())
     }
 
