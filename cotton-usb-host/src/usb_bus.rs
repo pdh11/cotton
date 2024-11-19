@@ -707,40 +707,36 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(())
     }
 
-    pub async fn bulk_in_transfer(
-        &self,
-        ep: &BulkIn,
-        data: &mut [u8],
+    pub fn bulk_in_transfer<'a>(
+        &'a self,
+        ep: &'a BulkIn,
+        data: &'a mut [u8],
         transfer_type: TransferType,
-    ) -> Result<usize, UsbError> {
-        self.driver
-            .bulk_in_transfer(
-                ep.usb_address,
-                ep.endpoint,
-                64, // @TODO max packet size
-                data,
-                transfer_type,
-                &ep.data_toggle,
-            )
-            .await
+    ) -> impl Future<Output = Result<usize, UsbError>> + 'a {
+        self.driver.bulk_in_transfer(
+            ep.usb_address,
+            ep.endpoint,
+            64, // @TODO max packet size
+            data,
+            transfer_type,
+            &ep.data_toggle,
+        )
     }
 
-    pub async fn bulk_out_transfer(
-        &self,
-        ep: &BulkOut,
-        data: &[u8],
+    pub fn bulk_out_transfer<'a>(
+        &'a self,
+        ep: &'a BulkOut,
+        data: &'a [u8],
         transfer_type: TransferType,
-    ) -> Result<usize, UsbError> {
-        self.driver
-            .bulk_out_transfer(
-                ep.usb_address,
-                ep.endpoint,
-                64, // @TODO max packet size
-                data,
-                transfer_type,
-                &ep.data_toggle,
-            )
-            .await
+    ) -> impl Future<Output = Result<usize, UsbError>> + 'a {
+        self.driver.bulk_out_transfer(
+            ep.usb_address,
+            ep.endpoint,
+            64, // @TODO max packet size
+            data,
+            transfer_type,
+            &ep.data_toggle,
+        )
     }
 
     pub fn interrupt_endpoint_in(

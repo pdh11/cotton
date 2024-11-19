@@ -5,7 +5,7 @@ use crate::host_controller::tests::{
 };
 use crate::wire::{
     EndpointDescriptor, InterfaceDescriptor, ENDPOINT_DESCRIPTOR,
-    INTERFACE_DESCRIPTOR, VENDOR_REQUEST,
+    INTERFACE_DESCRIPTOR, RECIPIENT_ENDPOINT, VENDOR_REQUEST,
 };
 use futures::{future, Future};
 use std::pin::{pin, Pin};
@@ -339,6 +339,28 @@ fn control_transfer_timeout(
     Box::pin(future::ready(Err(UsbError::Timeout)))
 }
 
+fn bulk_in_ok<const N: usize>(
+    _: u8,
+    _: u8,
+    _: u16,
+    _: &mut [u8],
+    _: TransferType,
+    _: &Cell<bool>,
+) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+    Box::pin(future::ready(Ok(N)))
+}
+
+fn bulk_out_ok<const N: usize>(
+    _: u8,
+    _: u8,
+    _: u16,
+    _: &[u8],
+    _: TransferType,
+    _: &Cell<bool>,
+) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+    Box::pin(future::ready(Ok(N)))
+}
+
 trait ExtraExpectations {
     fn expect_multi_interrupt_pipe_ignored(&mut self);
     fn expect_add_to_multi_interrupt_pipe(&mut self);
@@ -388,6 +410,9 @@ trait ExtraExpectations {
     fn expect_set_address<const ADDR: u8>(&mut self);
     fn expect_get_device_descriptor_prefix_hub(&mut self);
     fn expect_get_device_descriptor_hub(&mut self);
+    fn expect_clear_endpoint_feature<const EP: u8, const FEATURE: u16>(
+        &mut self,
+    );
 }
 
 impl ExtraExpectations for MockHostControllerInner {
@@ -494,6 +519,14 @@ impl ExtraExpectations for MockHostControllerInner {
             .times(1)
             .withf(is_get_device_descriptor::<18>)
             .returning(control_transfer_ok_with(device_descriptor_hub));
+    }
+    fn expect_clear_endpoint_feature<const EP: u8, const FEATURE: u16>(
+        &mut self,
+    ) {
+        self.expect_control_transfer()
+            .times(1)
+            .withf(is_clear_endpoint_feature::<EP, FEATURE>)
+            .returning(control_transfer_ok::<0>);
     }
 }
 
@@ -3154,4 +3187,248 @@ fn device_has_in_endpoints() {
 
     let out_endpoints = d.out_endpoints();
     assert_eq!(out_endpoints.0, 0x8001);
+}
+
+#[test]
+fn open_in_endpoint() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x100,
+        out_endpoints_bitmap: 0x8001,
+    };
+
+    let _r = d.open_in_endpoint(8).unwrap();
+}
+
+#[test]
+fn open_in_endpoint_fails() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x100,
+        out_endpoints_bitmap: 0x8001,
+    };
+
+    assert!(d.open_in_endpoint(7).is_err());
+}
+
+#[test]
+fn open_in_endpoint_ludicrous() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x100,
+        out_endpoints_bitmap: 0x8001,
+    };
+
+    assert!(d.open_in_endpoint(70).is_err());
+}
+
+#[test]
+fn open_out_endpoint() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x100,
+        out_endpoints_bitmap: 0x8001,
+    };
+
+    let _r = d.open_out_endpoint(15).unwrap();
+}
+
+#[test]
+fn open_out_endpoint_fails() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x100,
+        out_endpoints_bitmap: 0x8001,
+    };
+
+    assert!(d.open_out_endpoint(7).is_err());
+}
+
+#[test]
+fn open_out_endpoint_ludicrous() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x100,
+        out_endpoints_bitmap: 0x8001,
+    };
+
+    assert!(d.open_out_endpoint(70).is_err());
+}
+
+fn is_clear_endpoint_feature<const EP: u8, const FEATURE: u16>(
+    a: &u8,
+    p: &u8,
+    s: &SetupPacket,
+    d: &DataPhase,
+) -> bool {
+    *a == 5
+        && *p == 8
+        && s.bmRequestType == HOST_TO_DEVICE | RECIPIENT_ENDPOINT
+        && s.bRequest == 1
+        && s.wValue == FEATURE
+        && s.wIndex == EP as u16
+        && s.wLength == 0
+        && d.is_none()
+}
+
+#[test]
+fn clear_halt() {
+    do_test(
+        |hc| {
+            hc.expect_clear_endpoint_feature::<0x88, 0>();
+        },
+        |f| {
+            let mut d = UsbDevice {
+                usb_address: 5,
+                usb_speed: UsbSpeed::Full12,
+                packet_size_ep0: 8,
+                in_endpoints_bitmap: 0x100,
+                out_endpoints_bitmap: 0x8001,
+            };
+
+            let ep = d.open_in_endpoint(8).unwrap();
+            let r = pin!(f.bus.clear_halt(&ep));
+            let rr = r.poll(f.c).to_option().unwrap();
+            assert_eq!(rr, Ok(()));
+        },
+    );
+}
+
+#[test]
+fn clear_halt_fails() {
+    do_test(
+        |hc| {
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_clear_endpoint_feature::<0x88, 0>)
+                .returning(control_transfer_timeout);
+        },
+        |f| {
+            let mut d = UsbDevice {
+                usb_address: 5,
+                usb_speed: UsbSpeed::Full12,
+                packet_size_ep0: 8,
+                in_endpoints_bitmap: 0x100,
+                out_endpoints_bitmap: 0x8001,
+            };
+
+            let ep = d.open_in_endpoint(8).unwrap();
+            let r = pin!(f.bus.clear_halt(&ep));
+            let rr = r.poll(f.c).to_option().unwrap();
+            assert_eq!(rr, Err(UsbError::Timeout));
+        },
+    );
+}
+
+#[test]
+fn clear_halt_pends() {
+    do_test(
+        |hc| {
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_clear_endpoint_feature::<0x88, 0>)
+                .returning(control_transfer_pending);
+        },
+        |f| {
+            let mut d = UsbDevice {
+                usb_address: 5,
+                usb_speed: UsbSpeed::Full12,
+                packet_size_ep0: 8,
+                in_endpoints_bitmap: 0x100,
+                out_endpoints_bitmap: 0x8001,
+            };
+
+            let ep = d.open_in_endpoint(8).unwrap();
+            let mut fut = pin!(f.bus.clear_halt(&ep));
+
+            let poll = fut.as_mut().poll(f.c);
+            assert!(poll.is_pending());
+            let poll = fut.as_mut().poll(f.c);
+            assert!(poll.is_pending());
+        },
+    );
+}
+
+#[test]
+fn bulk_in_transfer() {
+    do_test(
+        |hc| {
+            hc.expect_bulk_in_transfer()
+                .withf(|a, e, _, d, t, p| {
+                    *a == 5
+                        && *e == 8
+                        && d.len() == 16
+                        && *t == TransferType::VariableSize
+                        && p.get() == false
+                })
+                .returning(bulk_in_ok::<16>);
+        },
+        |f| {
+            let mut d = UsbDevice {
+                usb_address: 5,
+                usb_speed: UsbSpeed::Full12,
+                packet_size_ep0: 8,
+                in_endpoints_bitmap: 0x100,
+                out_endpoints_bitmap: 0x8001,
+            };
+
+            let ep = d.open_in_endpoint(8).unwrap();
+            let mut data = [0u8; 16];
+            let fut = pin!(f.bus.bulk_in_transfer(
+                &ep,
+                &mut data,
+                TransferType::VariableSize
+            ));
+            let rr = fut.poll(f.c).to_option().unwrap();
+            assert_eq!(rr, Ok(16));
+        },
+    );
+}
+
+#[test]
+fn bulk_out_transfer() {
+    do_test(
+        |hc| {
+            hc.expect_bulk_out_transfer()
+                .withf(|a, e, _, d, t, p| {
+                    *a == 5
+                        && *e == 8
+                        && d.len() == 16
+                        && *t == TransferType::FixedSize
+                        && p.get() == false
+                })
+                .returning(bulk_out_ok::<16>);
+        },
+        |f| {
+            let mut d = UsbDevice {
+                usb_address: 5,
+                usb_speed: UsbSpeed::Full12,
+                packet_size_ep0: 8,
+                in_endpoints_bitmap: 0x100,
+                out_endpoints_bitmap: 0x8102,
+            };
+
+            let ep = d.open_out_endpoint(8).unwrap();
+            let data = [0u8; 16];
+            let fut = pin!(f.bus.bulk_out_transfer(
+                &ep,
+                &data,
+                TransferType::FixedSize
+            ));
+            let rr = fut.poll(f.c).to_option().unwrap();
+            assert_eq!(rr, Ok(16));
+        },
+    );
 }

@@ -154,11 +154,11 @@ TODO before 0.1.0:
  - [x] Allocate endpoints from device object?
  - [x] UnconfiguredDevice/Device?
  - [x] Bulk in/out
- - [ ] Enough configuration descriptor smarts to recognise MSC when we see it
- - [ ] More of MSC -- at the very least, detect DASD
+ - [x] Enough configuration descriptor smarts to recognise MSC when we see it
+ - [x] More of MSC -- at the very least, detect DASD
  - [ ] Max packet size for bulk endpoints
  - [ ] doc-comments
- - [ ] At least one real example (MSC? HID?)
+ - [x] At least one real example (MSC? HID?)
  - [ ] Review register usage for contention (buff_status?)
  - [ ] STM32?
 

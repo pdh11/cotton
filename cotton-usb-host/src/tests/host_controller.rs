@@ -42,7 +42,7 @@ mock! {
             data_phase: DataPhase<'a>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
-        fn bulk_in_transfer(
+        pub fn bulk_in_transfer(
             &self,
             address: u8,
             endpoint: u8,
@@ -52,7 +52,7 @@ mock! {
             data_toggle: &Cell<bool>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
-        fn bulk_out_transfer(
+        pub fn bulk_out_transfer(
             &self,
             address: u8,
             endpoint: u8,

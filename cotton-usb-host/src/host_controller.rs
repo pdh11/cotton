@@ -74,6 +74,9 @@ impl DataPhase<'_> {
 /// doesn't have a zero-length packet even if the data fills an exact
 /// number of packets -- whereas a variable-size transfer does have a
 /// zero-length packet in that case.)
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TransferType {
     /// Both ends know (via other means) how long the transfer should be
     FixedSize,
