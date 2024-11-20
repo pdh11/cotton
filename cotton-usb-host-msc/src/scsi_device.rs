@@ -1,7 +1,6 @@
 use super::debug;
-use super::{Error, ScsiTransport};
+use super::scsi_transport::{DataPhase, Error, ScsiError, ScsiTransport};
 use core::str;
-use cotton_usb_host::host_controller::DataPhase;
 
 /// READ (10)
 /// Seagate SCSI Commands Reference Manual s3.16
@@ -530,55 +529,55 @@ impl<T: ScsiTransport> ScsiDevice<T> {
 
     async fn try_upgrade_error<R>(
         &mut self,
-        e: Result<R, Error>,
-    ) -> Result<R, Error> {
+        e: Result<R, Error<T>>,
+    ) -> Result<R, Error<T>> {
         if let Err(Error::CommandFailed) = e {
             if let Ok(r) = self.request_sense().await {
-                const ERRORS3: &[(u8, u8, u8, Error)] = &[
-                    (2, 4, 1, Error::BecomingReady),
-                    (2, 4, 2, Error::StartUnitRequired),
-                    (2, 4, 3, Error::ManualInterventionRequired),
-                    (2, 4, 4, Error::FormatInProgress),
-                    (2, 4, 9, Error::SelfTestInProgress),
-                    (2, 4, 0x22, Error::PowerCycleRequired),
-                    (1, 0x0B, 0x01, Error::Overheat),
-                    (1, 0x0B, 0x02, Error::EnclosureDegraded),
-                    (3, 0x0C, 0x00, Error::WriteError),
-                    (3, 0x0C, 0x02, Error::WriteReallocationFailed),
-                    (1, 0x11, 0x00, Error::UnrecoveredReadError),
-                    (1, 0x11, 0x01, Error::ReadRetriesExhausted),
-                    (1, 0x11, 0x02, Error::ReadErrorTooLong),
-                    (3, 0x11, 0x04, Error::ReadReallocationFailed),
-                    (3, 0x14, 0x00, Error::LogicalBlockNotFound),
-                    (3, 0x14, 0x01, Error::RecordNotFound),
-                    (5, 0x26, 0x00, Error::InvalidFieldInParameterList),
-                    (5, 0x26, 0x01, Error::ParameterNotSupported),
-                    (5, 0x26, 0x02, Error::ParameterValueInvalid),
-                    (4, 0x3E, 0x03, Error::LogicalUnitSelfTestFailed),
-                    (4, 0x42, 0x00, Error::SelfTestFailed),
+                const ERRORS3: &[(u8, u8, u8, ScsiError)] = &[
+                    (2, 4, 1, ScsiError::BecomingReady),
+                    (2, 4, 2, ScsiError::StartUnitRequired),
+                    (2, 4, 3, ScsiError::ManualInterventionRequired),
+                    (2, 4, 4, ScsiError::FormatInProgress),
+                    (2, 4, 9, ScsiError::SelfTestInProgress),
+                    (2, 4, 0x22, ScsiError::PowerCycleRequired),
+                    (1, 0x0B, 0x01, ScsiError::Overheat),
+                    (1, 0x0B, 0x02, ScsiError::EnclosureDegraded),
+                    (3, 0x0C, 0x00, ScsiError::WriteError),
+                    (3, 0x0C, 0x02, ScsiError::WriteReallocationFailed),
+                    (1, 0x11, 0x00, ScsiError::UnrecoveredReadError),
+                    (1, 0x11, 0x01, ScsiError::ReadRetriesExhausted),
+                    (1, 0x11, 0x02, ScsiError::ReadErrorTooLong),
+                    (3, 0x11, 0x04, ScsiError::ReadReallocationFailed),
+                    (3, 0x14, 0x00, ScsiError::LogicalBlockNotFound),
+                    (3, 0x14, 0x01, ScsiError::RecordNotFound),
+                    (5, 0x26, 0x00, ScsiError::InvalidFieldInParameterList),
+                    (5, 0x26, 0x01, ScsiError::ParameterNotSupported),
+                    (5, 0x26, 0x02, ScsiError::ParameterValueInvalid),
+                    (4, 0x3E, 0x03, ScsiError::LogicalUnitSelfTestFailed),
+                    (4, 0x42, 0x00, ScsiError::SelfTestFailed),
                 ];
-                const ERRORS2: &[(u8, u8, Error)] = &[
-                    (3, 0x14, Error::PositioningError),
-                    (5, 0x1A, Error::ParameterListLengthError),
-                    (0xE, 0x1D, Error::MiscompareDuringVerify),
-                    (5, 0x20, Error::InvalidCommandOperationCode),
-                    (0xD, 0x21, Error::LogicalBlockAddressOutOfRange),
-                    (5, 0x24, Error::InvalidFieldInCDB),
-                    (5, 0x25, Error::LogicalUnitNotSupported),
+                const ERRORS2: &[(u8, u8, ScsiError)] = &[
+                    (3, 0x14, ScsiError::PositioningError),
+                    (5, 0x1A, ScsiError::ParameterListLengthError),
+                    (0xE, 0x1D, ScsiError::MiscompareDuringVerify),
+                    (5, 0x20, ScsiError::InvalidCommandOperationCode),
+                    (0xD, 0x21, ScsiError::LogicalBlockAddressOutOfRange),
+                    (5, 0x24, ScsiError::InvalidFieldInCDB),
+                    (5, 0x25, ScsiError::LogicalUnitNotSupported),
                 ];
-                const ERRORS1: &[(u8, Error)] = &[
-                    (2, Error::NotReady),
-                    (3, Error::MediumError),
-                    (4, Error::HardwareError),
-                    (5, Error::IllegalRequest),
-                    (6, Error::UnitAttention),
-                    (7, Error::DataProtect),
-                    (8, Error::BlankCheck),
-                    (9, Error::VendorSpecific),
-                    (10, Error::CopyAborted),
-                    (11, Error::Aborted),
-                    (13, Error::VolumeOverflow),
-                    (14, Error::Miscompare),
+                const ERRORS1: &[(u8, ScsiError)] = &[
+                    (2, ScsiError::NotReady),
+                    (3, ScsiError::MediumError),
+                    (4, ScsiError::HardwareError),
+                    (5, ScsiError::IllegalRequest),
+                    (6, ScsiError::UnitAttention),
+                    (7, ScsiError::DataProtect),
+                    (8, ScsiError::BlankCheck),
+                    (9, ScsiError::VendorSpecific),
+                    (10, ScsiError::CopyAborted),
+                    (11, ScsiError::Aborted),
+                    (13, ScsiError::VolumeOverflow),
+                    (14, ScsiError::Miscompare),
                 ];
 
                 for i in ERRORS3 {
@@ -586,17 +585,17 @@ impl<T: ScsiTransport> ScsiDevice<T> {
                         && r.additional_sense_code == i.1
                         && r.additional_sense_code_qualifier == i.2
                     {
-                        return Err(i.3);
+                        return Err(Error::Scsi(i.3));
                     }
                 }
                 for i in ERRORS2 {
                     if r.sense_key == i.0 && r.additional_sense_code == i.1 {
-                        return Err(i.2);
+                        return Err(Error::Scsi(i.2));
                     }
                 }
                 for i in ERRORS1 {
                     if r.sense_key == i.0 {
-                        return Err(i.1);
+                        return Err(Error::Scsi(i.1));
                     }
                 }
             }
@@ -610,7 +609,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     >(
         &mut self,
         cmd: C,
-    ) -> Result<R, Error> {
+    ) -> Result<R, Error<T>> {
         let mut r = R::default();
         let rc = self
             .transport
@@ -627,7 +626,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     }
 
     /// Read capacity (32-bit LBA version, supports <2TB only)
-    pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error> {
+    pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error<T>> {
         let rc = self.command_response(ReadCapacity10::new()).await;
         let reply: ReadCapacity10Reply = self.try_upgrade_error(rc).await?;
         let blocks = u32::from_be_bytes(reply.lba);
@@ -638,7 +637,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     /// Read capacity (64-bit LBA version, supports >2TB)
     ///
     /// Not universally supported.
-    pub async fn read_capacity_16(&mut self) -> Result<(u64, u32), Error> {
+    pub async fn read_capacity_16(&mut self) -> Result<(u64, u32), Error<T>> {
         let rc = self.command_response(ReadCapacity16::new()).await;
         let reply: ReadCapacity16Reply = self.try_upgrade_error(rc).await?;
         let blocks = u64::from_be_bytes(reply.lba);
@@ -651,7 +650,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         &mut self,
         opcode: u8,
         service_action: Option<u16>,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, Error<T>> {
         let rc = self
             .command_response(ReportSupportedOperationCodes::new(
                 opcode,
@@ -663,7 +662,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok((reply.support & 7) == 3)
     }
 
-    pub async fn test_unit_ready(&mut self) -> Result<(), Error> {
+    pub async fn test_unit_ready(&mut self) -> Result<(), Error<T>> {
         let cmd = TestUnitReady::new();
         let rc = self
             .transport
@@ -673,7 +672,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(())
     }
 
-    async fn request_sense(&mut self) -> Result<RequestSenseReply, Error> {
+    async fn request_sense(&mut self) -> Result<RequestSenseReply, Error<T>> {
         let cmd = RequestSense::new();
         let mut buf = [0u8; 18];
         let sz = self
@@ -689,7 +688,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(*reply)
     }
 
-    pub async fn inquiry(&mut self) -> Result<InquiryData, Error> {
+    pub async fn inquiry(&mut self) -> Result<InquiryData, Error<T>> {
         let rc = self.command_response(Inquiry::new(None, 36)).await;
         let reply: StandardInquiryData = self.try_upgrade_error(rc).await?;
         let data = InquiryData {
@@ -717,7 +716,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     }
 
     /*
-    pub async fn supported_vpd_pages(&mut self) -> Result<(), Error> {
+    pub async fn supported_vpd_pages(&mut self) -> Result<(), Error<T>> {
         let cmd = Inquiry::new(Some(0), 4);
         let rc = self.command_response(cmd).await;
         let n: [u8; 4] = self.try_upgrade_error(rc).await?;
@@ -739,7 +738,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     /// size and optimum write granularity, but not much seems to support it.
     pub async fn block_limits_page(
         &mut self,
-    ) -> Result<BlockLimitsPage, Error> {
+    ) -> Result<BlockLimitsPage, Error<T>> {
         let cmd = Inquiry::new(Some(0xB0), 64);
         assert!(core::mem::size_of::<BlockLimitsPage>() == 64);
         let rc = self.command_response(cmd).await;
@@ -754,7 +753,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u32,
         count: u16,
         buf: &mut [u8],
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, Error<T>> {
         let cmd = Read10::new(start_block, count);
         let rc = self
             .transport
@@ -772,7 +771,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u64,
         count: u32,
         buf: &mut [u8],
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, Error<T>> {
         let cmd = Read16::new(start_block, count);
         let rc = self
             .transport
@@ -789,7 +788,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u32,
         count: u16,
         buf: &[u8],
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, Error<T>> {
         let cmd = Write10::new(start_block, count);
         let rc = self
             .transport
@@ -807,7 +806,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u64,
         count: u32,
         buf: &[u8],
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, Error<T>> {
         let cmd = Write16::new(start_block, count);
         let rc = self
             .transport

@@ -1,7 +1,7 @@
 use super::async_block_device::{AsyncBlockDevice, DeviceInfo};
 use super::debug;
 use super::scsi_device::ScsiDevice;
-use super::scsi_transport::{Error, ScsiTransport};
+use super::scsi_transport::{Error, ScsiError, ScsiTransport};
 
 pub struct ScsiBlockDevice<T: ScsiTransport> {
     pub scsi: ScsiDevice<T>,
@@ -12,7 +12,7 @@ impl<T: ScsiTransport> ScsiBlockDevice<T> {
         Self { scsi }
     }
 
-    pub async fn query_commands(&mut self) -> Result<(), Error> {
+    pub async fn query_commands(&mut self) -> Result<(), Error<T>> {
         const CMDS: &[(&str, u8)] = &[
             ("READ(6)", 0x08),
             ("READ(10)", 0x28),
@@ -38,7 +38,7 @@ impl<T: ScsiTransport> ScsiBlockDevice<T> {
 }
 
 impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
-    type E = Error;
+    type E = Error<T>;
 
     async fn device_info(&mut self) -> Result<DeviceInfo, Self::E> {
         let (blocks, block_size) = {
@@ -61,7 +61,7 @@ impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
     ) -> Result<(), Self::E> {
         let end = offset
             .checked_add(count as u64)
-            .ok_or(Error::LogicalBlockAddressOutOfRange)?;
+            .ok_or(Error::Scsi(ScsiError::LogicalBlockAddressOutOfRange))?;
         if end < u32::MAX as u64 && count < u16::MAX as u32 {
             self.scsi.read_10(offset as u32, count as u16, data).await?;
         } else {
@@ -78,7 +78,7 @@ impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
     ) -> Result<(), Self::E> {
         let end = offset
             .checked_add(count as u64)
-            .ok_or(Error::LogicalBlockAddressOutOfRange)?;
+            .ok_or(Error::Scsi(ScsiError::LogicalBlockAddressOutOfRange))?;
         if end < u32::MAX as u64 && count < u16::MAX as u32 {
             self.scsi
                 .write_10(offset as u32, count as u16, data)

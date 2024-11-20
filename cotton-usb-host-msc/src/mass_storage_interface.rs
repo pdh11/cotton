@@ -1,7 +1,8 @@
 use super::debug;
+use super::scsi_transport::DataPhase;
 use super::{Error, ScsiTransport};
 use cotton_usb_host::device::identify::IdentifyFromDescriptors;
-use cotton_usb_host::host_controller::{DataPhase, HostController, UsbError};
+use cotton_usb_host::host_controller::{HostController, UsbError};
 use cotton_usb_host::usb_bus::{
     BulkIn, BulkOut, TransferType, UsbBus, UsbDevice,
 };
@@ -21,7 +22,7 @@ impl<'a, HC: HostController> MassStorageInterface<'a, HC> {
     pub fn new(
         bus: &'a UsbBus<HC>,
         mut device: UsbDevice,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, Error<Self>> {
         let bulk_in = device
             .open_in_endpoint(device.in_endpoints().iter().next().unwrap())?;
         let bulk_out = device.open_out_endpoint(
@@ -105,12 +106,22 @@ impl CommandBlockWrapper {
     }
 }
 
+impl<HC: HostController> From<UsbError>
+    for Error<MassStorageInterface<'_, HC>>
+{
+    fn from(e: UsbError) -> Self {
+        Error::Transport(e)
+    }
+}
+
 impl<HC: HostController> ScsiTransport for MassStorageInterface<'_, HC> {
+    type Error = UsbError;
+
     async fn command(
         &mut self,
         cmd: &[u8],
         data: DataPhase<'_>,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, Error<Self>> {
         //let rc = self.bus.clear_halt(&self.bulk_in).await;
         //debug::println!("clear {:?}", rc);
 
