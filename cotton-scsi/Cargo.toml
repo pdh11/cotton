@@ -14,8 +14,9 @@ rust-version = "1.79"
 bytemuck = "1.9"
 futures = { version = "0.3", default-features = false }
 defmt = { version = "0.3.8", optional = true }
+mockall = { version = "0.13", optional = true }
 
 [features]
 default = ["std"]
-std = []
+std = ["dep:mockall"]
 defmt = ["dep:defmt"]

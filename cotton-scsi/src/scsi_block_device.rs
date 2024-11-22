@@ -12,7 +12,7 @@ impl<T: ScsiTransport> ScsiBlockDevice<T> {
         Self { scsi }
     }
 
-    pub async fn query_commands(&mut self) -> Result<(), Error<T>> {
+    pub async fn query_commands(&mut self) -> Result<(), Error<T::Error>> {
         const CMDS: &[(&str, u8)] = &[
             ("READ(6)", 0x08),
             ("READ(10)", 0x28),
@@ -38,7 +38,7 @@ impl<T: ScsiTransport> ScsiBlockDevice<T> {
 }
 
 impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
-    type E = Error<T>;
+    type E = Error<T::Error>;
 
     async fn device_info(&mut self) -> Result<DeviceInfo, Self::E> {
         let (blocks, block_size) = {

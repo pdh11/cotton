@@ -1,6 +1,5 @@
 use super::debug;
 use super::scsi_transport::{DataPhase, Error, ScsiError, ScsiTransport};
-use core::str;
 
 /// READ (10)
 /// Seagate SCSI Commands Reference Manual s3.16
@@ -297,7 +296,7 @@ unsafe impl bytemuck::Pod for RequestSense {}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 #[repr(C)]
 struct RequestSenseReply {
     response_code: u8,
@@ -435,7 +434,7 @@ unsafe impl bytemuck::Pod for StandardInquiryData {}
 /// Seagate SCSI Commands Reference Manual s5.4.5
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct BlockLimitsPage {
     peripheral_device_type: u8,
@@ -469,7 +468,7 @@ unsafe impl bytemuck::Pod for BlockLimitsPage {}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PeripheralType {
     Disk = 0,
@@ -503,9 +502,13 @@ pub enum PeripheralType {
     Reserved1C = 0x1C,
     Reserved1D = 0x1D,
     WellKnownUnit = 0x1E,
+    #[default]
     Other = 0x1F,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct InquiryData {
     pub peripheral_type: PeripheralType,
     pub is_removable: bool,
@@ -526,12 +529,11 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     pub fn new(transport: T) -> Self {
         Self { transport }
     }
-
-    async fn try_upgrade_error<R>(
+    async fn try_upgrade_error(
         &mut self,
-        e: Result<R, Error<T>>,
-    ) -> Result<R, Error<T>> {
-        if let Err(Error::CommandFailed) = e {
+        e: Error<T::Error>,
+    ) -> Error<T::Error> {
+        if e == Error::CommandFailed {
             if let Ok(r) = self.request_sense().await {
                 const ERRORS3: &[(u8, u8, u8, ScsiError)] = &[
                     (2, 4, 1, ScsiError::BecomingReady),
@@ -585,17 +587,17 @@ impl<T: ScsiTransport> ScsiDevice<T> {
                         && r.additional_sense_code == i.1
                         && r.additional_sense_code_qualifier == i.2
                     {
-                        return Err(Error::Scsi(i.3));
+                        return Error::Scsi(i.3);
                     }
                 }
                 for i in ERRORS2 {
                     if r.sense_key == i.0 && r.additional_sense_code == i.1 {
-                        return Err(Error::Scsi(i.2));
+                        return Error::Scsi(i.2);
                     }
                 }
                 for i in ERRORS1 {
                     if r.sense_key == i.0 {
-                        return Err(Error::Scsi(i.1));
+                        return Error::Scsi(i.1);
                     }
                 }
             }
@@ -609,7 +611,7 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     >(
         &mut self,
         cmd: C,
-    ) -> Result<R, Error<T>> {
+    ) -> Result<R, Error<T::Error>> {
         let mut r = R::default();
         let rc = self
             .transport
@@ -618,17 +620,24 @@ impl<T: ScsiTransport> ScsiDevice<T> {
                 DataPhase::In(bytemuck::bytes_of_mut(&mut r)),
             )
             .await;
-        let sz = self.try_upgrade_error(rc).await?;
-        if sz < core::mem::size_of::<R>() {
-            return Err(Error::ProtocolError);
+        match rc {
+            Err(e) => Err(self.try_upgrade_error(e).await),
+            Ok(sz) => {
+                if sz < core::mem::size_of::<R>() {
+                    Err(Error::ProtocolError)
+                } else {
+                    Ok(r)
+                }
+            }
         }
-        Ok(r)
     }
 
     /// Read capacity (32-bit LBA version, supports <2TB only)
-    pub async fn read_capacity_10(&mut self) -> Result<(u32, u32), Error<T>> {
-        let rc = self.command_response(ReadCapacity10::new()).await;
-        let reply: ReadCapacity10Reply = self.try_upgrade_error(rc).await?;
+    pub async fn read_capacity_10(
+        &mut self,
+    ) -> Result<(u32, u32), Error<T::Error>> {
+        let reply: ReadCapacity10Reply =
+            self.command_response(ReadCapacity10::new()).await?;
         let blocks = u32::from_be_bytes(reply.lba);
         let block_size = u32::from_be_bytes(reply.block_size);
         Ok((blocks, block_size))
@@ -637,9 +646,11 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     /// Read capacity (64-bit LBA version, supports >2TB)
     ///
     /// Not universally supported.
-    pub async fn read_capacity_16(&mut self) -> Result<(u64, u32), Error<T>> {
-        let rc = self.command_response(ReadCapacity16::new()).await;
-        let reply: ReadCapacity16Reply = self.try_upgrade_error(rc).await?;
+    pub async fn read_capacity_16(
+        &mut self,
+    ) -> Result<(u64, u32), Error<T::Error>> {
+        let reply: ReadCapacity16Reply =
+            self.command_response(ReadCapacity16::new()).await?;
         let blocks = u64::from_be_bytes(reply.lba);
         let block_size = u32::from_be_bytes(reply.block_size);
         Ok((blocks, block_size))
@@ -650,47 +661,47 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         &mut self,
         opcode: u8,
         service_action: Option<u16>,
-    ) -> Result<bool, Error<T>> {
-        let rc = self
+    ) -> Result<bool, Error<T::Error>> {
+        let reply: ReportSupportedOperationCodesReply = self
             .command_response(ReportSupportedOperationCodes::new(
                 opcode,
                 service_action,
             ))
-            .await;
-        let reply: ReportSupportedOperationCodesReply =
-            self.try_upgrade_error(rc).await?;
+            .await?;
         Ok((reply.support & 7) == 3)
     }
 
-    pub async fn test_unit_ready(&mut self) -> Result<(), Error<T>> {
+    pub async fn test_unit_ready(&mut self) -> Result<(), Error<T::Error>> {
         let cmd = TestUnitReady::new();
         let rc = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::None)
             .await;
-        let _ = self.try_upgrade_error(rc).await?;
-        Ok(())
+        match rc {
+            Err(e) => Err(self.try_upgrade_error(e).await),
+            Ok(_) => Ok(()),
+        }
     }
 
-    async fn request_sense(&mut self) -> Result<RequestSenseReply, Error<T>> {
+    async fn request_sense(
+        &mut self,
+    ) -> Result<RequestSenseReply, Error<T::Error>> {
+        // Can't use command_response, because we're used BY command_response
         let cmd = RequestSense::new();
         let mut buf = [0u8; 18];
         let sz = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::In(&mut buf))
             .await?;
-        if sz < 18 {
-            return Err(Error::ProtocolError);
-        }
-        let reply = bytemuck::try_from_bytes::<RequestSenseReply>(&buf)
+        let reply = bytemuck::try_from_bytes::<RequestSenseReply>(&buf[0..sz])
             .map_err(|_| Error::ProtocolError)?;
         debug::println!("{:?}", *reply);
         Ok(*reply)
     }
 
-    pub async fn inquiry(&mut self) -> Result<InquiryData, Error<T>> {
-        let rc = self.command_response(Inquiry::new(None, 36)).await;
-        let reply: StandardInquiryData = self.try_upgrade_error(rc).await?;
+    pub async fn inquiry(&mut self) -> Result<InquiryData, Error<T::Error>> {
+        let reply: StandardInquiryData =
+            self.command_response(Inquiry::new(None, 36)).await?;
         let data = InquiryData {
             peripheral_type: unsafe {
                 core::mem::transmute::<u8, PeripheralType>(
@@ -699,7 +710,8 @@ impl<T: ScsiTransport> ScsiDevice<T> {
             },
             is_removable: (reply.removable & 0x80) != 0,
         };
-        //debug::println!("actual len {}", reply.additional_length + 4);
+        /*
+        debug::println!("actual len {}", reply.additional_length + 4);
         if let (Ok(v), Ok(i), Ok(r)) = (
             str::from_utf8(&reply.vendor_id),
             str::from_utf8(&reply.product_id),
@@ -712,11 +724,12 @@ impl<T: ScsiTransport> ScsiDevice<T> {
             reply.peripheral_device_type,
             reply.removable
         );
+        */
         Ok(data)
     }
 
     /*
-    pub async fn supported_vpd_pages(&mut self) -> Result<(), Error<T>> {
+    pub async fn supported_vpd_pages(&mut self) -> Result<(), Error<T::Error>> {
         let cmd = Inquiry::new(Some(0), 4);
         let rc = self.command_response(cmd).await;
         let n: [u8; 4] = self.try_upgrade_error(rc).await?;
@@ -738,11 +751,10 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     /// size and optimum write granularity, but not much seems to support it.
     pub async fn block_limits_page(
         &mut self,
-    ) -> Result<BlockLimitsPage, Error<T>> {
+    ) -> Result<BlockLimitsPage, Error<T::Error>> {
         let cmd = Inquiry::new(Some(0xB0), 64);
         assert!(core::mem::size_of::<BlockLimitsPage>() == 64);
-        let rc = self.command_response(cmd).await;
-        let page = self.try_upgrade_error(rc).await?;
+        let page = self.command_response(cmd).await?;
         Ok(page)
     }
 
@@ -753,14 +765,16 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u32,
         count: u16,
         buf: &mut [u8],
-    ) -> Result<usize, Error<T>> {
+    ) -> Result<usize, Error<T::Error>> {
         let cmd = Read10::new(start_block, count);
         let rc = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::In(buf))
             .await;
-        let sz = self.try_upgrade_error(rc).await?;
-        Ok(sz)
+        if let Err(e) = rc {
+            return Err(self.try_upgrade_error(e).await);
+        }
+        rc
     }
 
     /// Read sector(s), 64-bit LBA version
@@ -771,14 +785,16 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u64,
         count: u32,
         buf: &mut [u8],
-    ) -> Result<usize, Error<T>> {
+    ) -> Result<usize, Error<T::Error>> {
         let cmd = Read16::new(start_block, count);
         let rc = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::In(buf))
             .await;
-        let sz = self.try_upgrade_error(rc).await?;
-        Ok(sz)
+        if let Err(e) = rc {
+            return Err(self.try_upgrade_error(e).await);
+        }
+        rc
     }
 
     /// Write sector(s), 32-bit LBA version
@@ -788,14 +804,16 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u32,
         count: u16,
         buf: &[u8],
-    ) -> Result<usize, Error<T>> {
+    ) -> Result<usize, Error<T::Error>> {
         let cmd = Write10::new(start_block, count);
         let rc = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::Out(buf))
             .await;
-        let sz = self.try_upgrade_error(rc).await?;
-        Ok(sz)
+        if let Err(e) = rc {
+            return Err(self.try_upgrade_error(e).await);
+        }
+        rc
     }
 
     /// Write sector(s), 64-bit LBA version
@@ -806,13 +824,19 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         start_block: u64,
         count: u32,
         buf: &[u8],
-    ) -> Result<usize, Error<T>> {
+    ) -> Result<usize, Error<T::Error>> {
         let cmd = Write16::new(start_block, count);
         let rc = self
             .transport
             .command(bytemuck::bytes_of(&cmd), DataPhase::Out(buf))
             .await;
-        let sz = self.try_upgrade_error(rc).await?;
-        Ok(sz)
+        if let Err(e) = rc {
+            return Err(self.try_upgrade_error(e).await);
+        }
+        rc
     }
 }
+
+#[cfg(all(test, feature = "std"))]
+#[path = "tests/scsi_device.rs"]
+pub(crate) mod tests;

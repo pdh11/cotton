@@ -113,7 +113,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         &mut self,
         cmd: &[u8],
         data: DataPhase<'_>,
-    ) -> Result<usize, Error<Self>> {
+    ) -> Result<usize, Error<Self::Error>> {
         //let rc = self.bus.clear_halt(&self.bulk_in).await;
         //debug::println!("clear {:?}", rc);
 

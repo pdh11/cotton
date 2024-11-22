@@ -13,24 +13,24 @@ pub enum DataPhase<'a> {
     None,
 }
 
-pub trait ScsiTransport: Sized {
-    type Error;
+pub trait ScsiTransport {
+    type Error: PartialEq + Eq;
 
     fn command(
         &mut self,
         cmd: &[u8],
         data: DataPhase,
-    ) -> impl Future<Output = Result<usize, Error<Self>>>;
+    ) -> impl Future<Output = Result<usize, Error<Self::Error>>>;
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Error<T: ScsiTransport> {
+pub enum Error<T: PartialEq + Eq> {
     CommandFailed,
     ProtocolError,
-    Transport(T::Error),
+    Transport(T),
     Scsi(ScsiError),
 }
 
