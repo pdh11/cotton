@@ -1,6 +1,6 @@
 use super::debug;
-use super::scsi_transport::DataPhase;
-use super::{Error, ScsiTransport};
+use cotton_scsi::scsi_transport::DataPhase;
+use cotton_scsi::{Error, ScsiTransport};
 use cotton_usb_host::device::identify::IdentifyFromDescriptors;
 use cotton_usb_host::host_controller::{HostController, UsbError};
 use cotton_usb_host::usb_bus::{
@@ -10,7 +10,7 @@ use cotton_usb_host::wire::{
     ConfigurationDescriptor, DescriptorVisitor, InterfaceDescriptor,
 };
 
-pub struct MassStorageInterface<'a, HC: HostController> {
+pub struct MassStorage<'a, HC: HostController> {
     bus: &'a UsbBus<HC>,
     //device: UsbDevice,
     bulk_in: BulkIn,
@@ -18,11 +18,11 @@ pub struct MassStorageInterface<'a, HC: HostController> {
     tag: u32,
 }
 
-impl<'a, HC: HostController> MassStorageInterface<'a, HC> {
+impl<'a, HC: HostController> MassStorage<'a, HC> {
     pub fn new(
         bus: &'a UsbBus<HC>,
         mut device: UsbDevice,
-    ) -> Result<Self, Error<Self>> {
+    ) -> Result<Self, UsbError> {
         let bulk_in = device
             .open_in_endpoint(device.in_endpoints().iter().next().unwrap())?;
         let bulk_out = device.open_out_endpoint(
@@ -39,12 +39,12 @@ impl<'a, HC: HostController> MassStorageInterface<'a, HC> {
 }
 
 #[derive(Default)]
-pub struct IdentifyMassStorageInterface {
+pub struct IdentifyMassStorage {
     current_configuration: Option<u8>,
     msc_configuration: Option<u8>,
 }
 
-impl DescriptorVisitor for IdentifyMassStorageInterface {
+impl DescriptorVisitor for IdentifyMassStorage {
     fn on_configuration(&mut self, c: &ConfigurationDescriptor) {
         self.current_configuration = Some(c.bConfigurationValue);
     }
@@ -62,7 +62,7 @@ impl DescriptorVisitor for IdentifyMassStorageInterface {
     }
 }
 
-impl IdentifyFromDescriptors for IdentifyMassStorageInterface {
+impl IdentifyFromDescriptors for IdentifyMassStorage {
     fn identify(&self) -> Option<u8> {
         self.msc_configuration
     }
@@ -106,15 +106,7 @@ impl CommandBlockWrapper {
     }
 }
 
-impl<HC: HostController> From<UsbError>
-    for Error<MassStorageInterface<'_, HC>>
-{
-    fn from(e: UsbError) -> Self {
-        Error::Transport(e)
-    }
-}
-
-impl<HC: HostController> ScsiTransport for MassStorageInterface<'_, HC> {
+impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
     type Error = UsbError;
 
     async fn command(
@@ -147,7 +139,8 @@ impl<HC: HostController> ScsiTransport for MassStorageInterface<'_, HC> {
                 &bytemuck::bytes_of(&cbw)[0..31],
                 TransferType::FixedSize,
             )
-            .await?;
+            .await
+            .map_err(Error::Transport)?;
         //debug::println!("bot {:?}", rc);
         //rc?;
 
@@ -183,17 +176,21 @@ impl<HC: HostController> ScsiTransport for MassStorageInterface<'_, HC> {
         };
         let response = if response == Err(UsbError::Stall) {
             debug::println!("msc bulk stall");
-            self.bus.clear_halt(&self.bulk_in).await?;
+            self.bus
+                .clear_halt(&self.bulk_in)
+                .await
+                .map_err(Error::Transport)?;
             0
         } else {
-            response?
+            response.map_err(Error::Transport)?
         };
 
         let mut csw = [0u8; 13];
         let sz = self
             .bus
             .bulk_in_transfer(&self.bulk_in, &mut csw, TransferType::FixedSize)
-            .await?;
+            .await
+            .map_err(Error::Transport)?;
         if sz < 13 {
             debug::println!("Bad CSW {}/13", sz);
             return Err(Error::ProtocolError);

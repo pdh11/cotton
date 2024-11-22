@@ -9,6 +9,9 @@ use rp_pico as _; // includes boot2
 mod app {
     use core::future::Future;
     use core::pin::pin;
+    use cotton_scsi::{
+        AsyncBlockDevice, PeripheralType, ScsiBlockDevice, ScsiDevice,
+    };
     use cotton_usb_host::device::identify::IdentifyFromDescriptors;
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::host_controller::HostController;
@@ -20,10 +23,7 @@ mod app {
         SetupPacket, ShowDescriptors, DEVICE_TO_HOST, HOST_TO_DEVICE,
         VENDOR_REQUEST,
     };
-    use cotton_usb_host_msc::{
-        AsyncBlockDevice, IdentifyMassStorageInterface, MassStorageInterface,
-        PeripheralType, ScsiBlockDevice, ScsiDevice,
-    };
+    use cotton_usb_host_msc::{IdentifyMassStorage, MassStorage};
     use futures_util::StreamExt;
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
@@ -285,7 +285,7 @@ mod app {
                         defmt::println!("error {}", e);
                     }
                 } else {
-                    let mut ims = IdentifyMassStorageInterface::default();
+                    let mut ims = IdentifyMassStorage::default();
                     let Ok(()) =
                         stack.get_configuration(&device, &mut ims).await
                     else {
@@ -297,8 +297,7 @@ mod app {
                         else {
                             continue;
                         };
-                        let Ok(ms) = MassStorageInterface::new(&stack, device)
-                        else {
+                        let Ok(ms) = MassStorage::new(&stack, device) else {
                             continue;
                         };
                         let mut device = ScsiDevice::new(ms);

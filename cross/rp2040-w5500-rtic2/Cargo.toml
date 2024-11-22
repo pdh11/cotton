@@ -35,6 +35,7 @@ cotton-usb-host = { path = "../../cotton-usb-host", default-features = false, fe
 cotton-usb-host-msc = { path = "../../cotton-usb-host-msc", default-features = false, features = [
   "defmt",
 ] }
+cotton-scsi = { path = "../../cotton-scsi", default-features = false }
 cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features = [
   "smoltcp",
 ] }
