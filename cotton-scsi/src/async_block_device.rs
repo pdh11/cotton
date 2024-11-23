@@ -2,7 +2,7 @@ use core::future::Future;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct DeviceInfo {
     pub blocks: u64,
     pub block_size: u32,

@@ -110,7 +110,7 @@ impl<T> PollExtras<T> for Poll<T> {
     }
 }
 
-trait ExtraExpectations {
+pub trait ExtraExpectations {
     fn expect_request_sense(&mut self);
 }
 
@@ -236,35 +236,35 @@ pub fn command_ok_with<T: bytemuck::NoUninit>(
     }
 }
 
-fn command_in_pends(
+pub fn command_in_pends(
     _: &[u8],
     _: &mut [u8],
 ) -> Pin<Box<dyn Future<Output = Result<usize, MockError>>>> {
     Box::pin(future::pending())
 }
 
-fn command_in_fails(
+pub fn command_in_fails(
     _: &[u8],
     _: &mut [u8],
 ) -> Pin<Box<dyn Future<Output = Result<usize, MockError>>>> {
     Box::pin(future::ready(Err(Error::CommandFailed)))
 }
 
-fn command_out_ok(
+pub fn command_out_ok(
     _: &[u8],
     d: &[u8],
 ) -> Pin<Box<dyn Future<Output = Result<usize, MockError>>>> {
     Box::pin(future::ready(Ok(d.len())))
 }
 
-fn command_out_fails(
+pub fn command_out_fails(
     _: &[u8],
     _: &[u8],
 ) -> Pin<Box<dyn Future<Output = Result<usize, MockError>>>> {
     Box::pin(future::ready(Err(Error::CommandFailed)))
 }
 
-fn command_out_pends(
+pub fn command_out_pends(
     _: &[u8],
     _: &[u8],
 ) -> Pin<Box<dyn Future<Output = Result<usize, MockError>>>> {

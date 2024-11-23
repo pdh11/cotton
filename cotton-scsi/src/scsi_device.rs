@@ -173,9 +173,9 @@ unsafe impl bytemuck::Pod for ReadCapacity10 {}
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default)]
 #[repr(C)]
-struct ReadCapacity10Reply {
-    lba: [u8; 4],
-    block_size: [u8; 4],
+pub(crate) struct ReadCapacity10Reply {
+    pub lba: [u8; 4],
+    pub block_size: [u8; 4],
 }
 
 // SAFETY: all fields zeroable
@@ -221,12 +221,12 @@ unsafe impl bytemuck::Pod for ReadCapacity16 {}
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default)]
 #[repr(C)]
-struct ReadCapacity16Reply {
-    lba: [u8; 8],
-    block_size: [u8; 4],
-    flags: [u8; 2],
-    lowest_aligned_lba: [u8; 2],
-    reserved: [u8; 16],
+pub(crate) struct ReadCapacity16Reply {
+    pub lba: [u8; 8],
+    pub block_size: [u8; 4],
+    pub flags: [u8; 2],
+    pub lowest_aligned_lba: [u8; 2],
+    pub reserved: [u8; 16],
 }
 
 // SAFETY: all fields zeroable
@@ -360,10 +360,10 @@ unsafe impl bytemuck::Pod for ReportSupportedOperationCodes {}
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default)]
 #[repr(C)]
-struct ReportSupportedOperationCodesReply {
-    reserved: u8,
-    support: u8,
-    cdb_size: [u8; 2],
+pub struct ReportSupportedOperationCodesReply {
+    pub reserved: u8,
+    pub support: u8,
+    pub cdb_size: [u8; 2],
 }
 
 // SAFETY: all fields zeroable

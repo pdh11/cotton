@@ -62,10 +62,13 @@ impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
         let end = offset
             .checked_add(count as u64)
             .ok_or(Error::Scsi(ScsiError::LogicalBlockAddressOutOfRange))?;
-        if end < u32::MAX as u64 && count < u16::MAX as u32 {
-            self.scsi.read_10(offset as u32, count as u16, data).await?;
+        let sz = if end < u32::MAX as u64 && count < u16::MAX as u32 {
+            self.scsi.read_10(offset as u32, count as u16, data).await?
         } else {
-            self.scsi.read_16(offset, count, data).await?;
+            self.scsi.read_16(offset, count, data).await?
+        };
+        if sz < data.len() {
+            return Err(Error::ProtocolError);
         }
         Ok(())
     }
@@ -89,3 +92,7 @@ impl<T: ScsiTransport> AsyncBlockDevice for ScsiBlockDevice<T> {
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "std"))]
+#[path = "tests/scsi_block_device.rs"]
+pub(crate) mod tests;
