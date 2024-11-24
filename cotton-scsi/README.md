@@ -10,9 +10,15 @@
 
 Part of the [Cotton](https://github.com/pdh11/cotton) project.
 
-## Abstractions for SCSI commands and responses
-
 Actual SCSI hardware is rarely seen these days. But the command
 protocols live on, and are important for USB mass-storage class (USB
-storage devices) tunnelled over USB and for CD-ROM (tunnelled over
-ATAPI).
+storage devices) when tunnelled over USB and for CD-ROM when tunnelled
+over ATAPI.
+
+This crate so far implements only those commands important for "direct
+storage access devices" (disks and flash-drives), but the mechanisms should
+be generic to all SCSI commands, such as for optical drives.
+
+The most accessible reference for SCSI commands is the "Seagate SCSI Commands
+Reference Manual" found at
+<https://www.seagate.com/files/staticfiles/support/docs/manual/Interface%20manuals/100293068j.pdf>

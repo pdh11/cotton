@@ -99,7 +99,7 @@ impl UsbDevice {
     }
 
     pub fn open_in_endpoint(&mut self, ep: u8) -> Result<BulkIn, UsbError> {
-        if ep < 16 && (self.in_endpoints_bitmap & (1 << ep)) != 0 {
+        if ep > 0 && ep < 16 && (self.in_endpoints_bitmap & (1 << ep)) != 0 {
             self.in_endpoints_bitmap &= !(1 << ep);
             Ok(BulkIn {
                 usb_address: self.usb_address,
@@ -113,7 +113,7 @@ impl UsbDevice {
     }
 
     pub fn open_out_endpoint(&mut self, ep: u8) -> Result<BulkOut, UsbError> {
-        if ep < 16 && (self.out_endpoints_bitmap & (1 << ep)) != 0 {
+        if ep > 0 && ep < 16 && (self.out_endpoints_bitmap & (1 << ep)) != 0 {
             self.out_endpoints_bitmap &= !(1 << ep);
             Ok(BulkOut {
                 usb_address: self.usb_address,
@@ -1037,6 +1037,19 @@ impl<HC: HostController> UsbBus<HC> {
             }
         }
         Ok(DeviceEvent::None)
+    }
+}
+
+pub fn create_test_device(
+    in_endpoints_bitmap: u16,
+    out_endpoints_bitmap: u16,
+) -> UsbDevice {
+    UsbDevice {
+        usb_address: 255,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 64,
+        in_endpoints_bitmap,
+        out_endpoints_bitmap,
     }
 }
 

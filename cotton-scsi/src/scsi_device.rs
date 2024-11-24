@@ -356,11 +356,13 @@ unsafe impl bytemuck::Zeroable for ReportSupportedOperationCodes {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for ReportSupportedOperationCodes {}
 
+/// The "One-Command" reply format for ReportSupportedOperationCodes
+/// Seagate SCSI Commands Reference Mnaual s3.34.3
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default)]
 #[repr(C)]
-pub struct ReportSupportedOperationCodesReply {
+pub(crate) struct ReportSupportedOperationCodesReply {
     pub reserved: u8,
     pub support: u8,
     pub cdb_size: [u8; 2],
@@ -413,7 +415,7 @@ unsafe impl bytemuck::Pod for Inquiry {}
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default)]
 #[repr(C)]
-pub struct StandardInquiryData {
+struct StandardInquiryData {
     peripheral_device_type: u8,
     removable: u8,
     version: u8,

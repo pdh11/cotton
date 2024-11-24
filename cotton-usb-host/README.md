@@ -143,7 +143,7 @@ belongs in those microcontrollers' HAL crates.
 TODO before merge
 
  - [x] Hub state machine
- - [ ] Unit tests
+ - [x] Unit tests
  - [x] Interlocking to avoid contending on pipe 0
  - [x] Rename types to wire
  - [x] Introduce delay to process_hub_packet and do away with currently_resetting

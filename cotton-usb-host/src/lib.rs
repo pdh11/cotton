@@ -14,3 +14,6 @@ pub mod interrupt;
 pub mod topology;
 pub mod usb_bus;
 pub mod wire;
+
+#[cfg(feature = "std")]
+pub mod mocks;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::host_controller::tests::MockInterruptPipe;
+use crate::mocks::MockInterruptPipe;
 use futures::Stream;
 use std::pin::pin;
 use std::sync::Arc;

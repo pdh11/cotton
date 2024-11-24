@@ -1,5 +1,5 @@
 use super::*;
-use crate::host_controller::tests::{
+use crate::mocks::{
     MockDeviceDetect, MockHostController, MockHostControllerInner,
     MockInterruptPipe,
 };
@@ -3203,6 +3203,20 @@ fn open_in_endpoint() {
 }
 
 #[test]
+fn open_in_endpoint_zero() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x1,
+        out_endpoints_bitmap: 0x1,
+    };
+
+    // EP0 is always control, not bulk
+    assert!(d.open_in_endpoint(0).is_err());
+}
+
+#[test]
 fn open_in_endpoint_fails() {
     let mut d = UsbDevice {
         usb_address: 1,
@@ -3239,6 +3253,20 @@ fn open_out_endpoint() {
     };
 
     let _r = d.open_out_endpoint(15).unwrap();
+}
+
+#[test]
+fn open_out_endpoint_zero() {
+    let mut d = UsbDevice {
+        usb_address: 1,
+        usb_speed: UsbSpeed::Full12,
+        packet_size_ep0: 8,
+        in_endpoints_bitmap: 0x1,
+        out_endpoints_bitmap: 0x1,
+    };
+
+    // EP0 is always control, not bulk
+    assert!(d.open_out_endpoint(0).is_err());
 }
 
 #[test]

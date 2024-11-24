@@ -23,11 +23,18 @@ impl<'a, HC: HostController> MassStorage<'a, HC> {
         bus: &'a UsbBus<HC>,
         mut device: UsbDevice,
     ) -> Result<Self, UsbError> {
-        let bulk_in = device
-            .open_in_endpoint(device.in_endpoints().iter().next().unwrap())?;
-        let bulk_out = device.open_out_endpoint(
-            device.out_endpoints().iter().next().unwrap(),
-        )?;
+        let in_ep = device
+            .in_endpoints()
+            .iter()
+            .next()
+            .unwrap_or_default();
+        let bulk_in = device.open_in_endpoint(in_ep)?;
+        let out_ep = device
+            .out_endpoints()
+            .iter()
+            .next()
+            .unwrap_or_default();
+        let bulk_out = device.open_out_endpoint(out_ep)?;
         Ok(Self {
             bus,
             //device,
@@ -133,27 +140,33 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         // defined, but it's one byte too long (an actual, on-the-wire
         // command block wrapper is 31 bytes). So we only send a
         // partial slice of it.
-        self.bus
+        if self
+            .bus
             .bulk_out_transfer(
                 &self.bulk_out,
                 &bytemuck::bytes_of(&cbw)[0..31],
                 TransferType::FixedSize,
             )
             .await
-            .map_err(Error::Transport)?;
+            .map_err(Error::Transport)?
+            < 31
+        {
+            return Err(Error::ProtocolError);
+        }
         //debug::println!("bot {:?}", rc);
         //rc?;
 
         let response = match data {
             DataPhase::In(buf) => {
-                let rc = self
-                    .bus
+                // let rc=
+                self.bus
                     .bulk_in_transfer(
                         &self.bulk_in,
                         buf,
                         TransferType::FixedSize,
                     )
-                    .await;
+                    .await
+                /*
                 if let Ok(n) = rc {
                     if n > 128 {
                         debug::println!("{}: [...]", n);
@@ -162,6 +175,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
                     }
                 }
                 rc
+                */
             }
             DataPhase::Out(buf) => {
                 self.bus
@@ -180,6 +194,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
                 .clear_halt(&self.bulk_in)
                 .await
                 .map_err(Error::Transport)?;
+            // TODO: partial result THEN stall
             0
         } else {
             response.map_err(Error::Transport)?
@@ -211,3 +226,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         }
     }
 }
+
+#[cfg(all(test, feature = "std"))]
+#[path = "tests/mass_storage.rs"]
+mod tests;

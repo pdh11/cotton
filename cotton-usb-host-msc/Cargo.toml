@@ -19,5 +19,5 @@ defmt = { version = "0.3.8", optional = true }
 
 [features]
 default = ["std"]
-std = ["cotton-usb-host/std"]
+std = ["cotton-usb-host/std", "cotton-scsi/std"]
 defmt = ["dep:defmt", "cotton-usb-host/defmt", "cotton-scsi/defmt"]
