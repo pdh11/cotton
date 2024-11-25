@@ -19,6 +19,7 @@ This crate so far implements only those commands important for "direct
 storage access devices" (disks and flash-drives), but the mechanisms should
 be generic to all SCSI commands, such as for optical drives.
 
-The most accessible reference for SCSI commands is the "Seagate SCSI Commands
-Reference Manual" found at
+The most accessible reference for SCSI commands for disks (or other
+direct storage) is the "Seagate SCSI Commands Reference Manual" found
+at
 <https://www.seagate.com/files/staticfiles/support/docs/manual/Interface%20manuals/100293068j.pdf>

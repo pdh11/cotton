@@ -468,29 +468,52 @@ unsafe impl bytemuck::Zeroable for BlockLimitsPage {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for BlockLimitsPage {}
 
+/// SCSI "Peripheral Type" (general device type)
+///
+/// See Seagate SCSI Commands Reference table 61
+///
+/// Mass-storage devices are `PeripheralType::Disk`.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[allow(missing_docs)]
 #[repr(u8)]
 pub enum PeripheralType {
+    /// Direct-access block device (e.g. disk, USB drive)
     Disk = 0,
+    /// Sequential-access storage (tape)
     Sequential = 1,
+    /// Were there really SCSI printers?
     Printer = 2,
+    /// Generic SCSI processor
     Processor = 3,
+    /// Some write-once-read-many devices weren't type 5
     WriteOnce = 4,
+    /// CD, DVD, etc.
     Optical = 5,
+    /// Not many scanners are SCSI these days
     Scanner = 6,
+    /// Another optical-drive variant
     OpticalMemory = 7,
+    /// Jukebox
     Changer = 8,
+    /// Obsolete, says the manual
     Communications = 9,
     Obsolete10 = 0xa,
     Obsolete11 = 0xb,
+    /// RAID array
     StorageArray = 0xc,
+    /// Enclosure services e.g. for large RAID array
     EnclosureServices = 0xd,
+    /// Honestly SCSI could do with being simpler, not sure this effort helped
     SimplifiedDirect = 0xe,
+    /// Not sure what these were
     OpticalCardReader = 0xf,
+    /// Or these
     BridgeController = 0x10,
+    /// Content-addressable file store, these are due a comeback IMO
     ObjectStorage = 0x11,
+    /// Automation for mounting/unmounting media
     Automation = 0x12,
     Reserved13 = 0x13,
     Reserved14 = 0x14,
@@ -508,6 +531,9 @@ pub enum PeripheralType {
     Other = 0x1F,
 }
 
+/// Information obtained from INQUIRY command
+///
+/// i.e., returned from [ScsiDevice::inquiry]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
