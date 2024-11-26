@@ -1,0 +1,22 @@
+[package]
+name = "cotton-scsi"
+version = "0.1.0"
+description = "SCSI commands and abstractions"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = []
+edition = "2021"
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+license = "CC0-1.0"
+rust-version = "1.79"
+
+[dependencies]
+bytemuck = "1.9"
+futures = { version = "0.3", default-features = false }
+defmt = { version = "0.3.8", optional = true }
+mockall = { version = "0.13", optional = true }
+
+[features]
+default = ["std"]
+std = ["dep:mockall"]
+defmt = ["dep:defmt"]

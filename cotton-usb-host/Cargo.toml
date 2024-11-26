@@ -1,0 +1,33 @@
+[package]
+name = "cotton-usb-host"
+version = "0.1.0"
+description = "USB host stack for embedded devices"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = []
+edition = "2021"
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+license = "CC0-1.0"
+rust-version = "1.79"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[package.metadata.cargo-all-features]
+skip_feature_sets = [["rp2040"], ["defmt"]]
+
+[dependencies]
+futures = { version = "0.3", default-features = false }
+defmt = { version = "0.3.8", optional = true }
+rp2040-pac = { version = "0.6", optional = true }
+cortex-m = { version = "0.7.7", optional = true }
+rtic-common = { version = "1", optional = true }        # For WakerRegistration
+mockall = { version = "0.13", optional = true }
+critical-section = "1.1"
+bytemuck = "1.9"
+
+[features]
+default = ["std"]
+std = ["critical-section/std", "futures/std", "dep:mockall"]
+rp2040 = ["defmt", "dep:rp2040-pac", "dep:rtic-common", "dep:cortex-m"]
+defmt = ["dep:defmt"]

@@ -1,8 +1,11 @@
 [workspace]
 members = [
   "cotton-netif",
+  "cotton-scsi",
   "cotton-ssdp",
   "cotton-unique",
+  "cotton-usb-host",
+  "cotton-usb-host-msc",
   "cotton-w5500",
   "systemtests",
 ]

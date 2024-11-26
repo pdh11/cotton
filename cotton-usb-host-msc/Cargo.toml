@@ -1,0 +1,23 @@
+[package]
+name = "cotton-usb-host-msc"
+version = "0.1.0"
+description = "USB mass-storage host for embedded devices"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = []
+edition = "2021"
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+license = "CC0-1.0"
+rust-version = "1.79"
+
+[dependencies]
+cotton-usb-host = { version = "0.1", path = "../cotton-usb-host", default-features = false }
+cotton-scsi = { version = "0.1", path = "../cotton-scsi", default-features = false }
+bytemuck = "1.9"
+futures = { version = "0.3", default-features = false }
+defmt = { version = "0.3.8", optional = true }
+
+[features]
+default = ["std"]
+std = ["cotton-usb-host/std", "cotton-scsi/std"]
+defmt = ["dep:defmt", "cotton-usb-host/defmt", "cotton-scsi/defmt"]
