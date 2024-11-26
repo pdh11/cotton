@@ -23,3 +23,23 @@ The most accessible reference for SCSI commands for disks (or other
 direct storage) is the "Seagate SCSI Commands Reference Manual" found
 at
 <https://www.seagate.com/files/staticfiles/support/docs/manual/Interface%20manuals/100293068j.pdf>
+
+
+## Using cotton-scsi
+
+Firstly you need to get hold of an implementation of the trait
+[`ScsiTransport`] -- either the implementation of USB mass-storage
+class provided by [the cotton-usb-host-msc crate](https://github.com/pdh11/cotton/tree/main/cotton-usb-host-msc), or your own new one.
+
+Then, construct a [`ScsiDevice`] from your `ScsiTransport`. You can then
+call [`ScsiDevice::inquiry`] to determine what sort of SCSI device you
+have. If it's of type [`PeripheralType::Disk`] then you're in luck: you
+can construct a [`ScsiBlockDevice`] from your `ScsiDevice` and start reading
+and writing sectors.
+
+If your device isn't a `PeripheralType::Disk` -- perhaps it's a
+`PeripheralType::Optical` or something else -- then you'll need to
+send and receive SCSI commands more manually, using
+[`ScsiDevice::command_response`]; you can examine the implementation
+of methods such as [`ScsiDevice::read_capacity_10`] to see what that
+needs to look like.

@@ -538,10 +538,20 @@ pub enum PeripheralType {
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct InquiryData {
+    /// The general type of the attached SCSI device
     pub peripheral_type: PeripheralType,
+    /// Whether the SCSI device supports removable media
+    ///
+    /// Disks usually no; CD-ROMs usually yes.
     pub is_removable: bool,
 }
 
+/// A generic SCSI device, attached over a particular transport
+///
+/// The first commands issued to a newly-discovered device are
+/// typically [`ScsiDevice::test_unit_ready()`] followed by, if it's
+/// ready, [`ScsiDevice::inquiry()`].
+///
 /// | Test device  | {R,W,RC}(10) | {R,W,RC}(16) |  BLP  |  RSOC  |
 /// | ---          | :---:        | :---:        | :---: | :---:  |
 /// | Black (4G)   |    Y         | Y | - | - |
@@ -554,9 +564,11 @@ pub struct ScsiDevice<T: ScsiTransport> {
 }
 
 impl<T: ScsiTransport> ScsiDevice<T> {
+    /// Create a new device, from the given transport
     pub fn new(transport: T) -> Self {
         Self { transport }
     }
+
     async fn try_upgrade_error(
         &mut self,
         e: Error<T::Error>,
@@ -633,7 +645,12 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         e
     }
 
-    async fn command_response<
+    /// Send a generic SCSI command and await a reply
+    ///
+    /// Only one command is ever "in-flight" at once, so even though this
+    /// function is asynchronous, nothing else happens until the reply is
+    /// returned.
+    pub async fn command_response<
         C: bytemuck::Pod,
         R: bytemuck::NoUninit + bytemuck::AnyBitPattern + Default,
     >(
@@ -699,6 +716,10 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok((reply.support & 7) == 3)
     }
 
+    /// Is the device "ready"?
+    ///
+    /// For instance, hard drives might take a while to spin up to operating
+    /// speed.
     pub async fn test_unit_ready(&mut self) -> Result<(), Error<T::Error>> {
         let cmd = TestUnitReady::new();
         let rc = self
@@ -727,6 +748,11 @@ impl<T: ScsiTransport> ScsiDevice<T> {
         Ok(*reply)
     }
 
+    /// Send a SCSI INQUIRY command and wait for a reply
+    ///
+    /// This is typically one of the first commands issued to a
+    /// newly-detected device, as it determines whether the device is a disk,
+    /// a CD-ROM drive, or something more exotic.
     pub async fn inquiry(&mut self) -> Result<InquiryData, Error<T::Error>> {
         let reply: StandardInquiryData =
             self.command_response(Inquiry::new(None, 36)).await?;
@@ -788,6 +814,8 @@ impl<T: ScsiTransport> ScsiDevice<T> {
 
     /// Read sector(s), 32-bit LBA version
     ///
+    /// All disk devices are required to support this, but on large
+    /// devices it is only capable of reading within the first 2TB.
     pub async fn read_10(
         &mut self,
         start_block: u32,
@@ -807,7 +835,8 @@ impl<T: ScsiTransport> ScsiDevice<T> {
 
     /// Read sector(s), 64-bit LBA version
     ///
-    /// Not universally supported.
+    /// Not universally supported (but should be supported on all devices
+    /// where it's needed, i.e. devices >2TB).
     pub async fn read_16(
         &mut self,
         start_block: u64,
@@ -827,6 +856,8 @@ impl<T: ScsiTransport> ScsiDevice<T> {
 
     /// Write sector(s), 32-bit LBA version
     ///
+    /// All disk devices are required to support this, but on large
+    /// devices it is only capable of writing within the first 2TB.
     pub async fn write_10(
         &mut self,
         start_block: u32,
@@ -846,7 +877,8 @@ impl<T: ScsiTransport> ScsiDevice<T> {
 
     /// Write sector(s), 64-bit LBA version
     ///
-    /// Not universally supported.
+    /// Not universally supported (but should be supported on all devices
+    /// where it's needed, i.e. devices >2TB).
     pub async fn write_16(
         &mut self,
         start_block: u64,

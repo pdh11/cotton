@@ -3,15 +3,26 @@ use super::debug;
 use super::scsi_device::ScsiDevice;
 use super::scsi_transport::{Error, ScsiError, ScsiTransport};
 
+/// Implementing [`AsyncBlockDevice`] in terms of [`ScsiDevice`]
 pub struct ScsiBlockDevice<T: ScsiTransport> {
+    /// The underlying SCSI block device
+    ///
+    /// Made "pub" so that additional SCSI commands can be issued if need be.
     pub scsi: ScsiDevice<T>,
 }
 
 impl<T: ScsiTransport> ScsiBlockDevice<T> {
+    /// Construct a new block device from a generic SCSI device
     pub fn new(scsi: ScsiDevice<T>) -> Self {
         Self { scsi }
     }
 
+    /// For testing: query supported SCSI commands on this device
+    ///
+    /// Unfortunately, "Report Supported Operation Codes", which this
+    /// relies on, is itself rarely a supported SCSI command: I
+    /// haven't found a device yet where this call works. Instead it
+    /// always returns `ScsiError::InvalidCommandOperationCode`.
     pub async fn query_commands(&mut self) -> Result<(), Error<T::Error>> {
         const CMDS: &[(&str, u8)] = &[
             ("READ(6)", 0x08),
