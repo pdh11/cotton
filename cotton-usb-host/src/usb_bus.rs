@@ -1,4 +1,4 @@
-use crate::bitset::{BitIterator, BitSet};
+use crate::bitset::BitSet;
 use crate::debug;
 use crate::interrupt::InterruptStream;
 use crate::topology::Topology;
@@ -959,8 +959,8 @@ impl<HC: HostController> UsbBus<HC> {
         if packet.size > 1 {
             port_bitmap |= (packet.data[1] as u32) << 8;
         }
-        let port_bitmap = BitIterator::new(port_bitmap);
-        for port in port_bitmap {
+        let port_bitmap = BitSet(port_bitmap);
+        for port in port_bitmap.iter() {
             debug::println!("I'm told to investigate port {}", port);
 
             let (state, changes) =

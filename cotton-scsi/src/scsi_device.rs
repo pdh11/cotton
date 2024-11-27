@@ -552,13 +552,29 @@ pub struct InquiryData {
 /// typically [`ScsiDevice::test_unit_ready()`] followed by, if it's
 /// ready, [`ScsiDevice::inquiry()`].
 ///
+/// # Command support across test devices
+///
+/// {R,W,RC}(10) = READ(10), WRITE(10), READ_CAPACITY(10)
+///
+/// {R,W,RC}(16) = READ(16), WRITE(16), READ_CAPACITY(16)
+///
+/// BLP = INQUIRY, Vital Product Data, Basic Limits Page
+///
+/// RSOC = REPORT SUPPORTED OPERATION CODES
+///
 /// | Test device  | {R,W,RC}(10) | {R,W,RC}(16) |  BLP  |  RSOC  |
 /// | ---          | :---:        | :---:        | :---: | :---:  |
 /// | Black (4G)   |    Y         | Y | - | - |
 /// | Green (16G)  |    Y         | Y | - | - |
 /// | Handbag (8G) |    Y         | - | - | - |
 /// | Poker (1G)   |    Y         | - | - | - |
+/// | Kingston (120G)[^1] | Y     | Y | - | - |
+/// | Sandisk (120G)[^2] | Y      | Y | - | - |
+/// | WD (500G)[^3] |   Y         | Y | - | - |
 ///
+/// [^1]: M.2 SSD via JMicron 20337
+/// [^2]: mSATA SSD via JMicron 20337
+/// [^3]: SATA winchester via JMicron 20337
 pub struct ScsiDevice<T: ScsiTransport> {
     transport: T,
 }
@@ -786,13 +802,17 @@ impl<T: ScsiTransport> ScsiDevice<T> {
     pub async fn supported_vpd_pages(&mut self) -> Result<(), Error<T::Error>> {
         let cmd = Inquiry::new(Some(0), 4);
         let rc = self.command_response(cmd).await;
-        let n: [u8; 4] = self.try_upgrade_error(rc).await?;
+
+        let n: [u8; 4] = match rc {
+            Err(e) => return Err(self.try_upgrade_error(e).await),
+            Ok(r) => r,
+        };
         debug::println!("vpd 0x{:x}", n);
 
         if n[3] >= 3 {
             let cmd = Inquiry::new(Some(0), 7);
             let rc = self.command_response(cmd).await;
-            let arr: [u8; 7] = self.try_upgrade_error(rc).await?;
+            let arr: [u8; 7] = rc?;
             debug::println!("vpd {:?}", arr);
         }
         Ok(())
