@@ -125,6 +125,7 @@ impl Pool {
 
     fn dealloc_internal(&self, n: u8) {
         let mut bits = self.allocated.get();
+        debug_assert!(bits.contains(n));
         bits.clear(n);
         self.allocated.replace(bits);
 

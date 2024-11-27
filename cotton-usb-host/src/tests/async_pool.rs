@@ -19,7 +19,7 @@ fn alloc_dealloc() {
     assert_eq!(p.allocated.get().0, 0);
     {
         let pp = p.try_alloc().unwrap();
-        assert_eq!(pp.n, 0);
+        assert_eq!(pp.which(), 0);
         assert_eq!(p.allocated.get().0, 1);
     }
     assert_eq!(p.allocated.get().0, 0);
