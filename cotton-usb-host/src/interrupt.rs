@@ -3,8 +3,18 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::Stream;
 
+/// A [`futures::Stream`] based on an [`InterruptPipe`]
 pub struct InterruptStream<PIPE: InterruptPipe> {
-    pub pipe: PIPE,
+    pipe: PIPE,
+}
+
+impl<PIPE: InterruptPipe> InterruptStream<PIPE> {
+    /// Create a new InterruptStream wrapping an InterruptPipe
+    pub fn new(pipe: PIPE) -> Self {
+        Self {
+            pipe
+        }
+    }
 }
 
 impl<PIPE: InterruptPipe> Stream for InterruptStream<PIPE> {

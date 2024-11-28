@@ -61,7 +61,7 @@ docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).
 
 ## Using cotton-usb-host with a Raspberry&nbsp;Pi Pico
 
-This crate configures the Raspberry&nbsplPi Pico's USB peripheral for
+This crate configures the Raspberry&nbsp;Pi Pico's USB peripheral for
 USB host mode _only_, and not USB device mode. So before running your
 code, make sure that the USB connector on your Raspberry&nbsp;Pi Pico
 is plugged into a USB device, and not into another USB host such as a
@@ -115,7 +115,8 @@ receptacles (though the very newest ST ones have type-C instead).
 
 This crate includes an example of identifying and communicating with
 a Plugable USB2-OTGE100 Ethernet adaptor based on the ASIX&nbsp;AX88772
-chip.
+chip. A more complete example driver, for USB mass-storage class devices,
+is in the cotton-usb-host-msc crate.
 
 Once your code has successfully created the `UsbBus` object and has
 called `UsbBus::device_events()`, it will receive `DeviceInfo` objects

@@ -21,13 +21,24 @@ pub use crate::host_controller::{
     TransferType, UsbError, UsbSpeed,
 };
 
+/// Basic information about a USB device, perhaps sufficient to select a driver
+///
+/// The `vid` and `pid` fields between them should uniquely identify a
+/// particular type of device, see USB 2.0 s9.6.1
+///
+/// Many classes of devices (e.g., hubs) can also be identified from
+/// this data, without the driver needing to be vendor-specific.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct DeviceInfo {
+    /// Vendor ID
     pub vid: u16,
+    /// Product ID
     pub pid: u16,
+    /// Class code (from device descriptor)
     pub class: u8,
+    /// Subclass code (from device descriptor)
     pub subclass: u8,
 }
 
@@ -39,6 +50,14 @@ struct UnaddressedDevice {
     packet_size_ep0: u8,
 }
 
+/// A USB device which is attached, and has an address, but isn't yet configured
+///
+/// The device is electrically connected, and has been given an address,
+/// but has not yet been configured (state "Address" in USB 2.0
+/// figure 9-1). Your code can read the device's descriptors to
+/// confirm its identity and figure out what to do with it, but
+/// must then call [`UsbBus::configure()`] before communicating
+/// with it "for real".
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(PartialEq, Eq)]
@@ -49,11 +68,18 @@ pub struct UnconfiguredDevice {
 }
 
 impl UnconfiguredDevice {
+    /// The USB address assigned to this device
+    ///
+    /// By the spec, must be in the range 1-127 (currently
+    /// cotton-usb-host only assigns addresses in the range 1-31).
     pub fn address(&self) -> u8 {
         self.usb_address
     }
 }
 
+/// A Bulk IN endpoint on a particular USB device
+///
+/// For use with [`UsbBus::bulk_in_transfer`].
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(PartialEq, Eq)]
@@ -64,6 +90,9 @@ pub struct BulkIn {
     data_toggle: Cell<bool>,
 }
 
+/// A Bulk OUT endpoint on a particular USB device
+///
+/// For use with [`UsbBus::bulk_out_transfer`].
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(PartialEq, Eq)]
@@ -74,6 +103,11 @@ pub struct BulkOut {
     data_toggle: Cell<bool>,
 }
 
+/// A USB device which is attached, addressed, configured, and ready to use
+///
+/// Ownership of the `UsbDevice` object implies ownership of the device; no
+/// duplicate `UsbDevice` will be issued unless the device disconnects and
+/// re-connects.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(PartialEq, Eq)]
@@ -86,18 +120,31 @@ pub struct UsbDevice {
 }
 
 impl UsbDevice {
+    /// USB address of the device
+    ///
+    /// By the standard, 1-127, though cotton-usb-host only hands out
+    /// addresses in the range 1-31.
     pub fn address(&self) -> u8 {
         self.usb_address
     }
 
+    /// Return a bitmap of available IN endpoints
     pub fn in_endpoints(&self) -> BitSet {
         BitSet(self.in_endpoints_bitmap as u32)
     }
 
+    /// Return a bitmap of available OUT endpoints
     pub fn out_endpoints(&self) -> BitSet {
         BitSet(self.out_endpoints_bitmap as u32)
     }
 
+    /// Open one of the IN endpoints for reading
+    ///
+    /// Doing so *consumes* the endpoint; it cannot be opened again
+    /// until the device is reset. This is necessary for
+    /// cotton-usb-host to keep track of the "data toggle", which is
+    /// reset only on "configuration events", not after each
+    /// transaction (see USB 2.0 s.8.5.2 final paragraphs).
     pub fn open_in_endpoint(&mut self, ep: u8) -> Result<BulkIn, UsbError> {
         if ep > 0 && ep < 16 && (self.in_endpoints_bitmap & (1 << ep)) != 0 {
             self.in_endpoints_bitmap &= !(1 << ep);
@@ -112,6 +159,13 @@ impl UsbDevice {
         }
     }
 
+    /// Open one of the OUT endpoints for reading
+    ///
+    /// Doing so *consumes* the endpoint; it cannot be opened again
+    /// until the device is reset. This is necessary for
+    /// cotton-usb-host to keep track of the "data toggle", which is
+    /// reset only on "configuration events", not after each
+    /// transaction (see USB 2.0 s.8.5.2 final paragraphs).
     pub fn open_out_endpoint(&mut self, ep: u8) -> Result<BulkOut, UsbError> {
         if ep > 0 && ep < 16 && (self.out_endpoints_bitmap & (1 << ep)) != 0 {
             self.out_endpoints_bitmap &= !(1 << ep);
@@ -127,9 +181,6 @@ impl UsbDevice {
     }
 }
 
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "std", derive(Debug))]
-#[derive(PartialEq, Eq)]
 /// A device-related event has occurred.
 ///
 /// This is the type of events returned from
@@ -139,6 +190,9 @@ impl UsbDevice {
 /// detect the presence of USB devices and start to communicate with
 /// them.
 ///
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(PartialEq, Eq)]
 pub enum DeviceEvent {
     /// A new device has been connected. It has been given an address,
     /// but has not yet been configured (state "Address" in USB 2.0
@@ -147,10 +201,14 @@ pub enum DeviceEvent {
     /// must then call [`UsbBus::configure()`] before communicating
     /// with it "for real".
     ///
-    /// The `UsbDevice` object encapsulates the newly-assigned USB device
-    /// address. Basic information about the device -- sufficient, perhaps, to
-    /// select an appropriate driver from those available -- is in the
-    /// supplied `DeviceInfo`.
+    /// The [`UnconfiguredDevice`] object encapsulates the
+    /// newly-assigned USB device and its address. Basic information
+    /// about the device -- sufficient, perhaps, to select an
+    /// appropriate driver from among those available -- is in the
+    /// supplied [`DeviceInfo`]. If further information is needed
+    /// before configuring, the device's configuration descriptors can
+    /// be fetched using [`UsbBus::get_basic_configuration()`] or
+    /// [`UsbBus::get_configuration()`].
     Connect(UnconfiguredDevice, DeviceInfo),
 
     /// A new hub has been connected and configured (when using
@@ -179,6 +237,10 @@ pub enum DeviceEvent {
     /// successfully responding to the mandatory enumeration commands.
     /// This usually indicates inadequate power supply, or perhaps
     /// damaged cabling.
+    ///
+    /// The first two tuple members are the USB address of the hub to which
+    /// the device failed to connect (0 if it failed directly attached to the
+    /// host), and the port number on that hub (1-based numbering).
     EnumerationError(u8, u8, UsbError),
 
     /// There is nothing currently to report. (This event is sometimes sent
@@ -349,7 +411,7 @@ impl<HC: HostController> UsbBus<HC> {
     /// ```no_run
     /// # use cotton_usb_host::host_controller::HostController;
     /// # use std::pin::{pin, Pin};
-    /// # use cotton_usb_host::usb_bus::{HubState, UsbBus};
+    /// # use cotton_usb_host::usb_bus::{HubState, UsbBus, DeviceEvent};
     /// # use futures::{future, Future, Stream, StreamExt};
     /// # fn delay_ms(_ms: usize) -> impl Future<Output = ()> {
     /// #  future::ready(())
@@ -360,7 +422,9 @@ impl<HC: HostController> UsbBus<HC> {
     /// let mut device_stream = pin!(bus.device_events(&hub_state, delay_ms));
     /// loop {
     ///     let event = device_stream.next().await;
-    ///     // ... process the event ...
+    ///     if let Some(DeviceEvent::Connect(device, info)) = event {
+    ///         // ... process the device ...
+    ///     }
     /// }
     /// # }
     /// ```
@@ -487,7 +551,7 @@ impl<HC: HostController> UsbBus<HC> {
     /// ```no_run
     /// # use cotton_usb_host::host_controller::HostController;
     /// # use std::pin::{pin, Pin};
-    /// # use cotton_usb_host::usb_bus::UsbBus;
+    /// # use cotton_usb_host::usb_bus::{UsbBus, DeviceEvent};
     /// # use futures::{future, Future, Stream, StreamExt};
     /// # fn delay_ms(_ms: usize) -> impl Future<Output = ()> {
     /// #  future::ready(())
@@ -497,7 +561,9 @@ impl<HC: HostController> UsbBus<HC> {
     /// let mut device_stream = pin!(bus.device_events_no_hubs(delay_ms));
     /// loop {
     ///     let event = device_stream.next().await;
-    ///     // ... process the event ...
+    ///     if let Some(DeviceEvent::Connect(device, info)) = event {
+    ///         // ... process the device ...
+    ///     }
     /// }
     /// # }
     /// ```
@@ -550,6 +616,10 @@ impl<HC: HostController> UsbBus<HC> {
         })
     }
 
+    /// Configures a device, moving it from "Address" to "Configured" state
+    ///
+    /// See USB 2.0 figure 9-1. "Configured" state is the useful one, where
+    /// you can start using its endpoints to do its actual job.
     pub async fn configure(
         &self,
         device: UnconfiguredDevice,
@@ -754,7 +824,7 @@ impl<HC: HostController> UsbBus<HC> {
         );
         async move {
             let pipe = pipe.await;
-            InterruptStream::<HC::InterruptPipe> { pipe }
+            InterruptStream::new(pipe)
         }
         .flatten_stream()
     }
