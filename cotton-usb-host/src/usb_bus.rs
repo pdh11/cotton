@@ -1098,7 +1098,13 @@ impl<HC: HostController> UsbBus<HC> {
     }
 }
 
-pub fn create_test_device(
+/// Create a [`UsbDevice`] object for testing purposes only
+///
+/// # Safety
+///
+/// The device is not valid (it has a bogus address) and will not do anything
+/// useful if passed to a non-mock [`UsbBus`].
+pub unsafe fn create_test_device(
     in_endpoints_bitmap: u16,
     out_endpoints_bitmap: u16,
 ) -> UsbDevice {
