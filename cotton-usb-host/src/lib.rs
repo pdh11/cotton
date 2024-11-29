@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-//#![warn(missing_docs)]
+#![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]

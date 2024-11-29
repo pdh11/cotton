@@ -13,12 +13,14 @@ use futures::Stream;
 use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
 
+/// Data shared between interrupt handler and thread-mode code
 pub struct UsbShared {
     device_waker: CriticalSectionWakerRegistration,
     pipe_wakers: [CriticalSectionWakerRegistration; 16],
 }
 
 impl UsbShared {
+    /// IRQ handler
     pub fn on_irq(&self) {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
@@ -67,6 +69,7 @@ impl UsbShared {
     const W: CriticalSectionWakerRegistration =
         CriticalSectionWakerRegistration::new();
 
+    /// Create a new `UsbShared` (nb, is const, unlike `default()`)
     pub const fn new() -> Self {
         Self {
             device_waker: CriticalSectionWakerRegistration::new(),
@@ -81,12 +84,14 @@ impl Default for UsbShared {
     }
 }
 
+/// Data that isn't shared with the IRQ handler, but must be 'static anyway
 pub struct UsbStatics {
     bulk_pipes: Pool,
     control_pipes: Pool,
 }
 
 impl UsbStatics {
+    /// Crate a new `UsbStatics` (nb, is const, unlike `default()`)
     pub const fn new() -> Self {
         Self {
             bulk_pipes: Pool::new(15),
@@ -101,6 +106,7 @@ impl Default for UsbStatics {
     }
 }
 
+/// Implementation of `HostController::DeviceDetect` for RP2040
 #[derive(Copy, Clone)]
 pub struct Rp2040DeviceDetect {
     waker: &'static CriticalSectionWakerRegistration,
@@ -108,7 +114,7 @@ pub struct Rp2040DeviceDetect {
 }
 
 impl Rp2040DeviceDetect {
-    pub fn new(waker: &'static CriticalSectionWakerRegistration) -> Self {
+    fn new(waker: &'static CriticalSectionWakerRegistration) -> Self {
         Self {
             waker,
             status: DeviceStatus::Absent,
@@ -157,12 +163,12 @@ impl Stream for Rp2040DeviceDetect {
     }
 }
 
-pub struct Rp2040ControlEndpoint<'a> {
+struct Rp2040ControlEndpoint<'a> {
     waker: &'a CriticalSectionWakerRegistration,
 }
 
 impl<'a> Rp2040ControlEndpoint<'a> {
-    pub fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
+    fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
         Self { waker }
     }
 }
@@ -280,6 +286,7 @@ impl Pipe {
     }
 }
 
+/// Implementation of `HostController::InterruptPipe` for RP2040
 pub struct Rp2040InterruptPipe {
     shared: &'static UsbShared,
     pipe: Pipe,
@@ -757,6 +764,7 @@ impl Depacketiser for OutDepacketiser {
     }
 }
 
+/// Implementation of HostController for RP2040
 pub struct Rp2040HostController {
     shared: &'static UsbShared,
     statics: &'static UsbStatics,
@@ -765,6 +773,13 @@ pub struct Rp2040HostController {
 }
 
 impl Rp2040HostController {
+    /// Create a new RP2040HostController
+    ///
+    /// You'll need a rp2040::UsbShared, a rp2040::UsbStatics, and the
+    /// register blocks from the PAC. (We only borrow the RESETS
+    /// block, but we take ownership of the USB-specific ones.)
+    ///
+    /// See rp2040-usb-otge100.rs for a complete working example.
     pub fn new(
         resets: &mut pac::RESETS,
         regs: pac::USBCTRL_REGS,

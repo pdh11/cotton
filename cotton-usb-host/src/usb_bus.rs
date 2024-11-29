@@ -247,13 +247,36 @@ pub enum DeviceEvent {
     None,
 }
 
+/// A simplified version of USB configuration descriptors
+///
+/// Suitable for simple devices. Can be obtained from [`UsbBus::get_basic_configuration()`].
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Default, PartialEq, Eq)]
 pub struct BasicConfiguration {
+    /// Number of available configurations
+    ///
+    /// If your device has more than one, `BasicConfiguration` is probably
+    /// too basic for it.
     pub num_configurations: u8,
+
+    /// A valid configuration value for [`UsbBus::configure()`]
+    ///
+    /// Usually `1` if `num_configurations` is also `1`.
     pub configuration_value: u8,
+
+    /// A bitmask of IN endpoints
+    ///
+    /// bit _N_ set => there is an IN endpoint numbered _N_
+    ///
+    /// (Zero is never a valid IN endpoint.)
     pub in_endpoints: u16,
+
+    /// A bitmask of OUT endpoints
+    ///
+    /// bit _N_ set => there is an OUT endpoint numbered _N_
+    ///
+    /// (Zero is never a valid IN endpoint.)
     pub out_endpoints: u16,
 }
 
@@ -304,6 +327,11 @@ impl DescriptorVisitor for SpecificConfiguration {
     }
 }
 
+/// Encapsulating the bus-wide USB hub state machine
+///
+/// This mostly exists to be passed-in to [`UsbBus::device_events()`]; it
+/// keeps hub-management data out of `struct UsbBus` for users who don't
+/// need hub support.
 pub struct HubState<HC: HostController> {
     topology: RefCell<Topology>,
     pipes: RefCell<[Option<HC::InterruptPipe>; 15]>,
@@ -738,6 +766,39 @@ impl<HC: HostController> UsbBus<HC> {
         })
     }
 
+    /// Perform a USB control-endpoint transaction, USB 2.0 section 5.5
+    ///
+    /// # Example
+    /// For instance, here is how to read the MAC address of an AX88772
+    /// USB-to-Ethernet adaptor:
+    ///
+    /// ```no_run
+    /// # use cotton_usb_host::host_controller::{UsbError, HostController, DataPhase};
+    /// # use cotton_usb_host::usb_bus::{UsbBus, UsbDevice, DeviceInfo};
+    /// # use cotton_usb_host::wire::{SetupPacket, DEVICE_TO_HOST, VENDOR_REQUEST};
+    /// # use futures::{Stream, StreamExt};
+    /// # async fn foo<HC: HostController>(bus: UsbBus<HC>, device: UsbDevice, info: DeviceInfo) {
+    /// let mut data = [0u8; 6];
+    /// let rc = bus.control_transfer(
+    ///         &device,
+    ///         SetupPacket {
+    ///             bmRequestType: DEVICE_TO_HOST | VENDOR_REQUEST,
+    ///             bRequest: 0x13,
+    ///             wValue: 0,
+    ///             wIndex: 0,
+    ///             wLength: 6,
+    ///         },
+    ///         DataPhase::In(&mut data),
+    ///     )
+    ///     .await;
+    /// # }
+    /// ```
+    ///
+    /// Here, the "Request Type" indicates a vendor-specific (AX88772-specific)
+    /// request, and the "0x13" is taken from the AX88772 datasheet and is the
+    /// code for "read MAC address". And a MAC address is 6 bytes long, as seen
+    /// in `wLength`.
+    ///
     pub async fn control_transfer(
         &self,
         device: &UsbDevice,
@@ -754,6 +815,13 @@ impl<HC: HostController> UsbBus<HC> {
             .await
     }
 
+    /// Clear a halt (stall) condition on an IN endpoint
+    ///
+    /// See USB 2.0 section 9.4.5 (sic) and 5.8.5, or see the
+    /// cotton-usb-host-msc crate for how to deal with a prolific user
+    /// of stall conditions.
+    ///
+    /// TODO: clear halts on OUT endpoints?
     pub async fn clear_halt(&self, ep: &BulkIn) -> Result<(), UsbError> {
         self.driver
             .control_transfer(
@@ -773,6 +841,17 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(())
     }
 
+    /// Perform a bulk IN transfer
+    ///
+    /// # Parameters
+    ///  - ep: The in endpoint to use (also includes the device address)
+    ///  - data: The buffer to receive the data (data.len() is used for the
+    ///    transaction size)
+    ///  - transfer_type: Whether this is a fixed-size or variable-size transfer,
+    ///    see USB 2.0 section 5.3.2. Basically this is, "should the host
+    ///    expect a zero-length packet if the transfer fits in an exact number
+    ///    of full-size packets?" The answer will be different for different
+    ///    higher-level protocols.
     pub fn bulk_in_transfer<'a>(
         &'a self,
         ep: &'a BulkIn,
@@ -789,6 +868,18 @@ impl<HC: HostController> UsbBus<HC> {
         )
     }
 
+    /// Perform a bulk OUT transfer
+    ///
+    /// # Parameters
+    ///  - ep: The out endpoint to use (also includes the device address)
+    ///  - data: The data to send (data.len() is used for the
+    ///    transaction size)
+    ///  - transfer_type: Whether this is a fixed-size or
+    ///    variable-size transfer, see USB 2.0 section 5.3.2. Basically
+    ///    this is, "should the host emit a zero-length packet if the
+    ///    transfer fits in an exact number of full-size packets?" The
+    ///    answer will be different for different higher-level
+    ///    protocols.
     pub fn bulk_out_transfer<'a>(
         &'a self,
         ep: &'a BulkOut,
@@ -805,18 +896,41 @@ impl<HC: HostController> UsbBus<HC> {
         )
     }
 
+    /// Open an interrupt endpoint for reading
+    ///
+    /// # Parameters
+    ///  - address: USB device address (1-127)
+    ///  - endpoint: endpoint number (1-15)
+    ///  - max_packet_size: maximum expected packet size, in bytes
+    ///  - interval_ms: polling interval, in milliseconds
     pub fn interrupt_endpoint_in(
         &self,
         address: u8,
         endpoint: u8,
         max_packet_size: u16,
-        interval: u8,
+        interval_ms: u8,
     ) -> impl Stream<Item = InterruptPacket> + '_ {
         self.driver
-            .alloc_interrupt_pipe(address, endpoint, max_packet_size, interval)
+            .alloc_interrupt_pipe(
+                address,
+                endpoint,
+                max_packet_size,
+                interval_ms,
+            )
             .flatten_stream()
     }
 
+    /// Fetch configuration descriptors and report them via a callback
+    ///
+    /// This call reads the whole configuration-descriptor sequence (USB 2.0
+    /// sections 9.4.3 and 9.6.3). These descriptors can be used to determine
+    /// which driver to use for a device (if it's not obvious from the simpler
+    /// [`UsbBus::get_basic_configuration()`] call).
+    ///
+    /// # Parameters
+    ///  - device: The device to read from
+    ///  - visitor: An implementation of [`DescriptorVisitor`] that receives
+    ///    callbacks with the descriptors
     pub async fn get_configuration(
         &self,
         device: &UnconfiguredDevice,
@@ -843,6 +957,11 @@ impl<HC: HostController> UsbBus<HC> {
         Ok(())
     }
 
+    /// Obtain simplified version of USB configuration descriptors
+    ///
+    /// This can be used to determine which driver to use for a device
+    /// -- at least, for simple devices; more complex ones might
+    /// require the use of [`UsbBus::get_configuration()`] instead.
     pub async fn get_basic_configuration(
         &self,
         device: &UnconfiguredDevice,
