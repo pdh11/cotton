@@ -1052,7 +1052,7 @@ impl<HC: HostController> UsbBus<HC> {
                             .borrow_mut()
                             .device_disconnect(packet.address, port);
 
-                        return Ok(DeviceEvent::Disconnect(BitSet(mask)));
+                        return Ok(DeviceEvent::Disconnect(mask));
                     }
 
                     // now connected

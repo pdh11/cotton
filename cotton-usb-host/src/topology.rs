@@ -1,3 +1,4 @@
+use crate::bitset::BitSet;
 #[cfg(feature = "std")]
 use std::fmt::{Debug, Error, Formatter};
 
@@ -162,9 +163,9 @@ impl Topology {
         &mut self,
         parent_hub: u8,
         parent_port: u8,
-    ) -> u32 {
+    ) -> BitSet {
         if parent_hub >= MAX_HUBS || parent_port >= MAX_PORTS {
-            return 0;
+            return BitSet::default();
         }
 
         let mut bitset = 0u32;
@@ -194,7 +195,7 @@ impl Topology {
                 break;
             }
         }
-        bitset
+        BitSet(bitset)
     }
 }
 
