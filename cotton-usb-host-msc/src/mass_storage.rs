@@ -23,17 +23,9 @@ impl<'a, HC: HostController> MassStorage<'a, HC> {
         bus: &'a UsbBus<HC>,
         mut device: UsbDevice,
     ) -> Result<Self, UsbError> {
-        let in_ep = device
-            .in_endpoints()
-            .iter()
-            .next()
-            .unwrap_or_default();
+        let in_ep = device.in_endpoints().iter().next().unwrap_or_default();
         let bulk_in = device.open_in_endpoint(in_ep)?;
-        let out_ep = device
-            .out_endpoints()
-            .iter()
-            .next()
-            .unwrap_or_default();
+        let out_ep = device.out_endpoints().iter().next().unwrap_or_default();
         let bulk_out = device.open_out_endpoint(out_ep)?;
         Ok(Self {
             bus,

@@ -1,8 +1,8 @@
 use crate::async_pool::Pool;
 use crate::debug;
 use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    TransferType, UsbError, UsbSpeed,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
+    UsbError, UsbSpeed,
 };
 use crate::wire::{Direction, EndpointType, SetupPacket};
 use core::cell::Cell;
@@ -267,12 +267,11 @@ struct Pipe {
 }
 
 impl Pipe {
-    fn new(pooled: crate::async_pool::Pooled<'static>,
-           offset: u8) -> Self {
+    fn new(pooled: crate::async_pool::Pooled<'static>, offset: u8) -> Self {
         let which = pooled.which() + offset;
         Self {
             _pooled: pooled,
-            which
+            which,
         }
     }
 
@@ -288,7 +287,7 @@ pub struct Rp2040InterruptPipe {
     data_toggle: Cell<bool>,
 }
 
-impl InterruptPipe for Rp2040InterruptPipe {
+impl Rp2040InterruptPipe {
     fn set_waker(&self, waker: &core::task::Waker) {
         self.shared.pipe_wakers[self.pipe.which() as usize].register(waker);
     }
@@ -299,8 +298,7 @@ impl InterruptPipe for Rp2040InterruptPipe {
         let which = self.pipe.which();
         let bc = dpram.ep_buffer_control((which * 2) as usize).read();
         if bc.full_0().bit() {
-            let addr_endp =
-                regs.host_addr_endp((which - 1) as usize).read();
+            let addr_endp = regs.host_addr_endp((which - 1) as usize).read();
             let mut result = InterruptPacket {
                 address: addr_endp.address().bits() as u8,
                 endpoint: addr_endp.endpoint().bits() as u8,
@@ -315,8 +313,9 @@ impl InterruptPipe for Rp2040InterruptPipe {
                 )
             };
             self.data_toggle.set(!self.data_toggle.get());
-            dpram.ep_buffer_control((which * 2) as usize).write(
-                |w| unsafe {
+            dpram
+                .ep_buffer_control((which * 2) as usize)
+                .write(|w| unsafe {
                     w.full_0()
                         .clear_bit()
                         .pid_0()
@@ -325,8 +324,7 @@ impl InterruptPipe for Rp2040InterruptPipe {
                         .bits(self.max_packet_size)
                         .last_0()
                         .set_bit()
-                },
-            );
+                });
 
             cortex_m::asm::delay(12);
 
@@ -337,39 +335,43 @@ impl InterruptPipe for Rp2040InterruptPipe {
                 "IE ready inte {:x} iec {:x} ecr {:x} epbc {:x}",
                 regs.inte().read().bits(),
                 regs.int_ep_ctrl().read().bits(),
-                dpram
-                    .ep_control((which * 2) as usize - 2)
-                    .read()
-                    .bits(),
-                dpram
-                    .ep_buffer_control((which * 2) as usize)
-                    .read()
-                    .bits(),
+                dpram.ep_control((which * 2) as usize - 2).read().bits(),
+                dpram.ep_buffer_control((which * 2) as usize).read().bits(),
             );
 
             Some(result)
         } else {
             regs.inte().modify(|_, w| w.buff_status().set_bit());
-            regs.int_ep_ctrl().modify(|r, w| unsafe {
-                w.bits(r.bits() | (1 << which))
-            });
+            regs.int_ep_ctrl()
+                .modify(|r, w| unsafe { w.bits(r.bits() | (1 << which)) });
             defmt::trace!(
                 "IE pending inte {:x} iec {:x} ecr {:x} epbc {:x}",
                 regs.inte().read().bits(),
                 regs.int_ep_ctrl().read().bits(),
-                dpram
-                    .ep_control((which * 2) as usize - 2)
-                    .read()
-                    .bits(),
-                dpram
-                    .ep_buffer_control((which * 2) as usize)
-                    .read()
-                    .bits(),
+                dpram.ep_control((which * 2) as usize - 2).read().bits(),
+                dpram.ep_buffer_control((which * 2) as usize).read().bits(),
             );
             regs.ep_status_stall_nak()
                 .write(|w| unsafe { w.bits(3 << (which * 2)) });
 
             None
+        }
+    }
+}
+
+impl Stream for Rp2040InterruptPipe {
+    type Item = InterruptPacket;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.set_waker(cx.waker());
+
+        if let Some(packet) = self.poll() {
+            Poll::Ready(Some(packet))
+        } else {
+            Poll::Pending
         }
     }
 }

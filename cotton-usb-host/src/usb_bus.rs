@@ -1,6 +1,5 @@
 use crate::bitset::BitSet;
 use crate::debug;
-use crate::interrupt::InterruptStream;
 use crate::topology::Topology;
 use crate::wire::{
     ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
@@ -17,8 +16,8 @@ use futures::future::FutureExt;
 use futures::{Future, Stream, StreamExt};
 
 pub use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    TransferType, UsbError, UsbSpeed,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
+    UsbError, UsbSpeed,
 };
 
 /// Basic information about a USB device, perhaps sufficient to select a driver
@@ -364,13 +363,10 @@ impl<HC: HostController> Stream for HubStateStream<'_, HC> {
         self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> Poll<Option<Self::Item>> {
-        for pipe in self.state.pipes.borrow().iter().flatten() {
-            pipe.set_waker(cx.waker());
-        }
-
-        for pipe in self.state.pipes.borrow().iter().flatten() {
-            if let Some(packet) = pipe.poll() {
-                return Poll::Ready(Some(packet));
+        for pipe in self.state.pipes.borrow_mut().iter_mut().flatten() {
+            let poll = pipe.poll_next_unpin(cx);
+            if poll.is_ready() {
+                return poll;
             }
         }
         Poll::Pending
@@ -816,17 +812,9 @@ impl<HC: HostController> UsbBus<HC> {
         max_packet_size: u16,
         interval: u8,
     ) -> impl Stream<Item = InterruptPacket> + '_ {
-        let pipe = self.driver.alloc_interrupt_pipe(
-            address,
-            endpoint,
-            max_packet_size,
-            interval,
-        );
-        async move {
-            let pipe = pipe.await;
-            InterruptStream::new(pipe)
-        }
-        .flatten_stream()
+        self.driver
+            .alloc_interrupt_pipe(address, endpoint, max_packet_size, interval)
+            .flatten_stream()
     }
 
     pub async fn get_configuration(

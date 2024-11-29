@@ -1,6 +1,6 @@
 use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    TransferType, UsbError,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
+    UsbError,
 };
 use crate::wire::SetupPacket;
 use futures::Future;
@@ -13,9 +13,13 @@ use std::task::{Context, Poll};
 mock! {
     pub InterruptPipe {}
 
-    impl InterruptPipe for InterruptPipe {
-        fn set_waker(&self, waker: &core::task::Waker);
-        fn poll(&self) -> Option<InterruptPacket>;
+    impl Stream for InterruptPipe {
+        type Item = InterruptPacket;
+
+        fn poll_next<'a>(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'a>
+        ) -> Poll<Option<<Self as Stream>::Item>>;
     }
 }
 

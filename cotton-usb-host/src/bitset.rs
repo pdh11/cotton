@@ -4,7 +4,7 @@
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct BitSet(
     /// A bitfield, with a 1 in bit N signifying that N is present in the BitSet
-    pub u32
+    pub u32,
 );
 
 impl BitSet {

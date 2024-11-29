@@ -22,9 +22,6 @@ pub mod host;
 /// Abstraction over host-controller drivers
 pub mod host_controller;
 
-/// Implementing Stream in terms of an interrupt IN endpoint
-pub mod interrupt;
-
 /// Encapsulating the layout of a USB bus
 pub mod topology;
 

@@ -183,23 +183,6 @@ impl Deref for InterruptPacket {
     }
 }
 
-/// Encapsulating a single interrupt-capable hardware pipe
-///
-/// A USB host controller is likely to have several (but a finite number) of
-/// these resources available; ownership of one of these objects implies
-/// ownership of that particular hardware resource.
-///
-/// This trait supports and encourages the implementation of asynchronous
-/// streaming interfaces for intterupt packet reception.
-pub trait InterruptPipe {
-    /// Set the Waker associated with this pipe; the Waker will be woken on
-    /// packet reception.
-    fn set_waker(&self, waker: &core::task::Waker);
-
-    /// Poll the interrupt pipe to see whether or not a packet has arrived
-    fn poll(&self) -> Option<InterruptPacket>;
-}
-
 /// Encapsulating a particular USB hardware host controller
 ///
 /// This trait can be implemented for different USB hardware (e.g.,
@@ -207,7 +190,7 @@ pub trait InterruptPipe {
 /// particularly [`UsbBus`](crate::usb_bus::UsbBus) -- to be hardware-agnostic.
 pub trait HostController {
     /// The concrete type returned by [`HostController::alloc_interrupt_pipe`]
-    type InterruptPipe: InterruptPipe;
+    type InterruptPipe: Stream<Item = InterruptPacket> + Unpin;
     /// The concrete type returned by [`HostController::device_detect`]
     type DeviceDetect: Stream<Item = DeviceStatus>;
 
