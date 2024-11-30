@@ -51,7 +51,7 @@ fn one_device_disconnect() {
     assert!(bus.is_present(31));
     assert!(!bus.is_present(30));
     let m = bus.device_disconnect(0, 1);
-    assert_eq!(m, 0x8000_0000);
+    assert_eq!(m.0, 0x8000_0000);
     let e = format!("{:?}", bus);
     assert_eq!(e, "0");
 }
@@ -67,7 +67,7 @@ fn child_device_disconnect() {
 
     // the child device disappears but the hub is still there
     let m = bus.device_disconnect(1, 2);
-    assert_eq!(m, 0x8000_0000);
+    assert_eq!(m.0, 0x8000_0000);
     let e = format!("{:?}", bus);
     assert_eq!(e, "0:(1)");
 }
@@ -82,7 +82,7 @@ fn child_device_root_disconnect() {
 
     // the hub disappears, so its child device does too
     let m = bus.device_disconnect(0, 1);
-    assert_eq!(m, 0x8000_0002);
+    assert_eq!(m.0, 0x8000_0002);
     let e = format!("{:?}", bus);
     assert_eq!(e, "0");
 }
@@ -140,5 +140,5 @@ fn ludicrous_input_rejected() {
     let mut bus = Topology::new();
 
     assert!(bus.device_connect(100, 100, true).is_none());
-    assert_eq!(bus.device_disconnect(100, 100), 0);
+    assert_eq!(bus.device_disconnect(100, 100).0, 0);
 }

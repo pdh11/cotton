@@ -63,10 +63,12 @@ pub struct SetupPacket {
     pub wLength: u16,
 }
 
+/// A device descriptor, see USB 2.0 section 9.6.1
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-8
+#[allow(missing_docs)]
 pub struct DeviceDescriptor {
     pub bLength: u8,
     pub bDescriptorType: u8,
@@ -85,11 +87,13 @@ pub struct DeviceDescriptor {
     pub bNumConfigurations: u8,
 }
 
+/// A configuration descriptor, see USB 2.0 section 9.6.3
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-10
+#[allow(missing_docs)]
 pub struct ConfigurationDescriptor {
     pub bLength: u8,
     pub bDescriptorType: u8,
@@ -106,11 +110,13 @@ unsafe impl bytemuck::Zeroable for ConfigurationDescriptor {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for ConfigurationDescriptor {}
 
+/// An interface descriptor, see USB 2.0 section 9.6.5
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-12
+#[allow(missing_docs)]
 pub struct InterfaceDescriptor {
     pub bLength: u8,
     pub bDescriptorType: u8,
@@ -128,11 +134,13 @@ unsafe impl bytemuck::Zeroable for InterfaceDescriptor {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for InterfaceDescriptor {}
 
+/// An endpoint descriptor, see USB 2.0 section 9.6.6
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 9-13
+#[allow(missing_docs)]
 pub struct EndpointDescriptor {
     pub bLength: u8,
     pub bDescriptorType: u8,
@@ -147,11 +155,13 @@ unsafe impl bytemuck::Zeroable for EndpointDescriptor {}
 // SAFETY: no padding, no disallowed bit patterns
 unsafe impl bytemuck::Pod for EndpointDescriptor {}
 
+/// A hub descriptor, see USB 2.0 section 11.23.2.1
 #[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone)]
 #[allow(non_snake_case)] // These names are from USB 2.0 table 11-13
+#[allow(missing_docs)]
 pub struct HubDescriptor {
     bDescLength: u8,
     bDescriptorType: u8,
@@ -169,43 +179,95 @@ unsafe impl bytemuck::Zeroable for HubDescriptor {}
 unsafe impl bytemuck::Pod for HubDescriptor {}
 
 // For request_type (USB 2.0 table 9-2)
+
+/// Control transfer: device-to-host
 pub const DEVICE_TO_HOST: u8 = 0x80;
+
+/// Control transfer: host-to-device
 pub const HOST_TO_DEVICE: u8 = 0;
+
+/// Control transfer: request defined by USB standard
 pub const STANDARD_REQUEST: u8 = 0;
+
+/// Control transfer: request defined by USB class definition
 pub const CLASS_REQUEST: u8 = 0x20;
+
+/// Control transfer: request is vendor-specific
 pub const VENDOR_REQUEST: u8 = 0x40;
+
+/// Control transfer: request targets entire device
 pub const RECIPIENT_DEVICE: u8 = 0;
+
+/// Control transfer: request targets a particular interface
 pub const RECIPIENT_INTERFACE: u8 = 1;
+
+/// Control transfer: request targets a particular endpoing
 pub const RECIPIENT_ENDPOINT: u8 = 2;
+
+/// Control transfer: request targets something else
 pub const RECIPIENT_OTHER: u8 = 3;
 
 // For request (USB 2.0 table 9-4)
+
+/// Request status (USB 2.0 section 9.4.5)
 pub const GET_STATUS: u8 = 0;
+
+/// Clear feature (USB 2.0 section 9.4.1)
 pub const CLEAR_FEATURE: u8 = 1;
+
+/// Set feature (USB 2.0 section 9.4.9)
 pub const SET_FEATURE: u8 = 3;
+
+/// Set address (USB 2.0 section 9.4.6)
 pub const SET_ADDRESS: u8 = 5;
+
+/// Get descriptor (USB 2.0 section 9.4.3)
 pub const GET_DESCRIPTOR: u8 = 6;
+
+/// Set descriptor (rarely used)
 pub const SET_DESCRIPTOR: u8 = 7;
+
+/// Set configuration (USB 2.0 section 9.4.7)
 pub const SET_CONFIGURATION: u8 = 9;
 
 // Descriptor types (USB 2.0 table 9-5)
+
+/// Device descriptor (USB 2.0 section 9.6.1)
 pub const DEVICE_DESCRIPTOR: u8 = 1;
+
+/// Configuration descriptor (USB 2.0 section 9.6.3)
 pub const CONFIGURATION_DESCRIPTOR: u8 = 2;
+
+/// String descriptor (USB 2.0 section 9.6.7)
 pub const STRING_DESCRIPTOR: u8 = 3;
+
+/// Interface descriptor (USB 2.0 section 9.6.5)
 pub const INTERFACE_DESCRIPTOR: u8 = 4;
+
+/// Endpoint descriptor (USB 2.0 section 9.6.6)
 pub const ENDPOINT_DESCRIPTOR: u8 = 5;
-pub const HUB_DESCRIPTOR: u8 = 0x29; // USB 2.0 table 11-13
+
+/// Hub descriptor (USB 2.0 section 11.23.3.1 and table 11-13)
+pub const HUB_DESCRIPTOR: u8 = 0x29;
 
 // Class codes (DeviceDescriptor.bDeviceClass)
+
+/// Class code for USB hubs (USB 2.0 section 11.23.1)
 pub const HUB_CLASSCODE: u8 = 9;
 
 // Values for SET_FEATURE for hubs (USB 2.0 table 11-17)
+
+/// Reset a port (USB 2.0 section 11.5.1.5)
 pub const PORT_RESET: u16 = 4;
+
+/// Power-on a port (USB 2.0 section 11.5.1.13)
 pub const PORT_POWER: u16 = 8;
 
+/// Endpoint type, see USB 2.0 sections 9.3.6 and 5.3.1
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum EndpointType {
     Control = 0,
     Isochronous = 1,
@@ -213,21 +275,35 @@ pub enum EndpointType {
     Interrupt = 3,
 }
 
+/// Direction of a USB transfer
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "std", derive(Debug))]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Direction {
+    /// IN transactions are device-to-host transfers
     In,
+    /// OUT transactions are host-to-device transfers
     Out,
 }
 
+/// Callbacks from [`parse_descriptors()`]
+///
+/// And hence from [`UsbBus::get_configuration()`](crate::usb_bus::UsbBus::get_configuration).
 pub trait DescriptorVisitor {
+    /// A configuration descriptor has been reported
     fn on_configuration(&mut self, _c: &ConfigurationDescriptor) {}
+
+    /// An interface descriptor has been reported
     fn on_interface(&mut self, _i: &InterfaceDescriptor) {}
+
+    /// An endpoint descriptor has been reported
     fn on_endpoint(&mut self, _e: &EndpointDescriptor) {}
+
+    /// Some other descriptor has been reported (perhaps a vendor-defined one)
     fn on_other(&mut self, _d: &[u8]) {}
 }
 
+/// [`A DescriptorVisitor`] that just logs the descriptors to the debug stream
 pub struct ShowDescriptors;
 
 impl DescriptorVisitor for ShowDescriptors {
@@ -253,6 +329,10 @@ impl DescriptorVisitor for ShowDescriptors {
     }
 }
 
+/// Parse a configuration-descriptor sequence
+///
+/// And make callbacks via the [`DescriptorVisitor`] for everything
+/// that's found.
 pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
     let mut index = 0;
 

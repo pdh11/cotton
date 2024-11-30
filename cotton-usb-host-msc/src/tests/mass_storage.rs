@@ -165,7 +165,8 @@ fn do_test<
 
     setup(&mut hc.inner);
     let bus = UsbBus::new(hc);
-    let device = create_test_device(2, 2);
+    // SAFETY: we don't use this with a non-mock bus
+    let device = unsafe { create_test_device(2, 2) };
 
     let f = Fixture {
         c: &mut c,
@@ -268,10 +269,12 @@ fn test_new_fails() {
     let hc = MockHostController::default();
     let bus = UsbBus::new(hc);
 
-    let device = create_test_device(2, 0); // no IN eps
+    // SAFETY: we don't use this with a non-mock bus
+    let device = unsafe { create_test_device(2, 0) }; // no IN eps
     assert!(MassStorage::new(&bus, device).is_err());
 
-    let device = create_test_device(0, 2); // no OUT eps
+    // SAFETY: we don't use this with a non-mock bus
+    let device = unsafe { create_test_device(0, 2) }; // no OUT eps
     assert!(MassStorage::new(&bus, device).is_err());
 }
 

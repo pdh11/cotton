@@ -872,9 +872,9 @@ fn interrupt_endpoint_in() {
         .returning(|_, _, _, _| {
             Box::pin(future::ready({
                 let mut ip = MockInterruptPipe::new();
-                ip.expect_set_waker().return_const(());
-                ip.expect_poll()
-                    .returning(|| Some(InterruptPacket::default()));
+                ip.expect_poll_next().returning(|_| {
+                    Poll::Ready(Some(InterruptPacket::default()))
+                });
                 ip
             }))
         });
@@ -2955,11 +2955,10 @@ fn device_events_hub_packet() {
         |f| {
             f.hub_state.pipes.borrow_mut()[0] = {
                 let mut ip = MockInterruptPipe::new();
-                ip.expect_set_waker().return_const(());
-                ip.expect_poll().returning(|| {
+                ip.expect_poll_next().returning(|_| {
                     let mut ip = InterruptPacket::new();
                     ip.size = 1;
-                    Some(ip)
+                    Poll::Ready(Some(ip))
                 });
                 Some(ip)
             };
@@ -2985,9 +2984,8 @@ fn device_events_hub_packet_fails() {
         |f| {
             f.hub_state.pipes.borrow_mut()[0] = {
                 let mut ip = MockInterruptPipe::new();
-                ip.expect_set_waker().return_const(());
-                ip.expect_poll().returning(|| {
-                    Some(InterruptPacket::new()) // 0-length packet
+                ip.expect_poll_next().returning(|_| {
+                    Poll::Ready(Some(InterruptPacket::new())) // 0-length packet
                 });
                 Some(ip)
             };
@@ -3024,13 +3022,12 @@ fn device_events_hub_packet_pends() {
         |f| {
             f.hub_state.pipes.borrow_mut()[0] = {
                 let mut mip = MockInterruptPipe::new();
-                mip.expect_set_waker().return_const(());
-                mip.expect_poll().returning(|| {
+                mip.expect_poll_next().returning(|_| {
                     let mut ip = InterruptPacket::new();
                     ip.size = 1;
                     ip.address = 5;
                     ip.data[0] = 2;
-                    Some(ip)
+                    Poll::Ready(Some(ip))
                 });
                 Some(mip)
             };
@@ -3159,8 +3156,7 @@ fn hub_state_passes_on_pend() {
         |f| {
             f.hub_state.pipes.borrow_mut()[0] = {
                 let mut ip = MockInterruptPipe::new();
-                ip.expect_set_waker().return_const(());
-                ip.expect_poll().returning(|| None);
+                ip.expect_poll_next().returning(|_| Poll::Pending);
                 Some(ip)
             };
             let stream = pin!(HubStateStream {

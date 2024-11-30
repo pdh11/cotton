@@ -1,8 +1,8 @@
 use crate::async_pool::Pool;
 use crate::debug;
 use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    TransferType, UsbError, UsbSpeed,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
+    UsbError, UsbSpeed,
 };
 use crate::wire::{Direction, EndpointType, SetupPacket};
 use core::cell::Cell;
@@ -13,12 +13,14 @@ use futures::Stream;
 use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
 
+/// Data shared between interrupt handler and thread-mode code
 pub struct UsbShared {
     device_waker: CriticalSectionWakerRegistration,
     pipe_wakers: [CriticalSectionWakerRegistration; 16],
 }
 
 impl UsbShared {
+    /// IRQ handler
     pub fn on_irq(&self) {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
@@ -67,6 +69,7 @@ impl UsbShared {
     const W: CriticalSectionWakerRegistration =
         CriticalSectionWakerRegistration::new();
 
+    /// Create a new `UsbShared` (nb, is const, unlike `default()`)
     pub const fn new() -> Self {
         Self {
             device_waker: CriticalSectionWakerRegistration::new(),
@@ -81,12 +84,14 @@ impl Default for UsbShared {
     }
 }
 
+/// Data that isn't shared with the IRQ handler, but must be 'static anyway
 pub struct UsbStatics {
     bulk_pipes: Pool,
     control_pipes: Pool,
 }
 
 impl UsbStatics {
+    /// Crate a new `UsbStatics` (nb, is const, unlike `default()`)
     pub const fn new() -> Self {
         Self {
             bulk_pipes: Pool::new(15),
@@ -101,6 +106,7 @@ impl Default for UsbStatics {
     }
 }
 
+/// Implementation of `HostController::DeviceDetect` for RP2040
 #[derive(Copy, Clone)]
 pub struct Rp2040DeviceDetect {
     waker: &'static CriticalSectionWakerRegistration,
@@ -108,7 +114,7 @@ pub struct Rp2040DeviceDetect {
 }
 
 impl Rp2040DeviceDetect {
-    pub fn new(waker: &'static CriticalSectionWakerRegistration) -> Self {
+    fn new(waker: &'static CriticalSectionWakerRegistration) -> Self {
         Self {
             waker,
             status: DeviceStatus::Absent,
@@ -157,12 +163,12 @@ impl Stream for Rp2040DeviceDetect {
     }
 }
 
-pub struct Rp2040ControlEndpoint<'a> {
+struct Rp2040ControlEndpoint<'a> {
     waker: &'a CriticalSectionWakerRegistration,
 }
 
 impl<'a> Rp2040ControlEndpoint<'a> {
-    pub fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
+    fn new(waker: &'a CriticalSectionWakerRegistration) -> Self {
         Self { waker }
     }
 }
@@ -260,8 +266,27 @@ impl Future for Rp2040BulkEndpoint<'_> {
 }
 */
 
-pub type Pipe = crate::async_pool::Pooled<'static>;
+struct Pipe {
+    /// "pooled" is never read, it's just here for its drop glue
+    _pooled: crate::async_pool::Pooled<'static>,
+    which: u8,
+}
 
+impl Pipe {
+    fn new(pooled: crate::async_pool::Pooled<'static>, offset: u8) -> Self {
+        let which = pooled.which() + offset;
+        Self {
+            _pooled: pooled,
+            which,
+        }
+    }
+
+    fn which(&self) -> u8 {
+        self.which
+    }
+}
+
+/// Implementation of `HostController::InterruptPipe` for RP2040
 pub struct Rp2040InterruptPipe {
     shared: &'static UsbShared,
     pipe: Pipe,
@@ -269,18 +294,18 @@ pub struct Rp2040InterruptPipe {
     data_toggle: Cell<bool>,
 }
 
-impl InterruptPipe for Rp2040InterruptPipe {
+impl Rp2040InterruptPipe {
     fn set_waker(&self, waker: &core::task::Waker) {
-        self.shared.pipe_wakers[self.pipe.n as usize].register(waker);
+        self.shared.pipe_wakers[self.pipe.which() as usize].register(waker);
     }
 
     fn poll(&self) -> Option<InterruptPacket> {
         let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
-        let bc = dpram.ep_buffer_control((self.pipe.n * 2) as usize).read();
+        let which = self.pipe.which();
+        let bc = dpram.ep_buffer_control((which * 2) as usize).read();
         if bc.full_0().bit() {
-            let addr_endp =
-                regs.host_addr_endp((self.pipe.n - 1) as usize).read();
+            let addr_endp = regs.host_addr_endp((which - 1) as usize).read();
             let mut result = InterruptPacket {
                 address: addr_endp.address().bits() as u8,
                 endpoint: addr_endp.endpoint().bits() as u8,
@@ -289,14 +314,15 @@ impl InterruptPipe for Rp2040InterruptPipe {
             };
             unsafe {
                 core::ptr::copy_nonoverlapping(
-                    (0x5010_0200 + (self.pipe.n as u32) * 128) as *const u8,
+                    (0x5010_0200 + (which as u32) * 128) as *const u8,
                     &mut result.data[0] as *mut u8,
                     result.size as usize,
                 )
             };
             self.data_toggle.set(!self.data_toggle.get());
-            dpram.ep_buffer_control((self.pipe.n * 2) as usize).write(
-                |w| unsafe {
+            dpram
+                .ep_buffer_control((which * 2) as usize)
+                .write(|w| unsafe {
                     w.full_0()
                         .clear_bit()
                         .pid_0()
@@ -305,51 +331,54 @@ impl InterruptPipe for Rp2040InterruptPipe {
                         .bits(self.max_packet_size)
                         .last_0()
                         .set_bit()
-                },
-            );
+                });
 
             cortex_m::asm::delay(12);
 
             dpram
-                .ep_buffer_control((self.pipe.n * 2) as usize)
+                .ep_buffer_control((which * 2) as usize)
                 .modify(|_, w| w.available_0().set_bit());
             defmt::println!(
                 "IE ready inte {:x} iec {:x} ecr {:x} epbc {:x}",
                 regs.inte().read().bits(),
                 regs.int_ep_ctrl().read().bits(),
-                dpram
-                    .ep_control((self.pipe.n * 2) as usize - 2)
-                    .read()
-                    .bits(),
-                dpram
-                    .ep_buffer_control((self.pipe.n * 2) as usize)
-                    .read()
-                    .bits(),
+                dpram.ep_control((which * 2) as usize - 2).read().bits(),
+                dpram.ep_buffer_control((which * 2) as usize).read().bits(),
             );
 
             Some(result)
         } else {
             regs.inte().modify(|_, w| w.buff_status().set_bit());
-            regs.int_ep_ctrl().modify(|r, w| unsafe {
-                w.bits(r.bits() | (1 << self.pipe.n))
-            });
+            regs.int_ep_ctrl()
+                .modify(|r, w| unsafe { w.bits(r.bits() | (1 << which)) });
             defmt::trace!(
                 "IE pending inte {:x} iec {:x} ecr {:x} epbc {:x}",
                 regs.inte().read().bits(),
                 regs.int_ep_ctrl().read().bits(),
-                dpram
-                    .ep_control((self.pipe.n * 2) as usize - 2)
-                    .read()
-                    .bits(),
-                dpram
-                    .ep_buffer_control((self.pipe.n * 2) as usize)
-                    .read()
-                    .bits(),
+                dpram.ep_control((which * 2) as usize - 2).read().bits(),
+                dpram.ep_buffer_control((which * 2) as usize).read().bits(),
             );
             regs.ep_status_stall_nak()
-                .write(|w| unsafe { w.bits(3 << (self.pipe.n * 2)) });
+                .write(|w| unsafe { w.bits(3 << (which * 2)) });
 
             None
+        }
+    }
+}
+
+impl Stream for Rp2040InterruptPipe {
+    type Item = InterruptPacket;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.set_waker(cx.waker());
+
+        if let Some(packet) = self.poll() {
+            Poll::Ready(Some(packet))
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -735,6 +764,7 @@ impl Depacketiser for OutDepacketiser {
     }
 }
 
+/// Implementation of HostController for RP2040
 pub struct Rp2040HostController {
     shared: &'static UsbShared,
     statics: &'static UsbStatics,
@@ -743,6 +773,13 @@ pub struct Rp2040HostController {
 }
 
 impl Rp2040HostController {
+    /// Create a new RP2040HostController
+    ///
+    /// You'll need a rp2040::UsbShared, a rp2040::UsbStatics, and the
+    /// register blocks from the PAC. (We only borrow the RESETS
+    /// block, but we take ownership of the USB-specific ones.)
+    ///
+    /// See rp2040-usb-otge100.rs for a complete working example.
     pub fn new(
         resets: &mut pac::RESETS,
         regs: pac::USBCTRL_REGS,
@@ -790,11 +827,17 @@ impl Rp2040HostController {
 
     async fn alloc_pipe(&self, endpoint_type: EndpointType) -> Pipe {
         if endpoint_type == EndpointType::Control {
-            self.statics.control_pipes.alloc().await
+            Pipe::new(self.statics.control_pipes.alloc().await, 0)
         } else {
-            let mut p = self.statics.bulk_pipes.alloc().await;
-            p.n += 1;
-            p
+            Pipe::new(self.statics.bulk_pipes.alloc().await, 1)
+        }
+    }
+
+    fn try_alloc_pipe(&self, endpoint_type: EndpointType) -> Option<Pipe> {
+        if endpoint_type == EndpointType::Control {
+            Some(Pipe::new(self.statics.control_pipes.try_alloc()?, 0))
+        } else {
+            Some(Pipe::new(self.statics.bulk_pipes.try_alloc()?, 1))
         }
     }
 
@@ -1201,7 +1244,7 @@ impl Rp2040HostController {
         max_packet_size: u16,
         interval_ms: u8,
     ) -> Rp2040InterruptPipe {
-        let n = pipe.n;
+        let n = pipe.which();
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
         regs.host_addr_endp((n - 1) as usize).write(|w| unsafe {
@@ -1534,9 +1577,8 @@ impl HostController for Rp2040HostController {
         max_packet_size: u16,
         interval_ms: u8,
     ) -> Rp2040InterruptPipe {
-        let mut pipe = self.statics.bulk_pipes.alloc().await;
-        pipe.n += 1;
-        debug::println!("interrupt_endpoint on pipe {}", pipe.n);
+        let pipe = self.alloc_pipe(EndpointType::Interrupt).await;
+        debug::println!("interrupt_endpoint on pipe {}", pipe.which());
         self.interrupt_pipe(
             pipe,
             address,
@@ -1553,9 +1595,8 @@ impl HostController for Rp2040HostController {
         max_packet_size: u16,
         interval_ms: u8,
     ) -> Result<Self::InterruptPipe, UsbError> {
-        if let Some(mut pipe) = self.statics.bulk_pipes.try_alloc() {
-            pipe.n += 1;
-            debug::println!("interrupt_endpoint on pipe {}", pipe.n);
+        if let Some(pipe) = self.try_alloc_pipe(EndpointType::Interrupt) {
+            debug::println!("interrupt_endpoint on pipe {}", pipe.which());
             Ok(self.interrupt_pipe(
                 pipe,
                 address,

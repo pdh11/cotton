@@ -1,6 +1,6 @@
 use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, InterruptPipe,
-    TransferType, UsbError,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
+    UsbError,
 };
 use crate::wire::SetupPacket;
 use futures::Future;
@@ -13,9 +13,13 @@ use std::task::{Context, Poll};
 mock! {
     pub InterruptPipe {}
 
-    impl InterruptPipe for InterruptPipe {
-        fn set_waker(&self, waker: &core::task::Waker);
-        fn poll(&self) -> Option<InterruptPacket>;
+    impl Stream for InterruptPipe {
+        type Item = InterruptPacket;
+
+        fn poll_next<'a>(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'a>
+        ) -> Poll<Option<<Self as Stream>::Item>>;
     }
 }
 
@@ -34,10 +38,13 @@ mock! {
 
 mock! {
     pub HostControllerInner {
+        #[allow(missing_docs)]
         pub fn device_detect(&self) -> MockDeviceDetect;
 
+        #[allow(missing_docs)]
         pub fn reset_root_port(&self, rst: bool);
 
+        #[allow(missing_docs)]
         pub fn control_transfer<'a>(
             &self,
             address: u8,
@@ -46,6 +53,7 @@ mock! {
             data_phase: DataPhase<'a>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
+        #[allow(missing_docs)]
         pub fn bulk_in_transfer(
             &self,
             address: u8,
@@ -56,6 +64,7 @@ mock! {
             data_toggle: &Cell<bool>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
+        #[allow(missing_docs)]
         pub fn bulk_out_transfer(
             &self,
             address: u8,
@@ -66,6 +75,7 @@ mock! {
             data_toggle: &Cell<bool>,
         ) -> impl core::future::Future<Output = Result<usize, UsbError>>;
 
+        #[allow(missing_docs)]
         pub fn alloc_interrupt_pipe(
             &self,
             address: u8,
@@ -74,6 +84,7 @@ mock! {
             interval_ms: u8,
         ) -> impl core::future::Future<Output = MockInterruptPipe>;
 
+        #[allow(missing_docs)]
         pub fn try_alloc_interrupt_pipe(
             &self,
             address: u8,
@@ -84,7 +95,16 @@ mock! {
     }
 }
 
+/// A mock HostController, for testing purposes
+///
+/// Because the lifetimes got icky, the actual Mockall mock is kept as an
+/// inner struct inside this one. So expectations should typically be set
+/// on `mock_controller.inner`, not `mock_controller` itself. All methods
+/// on MockHostController itself just forward straight to the inner struct.
 pub struct MockHostController {
+    /// Mock HostController, for testing purposes
+    ///
+    /// See src/tests/usb_bus.rs for widespread use of this facility.
     pub inner: MockHostControllerInner,
 }
 
