@@ -18,7 +18,7 @@ skip_feature_sets = [["rp2040"], ["defmt"]]
 
 [dependencies]
 futures = { version = "0.3", default-features = false }
-defmt = { version = "0.3.8", optional = true }
+defmt = { version = "0.3.10", optional = true }
 rp2040-pac = { version = "0.6", optional = true }
 cortex-m = { version = "0.7.7", optional = true }
 rtic-common = { version = "1", optional = true }        # For WakerRegistration

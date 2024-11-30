@@ -13,7 +13,7 @@ rust-version = "1.79"
 [dependencies]
 bytemuck = "1.9"
 futures = { version = "0.3", default-features = false }
-defmt = { version = "0.3.8", optional = true }
+defmt = { version = "0.3.10", optional = true }
 mockall = { version = "0.13", optional = true }
 
 [features]
