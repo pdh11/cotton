@@ -9,15 +9,14 @@ use rp_pico as _; // includes boot2
 mod app {
     use core::future::Future;
     use core::pin::pin;
+    use cotton_scsi::{
+        AsyncBlockDevice, PeripheralType, ScsiBlockDevice, ScsiDevice,
+    };
+    use cotton_usb_host::device::identify::IdentifyFromDescriptors;
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
-    use cotton_usb_host::host_controller::HostController;
-    use cotton_usb_host::usb_bus::{
-        DataPhase, DeviceEvent, DeviceInfo, HubState, UsbBus, UsbDevice,
-        UsbError,
-    };
-    use cotton_usb_host::wire::{
-        SetupPacket, DEVICE_TO_HOST, HOST_TO_DEVICE, VENDOR_REQUEST,
-    };
+    use cotton_usb_host::usb_bus::{DeviceEvent, HubState, UsbBus};
+    use cotton_usb_host::wire::ShowDescriptors;
+    use cotton_usb_host_msc::{IdentifyMassStorage, MassStorage};
     use futures_util::StreamExt;
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
@@ -118,116 +117,6 @@ mod app {
         )
     }
 
-    struct AX88772<'a, T: HostController> {
-        bus: &'a UsbBus<T>,
-        device: UsbDevice,
-    }
-
-    const MII_ADVERTISE: u8 = 4;
-    const MII_BMCR: u8 = 0;
-    const ADVERTISE_ALL: u16 = 0x1E1; // /usr/include/linux/mii.h
-    const BMCR_ANENABLE: u16 = 0x1000;
-    const BMCR_ANRESTART: u16 = 0x200;
-
-    impl<'a, T: HostController> AX88772<'a, T> {
-        pub fn new(bus: &'a UsbBus<T>, device: UsbDevice) -> Self {
-            Self { bus, device }
-        }
-
-        async fn vendor_command(
-            &self,
-            request: u8,
-            value: u16,
-            index: u16,
-            data: DataPhase<'_>,
-        ) -> Result<(), UsbError> {
-            let (request_type, length) = match data {
-                DataPhase::Out(bytes) => {
-                    (HOST_TO_DEVICE | VENDOR_REQUEST, bytes.len() as u16)
-                }
-                DataPhase::In(ref bytes) => {
-                    (DEVICE_TO_HOST | VENDOR_REQUEST, bytes.len() as u16)
-                }
-                DataPhase::None => (HOST_TO_DEVICE | VENDOR_REQUEST, 0),
-            };
-            self.bus
-                .control_transfer(
-                    &self.device,
-                    SetupPacket {
-                        bmRequestType: request_type,
-                        bRequest: request,
-                        wValue: value,
-                        wIndex: index,
-                        wLength: length,
-                    },
-                    data,
-                )
-                .await?;
-            Ok(())
-        }
-
-        async fn write_phy(
-            &self,
-            phy_id: u8,
-            reg: u8,
-            value: u16,
-        ) -> Result<(), UsbError> {
-            let data = value.to_le_bytes();
-
-            self.vendor_command(
-                0x8,
-                phy_id as u16,
-                reg as u16,
-                DataPhase::Out(&data),
-            )
-            .await?;
-            Ok(())
-        }
-
-        pub async fn init(&self) -> Result<(), UsbError> {
-            let mut data = [0u8; 6];
-            self.vendor_command(0x13, 0, 0, DataPhase::In(&mut data[0..6]))
-                .await?;
-
-            defmt::println!("AX88772 MAC {:x}", &data[0..6]);
-
-            self.vendor_command(0x19, 0, 0, DataPhase::In(&mut data[0..2]))
-                .await?;
-
-            defmt::println!("PHY id {:x} {:x}", data[0], data[1]);
-
-            // Select PHY
-            self.vendor_command(0x22, 1, 0, DataPhase::None).await?;
-
-            // Enable PHY
-            self.vendor_command(0x20, 0x28, 0, DataPhase::None).await?;
-
-            Mono::delay(150.millis()).await;
-
-            // Switch to SW PHY control
-            self.vendor_command(0x6, 0, 0, DataPhase::None).await?;
-
-            self.write_phy(0x10, MII_ADVERTISE, ADVERTISE_ALL).await?;
-            self.write_phy(0x10, MII_BMCR, BMCR_ANENABLE | BMCR_ANRESTART)
-                .await?;
-
-            // Switch back to HW PHY control
-            self.vendor_command(0xA, 0, 0, DataPhase::None).await?;
-
-            defmt::println!("AX88772 OK");
-
-            Ok(())
-        }
-    }
-
-    fn identify_ax88772(info: &DeviceInfo) -> Option<u8> {
-        if info.vid == 0x0B95 && info.pid == 0x7720 {
-            Some(1)
-        } else {
-            None
-        }
-    }
-
     fn rtic_delay(ms: usize) -> impl Future<Output = ()> {
         Mono::delay(<Mono as rtic_monotonics::Monotonic>::Duration::millis(
             ms as u64,
@@ -270,14 +159,84 @@ mod app {
             if let Some(DeviceEvent::Connect(device, info)) = device {
                 defmt::println!("Got device {:x} {:x}", device, info);
 
-                if let Some(cfg) = identify_ax88772(&info) {
+                let mut ims = IdentifyMassStorage::default();
+                let Ok(()) = stack.get_configuration(&device, &mut ims).await
+                else {
+                    continue;
+                };
+                if let Some(cfg) = ims.identify() {
+                    defmt::println!("Could be MSC");
                     let Ok(device) = stack.configure(device, cfg).await else {
                         continue;
                     };
-                    let otge = AX88772::new(&stack, device);
-                    if let Err(e) = otge.init().await {
-                        defmt::println!("error {}", e);
+                    let Ok(ms) = MassStorage::new(&stack, device) else {
+                        continue;
+                    };
+                    let mut device = ScsiDevice::new(ms);
+                    defmt::println!("Is MSC!");
+                    rtic_delay(1500).await;
+
+                    let Ok(info) = device.inquiry().await else {
+                        continue;
+                    };
+                    if info.peripheral_type != PeripheralType::Disk {
+                        continue;
                     }
+
+                    rtic_delay(1500).await;
+                    defmt::println!("Is MSC DASD");
+
+                    let Ok(()) = device.test_unit_ready().await else {
+                        defmt::println!("Unit NOT ready");
+                        continue;
+                    };
+
+                    //defmt::println!("{:?}", device.supported_vpd_pages().await);
+                    //defmt::println!("{:?}", device.block_limits_page().await);
+
+                    let mut abd = ScsiBlockDevice::new(device);
+
+                    //defmt::println!("{:?}", abd.query_commands().await);
+
+                    let device_info = match abd.device_info().await {
+                        Ok(info) => info,
+                        Err(e) => {
+                            defmt::println!("device_info: {:?}", e);
+                            continue;
+                        }
+                    };
+                    let capacity =
+                        device_info.blocks * (device_info.block_size as u64);
+                    defmt::println!(
+                        "{} blocks x {} bytes = {} B / {} KB / {} MB / {} GB",
+                        device_info.blocks,
+                        device_info.block_size,
+                        capacity,
+                        (capacity + (1 << 9)) >> 10,
+                        (capacity + (1 << 19)) >> 20,
+                        (capacity + (1 << 29)) >> 30
+                    );
+
+                    let mut buf = [0u8; 512];
+                    buf[42] = 43;
+
+                    let rc = abd.write_blocks(2, 1, &buf).await;
+                    defmt::println!("write16: {:?}", rc);
+
+                    buf[42] = 0;
+
+                    let rc = abd.read_blocks(2, 1, &mut buf).await;
+                    defmt::println!("read10: {:?}", rc);
+
+                    assert!(buf[42] == 43);
+
+                    rtic_delay(1500).await;
+                    defmt::println!("MSC OK");
+                } else if let Err(e) = stack
+                    .get_configuration(&device, &mut ShowDescriptors)
+                    .await
+                {
+                    defmt::println!("error {}", e);
                 }
             }
         }

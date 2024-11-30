@@ -17,6 +17,12 @@ test = false
 doctest = false
 harness = false
 
+[[bin]]
+name = "rp2040-usb-msc"
+test = false
+doctest = false
+harness = false
+
 [profile.dev]
 opt-level = "s"
 lto = true
