@@ -29,7 +29,7 @@ jobs:
     env:
       PROJECT_NAME_UNDERSCORE: cotton
       CARGO_INCREMENTAL: 0
-      RUSTFLAGS: -Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort
+      RUSTFLAGS: -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort
       RUSTDOCFLAGS: -Cpanic=abort
     runs-on: ubuntu-latest
     steps:
@@ -52,21 +52,16 @@ jobs:
             ~/.cargo/registry/cache
             target
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+      - name: Install Tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: grcov,cargo-llvm-cov
       - name: Generate test result and coverage report
         run: |
-          cargo install grcov;
-          cargo test $CARGO_OPTIONS;
-          zip -0 ccov.zip `find . \( -name "$PROJECT_NAME_UNDERSCORE*.gc*" \) -print`;
-          grcov ccov.zip -s . -t lcov --llvm --ignore-not-existing --ignore "/*" --ignore "tests/*" -o lcov.info;
-#      - name: Upload test results
-#        uses: EnricoMi/publish-unit-test-result-action@v1
-#        with:
-#          check_name: Test Results
-#          github_token: ${{ secrets.GITHUB_TOKEN }}
-#          files: results.xml
+          cargo llvm-cov --workspace --exclude systemtests --offline --all-targets --codecov --output-path ./codecov.json
       - name: Upload to CodeCov
         uses: codecov/codecov-action@v3
         with:
           # required for private repositories:
           # token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./lcov.info
+          files: ./codecov.json
