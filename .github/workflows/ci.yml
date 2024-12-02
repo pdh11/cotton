@@ -62,6 +62,7 @@ jobs:
       - name: Upload to CodeCov
         uses: codecov/codecov-action@v3
         with:
-          # required for private repositories:
-          # token: ${{ secrets.CODECOV_TOKEN }}
+          # required for ALL repositories nowadays:
+          # see https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./codecov.json
