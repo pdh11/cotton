@@ -17,6 +17,12 @@ So far:
    ongoing (asynchronous) comings and goings of network interfaces
    (e.g. on USB hotplug/unplug); so far, for Linux only.
 
+ - [cotton-scsi](https://crates.io/crates/cotton-scsi)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-scsi)](https://crates.io/crates/cotton-scsi)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-scsi)](https://crates.io/crates/cotton-scsi)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-scsi)](https://docs.rs/cotton-scsi/latest/cotton_scsi/): implementing SCSI direct-access storage
+   device commands in terms of an abstract SCSI transport.
+
  - [cotton-ssdp](https://crates.io/crates/cotton-ssdp)
    [![Crates.io](https://img.shields.io/crates/v/cotton-ssdp)](https://crates.io/crates/cotton-ssdp)
    [![Crates.io](https://img.shields.io/crates/d/cotton-ssdp)](https://crates.io/crates/cotton-ssdp)
@@ -31,6 +37,19 @@ So far:
    [![Crates.io](https://img.shields.io/crates/d/cotton-unique)](https://crates.io/crates/cotton-unique)
    [![docs.rs](https://img.shields.io/docsrs/cotton-unique)](https://docs.rs/cotton-unique/latest/cotton_unique/): creating deterministic but per-device unique
    identifiers such as MAC addresses.
+
+ - [cotton-usb-host](https://crates.io/crates/cotton-usb-host)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-usb-host)](https://crates.io/crates/cotton-usb-host)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-usb-host)](https://crates.io/crates/cotton-usb-host)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-usb-host)](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/): a no-std, no-alloc asynchronous
+   USB *host* stack, initially for RP2040.
+
+ - [cotton-usb-host-msc](https://crates.io/crates/cotton-usb-host-msc)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-usb-host-msc)](https://crates.io/crates/cotton-usb-host-msc)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-usb-host-msc)](https://crates.io/crates/cotton-usb-host-msc)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-usb-host-msc)](https://docs.rs/cotton-usb-host-msc/latest/cotton_usb-host-msc/): USB mass-storage support
+   for cotton-usb-host (i.e., supporting attaching USB mass-storage devices to
+   a microcontroller, to give the microcontroller extra storage space).
 
  - [cotton-w5500](https://crates.io/crates/cotton-w5500)
    [![Crates.io](https://img.shields.io/crates/v/cotton-w5500)](https://crates.io/crates/cotton-w5500)
@@ -84,6 +103,14 @@ itself will be useful to others:
     combining [Embassy](https://embassy.dev) +
     cotton-unique +
     cotton-ssdp; proof-of-concept, not very Embassy-idiomatic;
+
+  - [rp2040-usb-msc](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-msc.rs):
+   combining RTIC&nbsp;2 + cotton-usb-host + cotton-usb-host-msc;
+   **WARNING** this _writes_ to the USB drive, don't use one with data
+   on that you want to keep;
+
+  - [rp2040-usb-otge100](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-otge100.rs):
+    combining RTIC&nbsp;2 + cotton-usb-host;
 
   - [rp2040-w5500-hello](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/hello.rs):
     basic test that an attached W5500-Pico-EVB development board (or

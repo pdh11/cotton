@@ -19,6 +19,11 @@ This crate so far implements only those commands important for "direct
 storage access devices" (disks and flash-drives), but the mechanisms should
 be generic to all SCSI commands, such as for optical drives.
 
+Currently this crate only supports devices with a single LUN, a
+single "logical unit". This includes most flash drives and other USB
+storage, but does not include RAID or JBOD enclosures which contain
+_several_ disks.
+
 The most accessible reference for SCSI commands for disks (or other
 direct storage) is the "Seagate SCSI Commands Reference Manual" found
 at

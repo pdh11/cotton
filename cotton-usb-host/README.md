@@ -33,8 +33,13 @@ Currently supports:
 
 System-tests and examples:
 
- - rp2040-usb-otge100: identifying (not yet really "driving") a
-   Plugable USB2-OTGE100 Ethernet adaptor (based on ASIX AX88772)
+ - [rp2040-usb-msc](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-msc.rs):
+   identifying and driving mass-storage class devices (e.g., USB flash
+   drives); **WARNING** this _writes_ to the USB drive, don't use one with
+   data on that you want to keep;
+ - [rp2040-usb-otge100](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-otge100.rs):
+   identifying (not yet really "driving") a Plugable USB2-OTGE100
+   Ethernet adaptor (based on ASIX AX88772).
 
 Limitations:
 
@@ -78,7 +83,7 @@ _powered_ hub. (Powered hubs with micro-USB plugs, compatible with the
 Raspberry&nbsp;Pi Pico in host mode, are often sold as "[OTG
 hubs](https://www.amazon.co.uk/AuviPal-Adapter-Playstation-Classic-Raspberry-Black/dp/B083WML1XB/)".)
 
-The crate is split between a generic (hardware-agnostic) [`usb_bus::UsbBus`]
+The crate is split between a generic (hardware-agnostic) `usb_bus::UsbBus`
 class, and a host-controller driver specific to the RP2040. So the
 minimal code example would involve:
 
@@ -99,6 +104,11 @@ minimal code example would involve:
  - using APIs such as `UsbBus::control_transfer` to read descriptors,
    `UsbBus::configure` to configure the device appropriately, and
    `UsbBus::interrupt_endpoint` to read data from the device.
+
+A complete example for RP2040 is at
+   <https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-msc.rs>;
+   **WARNING** this _writes_ to the USB drive, don't use one with data
+   on that you want to keep.
 
 [^3]: The Raspberry&nbsp;Pi Pico (and the W5500-EVB-Pico for that
 matter) have USB Micro-B receptacles (sockets), capable of receiving

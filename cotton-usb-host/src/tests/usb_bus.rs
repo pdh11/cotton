@@ -821,23 +821,21 @@ fn set_address() {
 
 #[test]
 fn set_address_pends() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
-
-    let mut hc = MockHostController::default();
-    hc.inner
-        .expect_control_transfer()
-        .times(1)
-        .withf(is_set_address::<5>)
-        .returning(control_transfer_pending);
-
-    let bus = UsbBus::new(hc);
-
-    let mut r = pin!(bus.set_address(unaddressed_device(), 5));
-    let rr = r.as_mut().poll(&mut c);
-    assert!(rr.is_pending());
-    let rr = r.as_mut().poll(&mut c);
-    assert!(rr.is_pending());
+    do_test(
+        |hc| {
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_set_address::<5>)
+                .returning(control_transfer_pending);
+        },
+        |mut f| {
+            let mut fut = pin!(f.bus.set_address(unaddressed_device(), 5));
+            let poll = fut.as_mut().poll(&mut f.c);
+            assert!(poll.is_pending());
+            let poll = fut.as_mut().poll(&mut f.c);
+            assert!(poll.is_pending());
+        }
+    );
 }
 
 #[test]
