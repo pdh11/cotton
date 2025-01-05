@@ -92,8 +92,7 @@ mod app {
         };
         defmt::println!("Done link up");
 
-        let seed: u64 = u64::from(cortex_m::peripheral::SYST::get_current())
-            << 32
+        let seed = (u64::from(cortex_m::peripheral::SYST::get_current()) << 32)
             | u64::from(cortex_m::peripheral::SYST::get_current());
 
         let dhcp = DhcpClient::new(DHCP_SN, seed, mac, HOSTNAME);

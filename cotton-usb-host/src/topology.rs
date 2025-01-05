@@ -183,7 +183,7 @@ impl Topology {
                         self.parent[i as usize] = 0;
                     }
 
-                    if (bitset & 1 << hub) != 0 {
+                    if (bitset & (1 << hub)) != 0 {
                         bitset |= 1 << i;
                         self.parent[i as usize] = 0;
                     }
