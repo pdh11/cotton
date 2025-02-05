@@ -203,7 +203,7 @@ mod app {
                     &cotton_netif::InterfaceIndex(
                         core::num::NonZeroU32::new(1).unwrap(),
                     ),
-                    &no_std_net::IpAddr::V4(
+                    &core::net::IpAddr::V4(
                         GenericIpv4Address::from(ip).into(),
                     ),
                     &ws,

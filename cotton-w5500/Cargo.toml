@@ -15,10 +15,11 @@ all-features = true
 
 [dependencies]
 w5500 = "0.5"
-smoltcp = { version = "0.11", default-features = false, features = [
+smoltcp = { version = "0.12", default-features = false, features = [
   "medium-ethernet",
   "proto-ipv4",
   "socket-raw",
+  "multicast"
 ], optional = true }
 rp2040-hal = { version = "0.10", optional = true }
 # embedded-hal-bus 0.2 assumes compare_exchange, which Cortex-M0 doesn't have

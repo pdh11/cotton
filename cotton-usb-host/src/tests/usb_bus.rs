@@ -834,7 +834,7 @@ fn set_address_pends() {
             assert!(poll.is_pending());
             let poll = fut.as_mut().poll(&mut f.c);
             assert!(poll.is_pending());
-        }
+        },
     );
 }
 

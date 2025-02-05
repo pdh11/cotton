@@ -46,14 +46,15 @@ mio = { version = "1", default-features = false, features = [
   "os-poll",
   "net",
 ], optional = true }
-smoltcp = { version = "0.11", default-features = false, features = [
+smoltcp = { version = "0.12", default-features = false, features = [
   "medium-ethernet",
   "proto-ipv4",
+  "proto-ipv6",
   "socket-udp",
   "socket-tcp",
   "proto-dhcpv4",
   "socket-dhcpv4",
-  "proto-igmp",
+  "multicast"
 ], optional = true }
 
 [dev-dependencies]

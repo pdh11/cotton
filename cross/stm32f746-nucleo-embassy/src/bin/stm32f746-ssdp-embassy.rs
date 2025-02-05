@@ -22,7 +22,7 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, eth, peripherals, rng, Config};
 use embassy_time::WithTimeout;
 use linked_list_allocator::LockedHeap;
-use no_std_net::IpAddr;
+use core::net::IpAddr;
 use rand_core::RngCore;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
@@ -163,8 +163,8 @@ impl cotton_ssdp::udp::TargetedSend for WrappedSocket<'_, '_> {
     fn send_with<F>(
         &self,
         size: usize,
-        to: &no_std_net::SocketAddr,
-        _from: &no_std_net::IpAddr,
+        to: &core::net::SocketAddr,
+        _from: &core::net::IpAddr,
         f: F,
     ) -> Result<(), cotton_ssdp::udp::error::Error>
     where
@@ -310,7 +310,7 @@ async fn main(spawner: Spawner) -> ! {
                 &cotton_netif::InterfaceIndex(
                     core::num::NonZeroU32::new(1).unwrap(),
                 ),
-                &no_std_net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
+                &core::net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
                 &ws,
             );
         }

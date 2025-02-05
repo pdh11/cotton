@@ -74,8 +74,14 @@ pub mod device {
     }
 
     impl<Spi: w5500::bus::Bus> smoltcp::phy::Device for Device<Spi> {
-        type RxToken<'token> = EthRxToken<'token> where Self: 'token;
-        type TxToken<'token> = EthTxToken<'token, Spi> where Self: 'token;
+        type RxToken<'token>
+            = EthRxToken<'token>
+        where
+            Self: 'token;
+        type TxToken<'token>
+            = EthTxToken<'token, Spi>
+        where
+            Self: 'token;
 
         fn receive(
             &mut self,
@@ -123,7 +129,7 @@ pub mod device {
     impl smoltcp::phy::RxToken for EthRxToken<'_> {
         fn consume<R, F>(self, f: F) -> R
         where
-            F: FnOnce(&mut [u8]) -> R,
+            F: FnOnce(&[u8]) -> R,
         {
             f(&mut self.buffer.bytes[0..self.count])
         }

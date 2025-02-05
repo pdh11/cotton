@@ -46,7 +46,7 @@ cotton-ssdp = { path = "../../cotton-ssdp", default-features = false, features =
 ] }
 cotton-netif = { path = "../../cotton-netif", default-features = false }
 cotton-unique = { path = "../../cotton-unique", features = ["stm32"] }
-smoltcp = { version = "0.11", features = [
+smoltcp = { version = "0.12", features = [
   "medium-ethernet",
   "proto-ipv4",
   "socket-udp",
@@ -54,7 +54,6 @@ smoltcp = { version = "0.11", features = [
   "defmt",
   "proto-dhcpv4",
   "socket-dhcpv4",
-  "proto-igmp",
 ], default-features = false }
 stm32-eth = { version = "0.6", features = [
   "defmt",
