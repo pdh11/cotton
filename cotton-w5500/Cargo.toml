@@ -8,7 +8,7 @@ categories = ["network-programming", "embedded"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
-rust-version = "1.79"
+rust-version = "1.80"
 
 [package.metadata.docs.rs]
 all-features = true
