@@ -42,10 +42,7 @@ mod app {
     use crate::alloc::string::ToString;
     use crate::NetworkStorage;
     use cotton_ssdp::refresh_timer::SmoltcpTimebase;
-    use cotton_ssdp::udp::smoltcp::{
-        GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
-        WrappedInterface, WrappedSocket,
-    };
+    use cotton_ssdp::udp::smoltcp::{WrappedInterface, WrappedSocket};
     use cross_rp2040_w5500::smoltcp::Stack;
     use fugit::ExtU64;
     use rp2040_hal::gpio::bank0::Gpio21;
@@ -161,11 +158,7 @@ mod app {
         );
 
         {
-            let wi = WrappedInterface::new(
-                &mut stack.interface,
-                &mut device,
-                now_fn(),
-            );
+            let wi = WrappedInterface::new(&mut stack.interface);
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
 
@@ -234,7 +227,7 @@ mod app {
                 &cotton_netif::InterfaceIndex(
                     core::num::NonZeroU32::new(1).unwrap(),
                 ),
-                &core::net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
+                &core::net::IpAddr::V4(ip.into()),
                 &ws,
             );
 
@@ -248,8 +241,11 @@ mod app {
                 defmt::println!("{} from {}", slice.len(), sender.endpoint);
                 ssdp.on_data(
                     slice,
-                    GenericIpAddress::from(wasto).into(),
-                    GenericSocketAddr::from(sender.endpoint).into(),
+                    wasto.into(),
+                    core::net::SocketAddr::new(
+                        sender.endpoint.addr.into(),
+                        sender.endpoint.port,
+                    ),
                     now,
                 );
             }

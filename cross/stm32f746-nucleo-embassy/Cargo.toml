@@ -49,13 +49,13 @@ embassy-time = { version = "0.3.2", features = [
   "defmt-timestamp-uptime",
   "tick-hz-32_768",
 ] }
-embassy-net = { version = "0.4.0", features = [
+embassy-net = { version = "0.5.0", features = [
   "defmt",
   "tcp",
   "udp",
   "dhcpv4",
   "medium-ethernet",
-  "igmp",
+  "multicast"
 ] }
 embassy-futures = { version = "0.1.0" }
 
@@ -73,7 +73,6 @@ heapless = { version = "0.8", default-features = false }
 rand_core = "0.6.3"
 critical-section = "1.1"
 static_cell = "2"
-no-std-net = "0.6"
 linked_list_allocator = { version = "0.10", default-features = false, features = [
   "use_spin_nightly",
 ] }

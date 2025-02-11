@@ -20,10 +20,7 @@ mod app {
     use super::NetworkStorage;
     use crate::alloc::string::ToString;
     use cotton_ssdp::refresh_timer::SmoltcpTimebase;
-    use cotton_ssdp::udp::smoltcp::{
-        GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
-        WrappedInterface, WrappedSocket,
-    };
+    use cotton_ssdp::udp::smoltcp::{WrappedInterface, WrappedSocket};
     use cotton_stm32f746_nucleo::common;
     use fugit::ExtU64;
     use smoltcp::{iface::SocketHandle, socket::udp, wire};
@@ -134,12 +131,7 @@ mod app {
         );
 
         {
-            let mut device = &mut device.dma;
-            let wi = WrappedInterface::new(
-                &mut stack.interface,
-                &mut device,
-                now_fn(),
-            );
+            let wi = WrappedInterface::new(&mut stack.interface);
             let ws = WrappedSocket::new(&mut udp_socket);
             _ = ssdp.on_network_event(&ev, &wi, &ws);
             ssdp.subscribe(
@@ -209,7 +201,7 @@ mod app {
                 &cotton_netif::InterfaceIndex(
                     core::num::NonZeroU32::new(1).unwrap(),
                 ),
-                &core::net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
+                &ip.into(),
                 &ws,
             );
 
@@ -221,10 +213,14 @@ mod app {
             let wasto = wire::IpAddress::Ipv4(wasto);
             if let Ok((slice, sender)) = socket.recv() {
                 defmt::println!("{} from {}", slice.len(), sender.endpoint);
-                ssdp.on_data(slice,
-                             GenericIpAddress::from(wasto).into(),
-                             GenericSocketAddr::from(sender.endpoint).into(),
-                             now,
+                ssdp.on_data(
+                    slice,
+                    wasto.into(),
+                    core::net::SocketAddr::new(
+                        sender.endpoint.addr.into(),
+                        sender.endpoint.port,
+                    ),
+                    now,
                 );
             }
         }
