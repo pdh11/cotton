@@ -302,7 +302,7 @@ async fn main(spawner: Spawner) -> ! {
                 &cotton_netif::InterfaceIndex(
                     core::num::NonZeroU32::new(1).unwrap(),
                 ),
-                &core::net::IpAddr::V4(ip.into()),
+                &core::net::IpAddr::V4(ip),
                 &ws,
             );
         }
