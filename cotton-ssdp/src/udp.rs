@@ -1,5 +1,5 @@
+use core::net::{IpAddr, SocketAddr};
 use cotton_netif::InterfaceIndex;
-use no_std_net::{IpAddr, SocketAddr};
 
 /// An error type for UDP system-call errors
 pub mod error;
@@ -93,6 +93,7 @@ pub trait Multicast {
 
 /// Utilities common to all implementations using `std::net` underneath
 #[cfg(any(feature = "sync", feature = "async"))]
+#[cfg(feature = "std")]
 pub mod std;
 
 /// Trait implementations for MIO sockets

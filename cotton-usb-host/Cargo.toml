@@ -8,7 +8,7 @@ categories = []
 edition = "2021"
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 license = "CC0-1.0"
-rust-version = "1.79"
+rust-version = "1.80"
 
 [package.metadata.docs.rs]
 all-features = true

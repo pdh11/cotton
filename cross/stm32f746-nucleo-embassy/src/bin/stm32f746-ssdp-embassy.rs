@@ -6,14 +6,11 @@ extern crate alloc;
 use alloc::string::ToString;
 use core::ops::AddAssign;
 use cotton_netif::InterfaceIndex;
-use cotton_ssdp::udp::smoltcp::{
-    GenericIpAddress, GenericIpv4Address, GenericSocketAddr,
-};
 use defmt::{println, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::block_on;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_net::{Stack, StackResources};
+use embassy_net::{Stack, StackResources, Runner};
 use embassy_stm32::eth::generic_smi::GenericSMI;
 use embassy_stm32::eth::{Ethernet, PacketQueue};
 use embassy_stm32::peripherals::ETH;
@@ -22,7 +19,7 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, eth, peripherals, rng, Config};
 use embassy_time::WithTimeout;
 use linked_list_allocator::LockedHeap;
-use no_std_net::IpAddr;
+use core::net::IpAddr;
 use rand_core::RngCore;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
@@ -108,29 +105,25 @@ impl cotton_ssdp::refresh_timer::Timebase for EmbassyTimebase {
     type Instant = embassy_time::Instant;
 }
 
-struct WrappedStack<'a, D: embassy_net::driver::Driver> {
-    stack: &'a Stack<D>,
+struct WrappedStack<'a> {
+    stack: Stack<'a>,
 }
 
-impl<'a, D: embassy_net::driver::Driver> WrappedStack<'a, D> {
-    pub const fn new(stack: &'a Stack<D>) -> Self {
+impl<'a> WrappedStack<'a> {
+    pub const fn new(stack: Stack<'a>) -> WrappedStack<'a> {
         Self { stack }
     }
 }
 
-impl<D: embassy_net::driver::Driver> cotton_ssdp::udp::Multicast
-    for WrappedStack<'_, D>
-{
+impl cotton_ssdp::udp::Multicast for WrappedStack<'_> {
     fn join_multicast_group(
         &self,
         multicast_address: &IpAddr,
         _interface: InterfaceIndex,
     ) -> Result<(), cotton_ssdp::udp::error::Error> {
-        let ip: embassy_net::IpAddress =
-            GenericIpAddress::from(*multicast_address).into();
+        let ip: embassy_net::IpAddress = (*multicast_address).into();
 
-        // @todo This block_on isn't very idiomatic for Embassy
-        block_on(self.stack.join_multicast_group(ip))
+        self.stack.join_multicast_group(ip)
             .map(|_| ())
             .map_err(|e| {
                 cotton_ssdp::udp::error::Error::SmoltcpMulticast(
@@ -163,8 +156,8 @@ impl cotton_ssdp::udp::TargetedSend for WrappedSocket<'_, '_> {
     fn send_with<F>(
         &self,
         size: usize,
-        to: &no_std_net::SocketAddr,
-        _from: &no_std_net::IpAddr,
+        to: &core::net::SocketAddr,
+        _from: &core::net::IpAddr,
         f: F,
     ) -> Result<(), cotton_ssdp::udp::error::Error>
     where
@@ -179,7 +172,7 @@ impl cotton_ssdp::udp::TargetedSend for WrappedSocket<'_, '_> {
             return Err(cotton_ssdp::udp::error::Error::NotImplemented); // not quite right
         }
         let size = f(&mut buf);
-        let ep: embassy_net::IpEndpoint = GenericSocketAddr::from(*to).into();
+        let ep: embassy_net::IpEndpoint = (*to).into();
 
         // @todo This block_on isn't very idiomatic for Embassy
         block_on(self.socket.send_to(&buf[0..size], ep))
@@ -189,8 +182,8 @@ impl cotton_ssdp::udp::TargetedSend for WrappedSocket<'_, '_> {
 }
 
 #[embassy_executor::task]
-async fn net_task(stack: &'static Stack<Device>) -> ! {
-    stack.run().await
+async fn net_task(mut runner: Runner<'static, Device>) -> ! {
+    runner.run().await
 }
 
 #[embassy_executor::main]
@@ -252,17 +245,16 @@ async fn main(spawner: Spawner) -> ! {
     let config = embassy_net::Config::dhcpv4(Default::default());
 
     // Init network stack
-    static STACK: StaticCell<Stack<Device>> = StaticCell::new();
     static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
-    let stack = &*STACK.init(Stack::new(
+    let (stack, runner) = embassy_net::new(
         device,
         config,
         RESOURCES.init(StackResources::new()),
         seed,
-    ));
+    );
 
     // Launch network task
-    unwrap!(spawner.spawn(net_task(stack)));
+    unwrap!(spawner.spawn(net_task(runner)));
 
     // Ensure DHCP configuration is up before trying connect
     stack.wait_config_up().await;
@@ -310,7 +302,7 @@ async fn main(spawner: Spawner) -> ! {
                 &cotton_netif::InterfaceIndex(
                     core::num::NonZeroU32::new(1).unwrap(),
                 ),
-                &no_std_net::IpAddr::V4(GenericIpv4Address::from(ip).into()),
+                &core::net::IpAddr::V4(ip),
                 &ws,
             );
         }
@@ -346,11 +338,11 @@ async fn main(spawner: Spawner) -> ! {
             {
                 ssdp.on_data(
                     &buf[0..n],
-                    GenericIpAddress::from(embassy_net::IpAddress::Ipv4(
-                        wasto,
-                    ))
-                    .into(),
-                    GenericSocketAddr::from(wasfrom).into(),
+                    embassy_net::IpAddress::Ipv4(wasto).into(),
+                    core::net::SocketAddr::new(
+                        wasfrom.endpoint.addr.into(),
+                        wasfrom.endpoint.port,
+                    ),
                     now,
                 )
             }

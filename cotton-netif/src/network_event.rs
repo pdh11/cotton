@@ -54,7 +54,7 @@ impl BitOrAssign for Flags {
     }
 }
 
-use no_std_net::IpAddr as IpAddress;
+use core::net::IpAddr as IpAddress;
 
 /** Event when a new interface or address is detected, or when one disappears
  */

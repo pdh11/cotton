@@ -210,9 +210,8 @@ impl<'a> Stack<'a> {
         now: smoltcp::time::Instant,
         device: &mut D,
     ) -> Option<smoltcp::time::Duration> {
-        while self.interface.poll(now, device, &mut self.socket_set) {
-            self.poll_dhcp();
-        }
+        self.interface.poll(now, device, &mut self.socket_set);
+        self.poll_dhcp();
         self.interface.poll_delay(now, &self.socket_set)
     }
 

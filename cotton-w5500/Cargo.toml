@@ -8,17 +8,18 @@ categories = ["network-programming", "embedded"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 edition = "2021"
 license = "CC0-1.0"
-rust-version = "1.79"
+rust-version = "1.80"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
 w5500 = "0.5"
-smoltcp = { version = "0.11", default-features = false, features = [
+smoltcp = { version = "0.12", default-features = false, features = [
   "medium-ethernet",
   "proto-ipv4",
   "socket-raw",
+  "multicast"
 ], optional = true }
 rp2040-hal = { version = "0.10", optional = true }
 # embedded-hal-bus 0.2 assumes compare_exchange, which Cortex-M0 doesn't have

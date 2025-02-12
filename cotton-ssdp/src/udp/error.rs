@@ -165,12 +165,12 @@ mod tests {
     fn display_smoltcp_error() {
         let e = Error::SmoltcpMulticast(
             Syscall::JoinMulticast,
-            ::smoltcp::iface::MulticastError::Exhausted,
+            ::smoltcp::iface::MulticastError::GroupTableFull,
         );
         let m = format!("{e}");
         assert_eq!(
             m,
-            "error from smoltcp JoinMulticast: Exhausted".to_string()
+            "error from smoltcp JoinMulticast: GroupTableFull".to_string()
         );
     }
 
@@ -179,12 +179,12 @@ mod tests {
     fn debug_smoltcp_error() {
         let e = Error::SmoltcpMulticast(
             Syscall::JoinMulticast,
-            ::smoltcp::iface::MulticastError::Exhausted,
+            ::smoltcp::iface::MulticastError::Unaddressable,
         );
         let e = format!("{e:?}");
         assert_eq!(
             e,
-            "SmoltcpMulticast(JoinMulticast, Exhausted)".to_string()
+            "SmoltcpMulticast(JoinMulticast, Unaddressable)".to_string()
         );
     }
 

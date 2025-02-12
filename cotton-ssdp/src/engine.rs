@@ -6,8 +6,8 @@ use crate::{Advertisement, Notification};
 use alloc::collections::BTreeMap;
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, string::ToString, vec::Vec};
+use core::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use cotton_netif::{InterfaceIndex, NetworkEvent};
-use no_std_net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use slotmap::SlotMap;
 
 const MAX_PACKET_SIZE: usize = 512;
@@ -690,7 +690,7 @@ mod tests {
     use super::*;
     use crate::message::parse;
     use crate::refresh_timer::StdTimebase;
-    use no_std_net::{Ipv6Addr, SocketAddrV4};
+    use core::net::{Ipv6Addr, SocketAddrV4};
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 

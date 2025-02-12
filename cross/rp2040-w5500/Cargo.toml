@@ -77,7 +77,7 @@ fugit = "0.3"
 systick-monotonic = "1.0"
 
 w5500 = "0.5"
-smoltcp = { version = "0.11", features = [
+smoltcp = { version = "0.12", features = [
   "medium-ethernet",
   "proto-ipv4",
   "socket-udp",
@@ -85,9 +85,7 @@ smoltcp = { version = "0.11", features = [
   "defmt",
   "proto-dhcpv4",
   "socket-dhcpv4",
-  "proto-igmp",
 ], default-features = false }
 embedded-alloc = "0.5"
-no-std-net = { version = "0.6", default-features = false }
 uuid = { version = "1.8", default-features = false, features = ["v8"] }
 git-version = "0.3.9"

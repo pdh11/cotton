@@ -8,14 +8,13 @@ categories = ["network-programming"]
 edition = "2021"
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 license = "CC0-1.0"
-rust-version = "1.79"
+rust-version = "1.80"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
 cotton-netif = { path = "../cotton-netif", version = "0.0.6", default-features = false }
-no-std-net = { version = "0.6", default-features = false }
 tokio = { version = "1.24", default-features = false, features = [
   "macros",
   "net",
@@ -46,14 +45,15 @@ mio = { version = "1", default-features = false, features = [
   "os-poll",
   "net",
 ], optional = true }
-smoltcp = { version = "0.11", default-features = false, features = [
+smoltcp = { version = "0.12", default-features = false, features = [
   "medium-ethernet",
   "proto-ipv4",
+  "proto-ipv6",
   "socket-udp",
   "socket-tcp",
   "proto-dhcpv4",
   "socket-dhcpv4",
-  "proto-igmp",
+  "multicast"
 ], optional = true }
 
 [dev-dependencies]
@@ -63,7 +63,6 @@ serial_test = { version = "3" }
 default = ["std", "async", "sync", "smoltcp"]
 std = [
   "cotton-netif/sync",
-  "no-std-net/std",
   "dep:libc",
   "dep:nix",
   "dep:socket2",
