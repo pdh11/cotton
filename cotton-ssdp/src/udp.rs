@@ -104,8 +104,8 @@ pub mod mio;
 #[cfg(feature = "async")]
 pub mod tokio;
 
-pub mod smoltcp;
-
 /// Trait implementations for Smoltcp sockets
 #[cfg(feature = "smoltcp")]
+pub mod smoltcp;
+
 pub use error::{Error, Syscall};
