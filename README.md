@@ -141,4 +141,13 @@ My long-term goals for this project as a whole:
  - develop skills in Rust coding, including the packaging,
    distributing, and publicising of it, after a career spent with C++
 
+
+### MSRV policy
+
+Changes to the Minimum Supported Rust Version are breaking changes and get
+a new major version. This policy may change in future, but such a change would
+itself be a breaking change and get a new major version.
+
+### Licence
+
 Everything is licensed under Creative Commons CC0, qv.

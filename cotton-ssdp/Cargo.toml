@@ -1,6 +1,6 @@
 [package]
 name = "cotton-ssdp"
-version = "0.0.5"
+version = "0.1.0"
 description = "Implementing SSDP, the Simple Service Discovery Protocol"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
@@ -14,7 +14,7 @@ rust-version = "1.80"
 all-features = true
 
 [dependencies]
-cotton-netif = { path = "../cotton-netif", version = "0.0.6", default-features = false }
+cotton-netif = { path = "../cotton-netif", version = "0.1.0", default-features = false }
 tokio = { version = "1.24", default-features = false, features = [
   "macros",
   "net",

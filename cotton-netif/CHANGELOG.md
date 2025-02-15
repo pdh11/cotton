@@ -4,7 +4,12 @@
 
 ### Changed
 
-* Update MSRV from 1.75 to 1.79.
+## [0.1.0] 2025-02-15
+
+### Changed
+
+* Update MSRV from 1.75 to 1.80.
+* Use IP address types from core (removing no-std-net dependency) @tshakah
 
 ## [0.0.5] 2024-09-27
 
