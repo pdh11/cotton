@@ -163,7 +163,7 @@ pub(crate) fn send_from<T: AsRawFd>(
         // println!("sendmsg to {:?} OK", to);
         Ok(())
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "IPv6 NYI"))
+        Err(std::io::Error::other("IPv6 NYI"))
     }
 }
 
