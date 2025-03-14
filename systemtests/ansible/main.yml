@@ -117,9 +117,9 @@
   tasks:
 
   # The tests will need to control RPi GPIO pins: set up a group for this
-  - name: create gpio group
+  - name: create dialout group
     ansible.builtin.group:
-      name: 'gpio'
+      name: 'dialout'
       state: present
 
   # And a group for the laminar user
@@ -138,7 +138,7 @@
       password: '*'
       create_home: true
       group: 'laminar'
-      groups: ssh,gpio
+      groups: ssh,dialout
       shell: '/bin/bash'
 
   # Create the laminar user's .ssh directory
@@ -353,29 +353,8 @@
     apt:
       pkg:
       - wiringpi
-
-  # By default, only root can access GPIO pins, which is fair enough.
-  # But root can delegate individual pins to unprivileged processes by
-  # "exporting" them (making them visible in /sys/class/gpio) and then
-  # changing their permissions. This needs to happen afresh on each
-  # boot, so we make a script and run it from cron using cron's
-  # "@reboot" feature.
-  - name: create gpio init script
-    copy:
-      dest: /usr/local/bin/init-gpios
-      mode: 0755
-      content: |
-        #!/bin/bash
-        gpio export 13 out
-        chgrp gpio /sys/class/gpio/gpio13/*
-        chmod g+w /sys/class/gpio/gpio13/value
-
-  # Set up cron to run our GPIO setup script during every boot
-  - name: init gpios on startup
-    cron:
-      name: init-gpios
-      special_time: reboot
-      job: /usr/local/bin/init-gpios
+      - gpiod
+      - rpi.gpio-common
 
   # Set up environment variables used by the system tests
   #
@@ -406,7 +385,7 @@
       mode: 0755
       content: |
         #!/bin/bash -x
-        echo 1 > /sys/class/gpio/gpio13/value
+        gpioset gpiochip0 13=1
         echo "1-1.5" > /sys/bus/usb/drivers/usb/unbind
         echo "1-1.5" > /sys/bus/usb/drivers/usb/bind
         sleep 1
@@ -426,4 +405,4 @@
         echo "1-1.5.2" > /sys/bus/usb/drivers/usb/unbind
         uhubctl -l 1-1.5 -a off -p 1
         uhubctl -l 1-1.5 -a off -p 2
-        echo 0 > /sys/class/gpio/gpio13/value
+        gpioset gpiochip0 13=0
