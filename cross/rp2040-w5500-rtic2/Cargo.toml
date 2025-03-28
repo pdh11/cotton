@@ -57,9 +57,6 @@ defmt = "0.3.10"
 defmt-rtt = "0.4.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"] }
 rp-pico = "0.9"
-w5500-dhcp = { git = "https://github.com/newAM/w5500-rs", rev = "5384cec", version = "0.6", default-features = false, features = [
-  "defmt",
-] }
 rp2040-flash = "0.5"
 rp2040-hal = { version = "0.10", features = ["rt", "critical-section-impl"] }
 critical-section = "1.1"
