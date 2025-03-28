@@ -63,20 +63,12 @@ w5500-dhcp = { git = "https://github.com/newAM/w5500-rs", rev = "5384cec", versi
 rp2040-flash = "0.5"
 rp2040-hal = { version = "0.10", features = ["rt", "critical-section-impl"] }
 critical-section = "1.1"
-
-# We need one AFTER they moved embedded-hal to 1, but BEFORE they
-# moved MSRV to 1.77 (by using ip_in_core)
-w5500-ll = { git = "https://github.com/newAM/w5500-rs", rev = "5384cec", features = [
-  "eh1",
-] }
 embedded-hal = "1"
 embedded-hal-nb = "1"
-# embedded-hal-bus 0.2 assumes compare_exchange, which Cortex-M0 doesn't have
-embedded-hal-bus = "0.1"
 fugit = "0.3"
 systick-monotonic = "1.0"
 
-w5500 = "0.5"
+w5500 = "0.6"
 smoltcp = { version = "0.12", features = [
   "medium-ethernet",
   "proto-ipv4",
