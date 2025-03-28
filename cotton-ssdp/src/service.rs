@@ -187,7 +187,7 @@ impl Service {
             mio::net::UdpSocket::from_std(socket(1900u16)?);
         let mut search_socket = mio::net::UdpSocket::from_std(socket(0u16)?); // ephemeral port
         let mut engine = Engine::<SyncCallback, StdTimebase>::new(
-            rand::thread_rng().next_u32(),
+            rand::rng().next_u32(),
             Instant::now(),
         );
 

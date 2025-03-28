@@ -93,7 +93,7 @@ impl AsyncService {
 
     fn new_inner(create: InnerNewFn) -> Result<Self, std::io::Error> {
         let inner = Arc::new(create(Engine::new(
-            rand::thread_rng().next_u32(),
+            rand::rng().next_u32(),
             Instant::now(),
         ))?);
         let inner2 = inner.clone();
