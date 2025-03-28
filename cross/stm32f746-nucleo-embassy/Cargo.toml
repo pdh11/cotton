@@ -66,7 +66,7 @@ cortex-m = { version = "0.7.6", features = [
   "critical-section-single-core",
 ] }
 cortex-m-rt = "0.7.0"
-embedded-hal = "0.2.6"
+embedded-hal = "1"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 heapless = { version = "0.8", default-features = false }
 rand_core = "0.6.3"
