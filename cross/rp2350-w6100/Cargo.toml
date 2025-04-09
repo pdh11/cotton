@@ -1,0 +1,17 @@
+[package]
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+name = "cross-rp2350-w6100"
+publish = false
+edition = "2021"
+version = "0.1.0"
+autotests = false
+
+[dependencies]
+cortex-m = "0.7.2"
+cortex-m-rt = "0.7"
+critical-section = "1.2"
+defmt = "1"
+defmt-rtt = "1"
+rp235x-hal = {version = "0.3.0", features = ["critical-section-impl", "rt", "defmt"]}
+git-version = "0.3.9"
+panic-probe = { version = "1", features = ["print-defmt"] }

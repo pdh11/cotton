@@ -16,7 +16,7 @@ autotests = false
 # tons of devboards. We don't even want it to require a cross-compiler
 # (feature="arm").
 [package.metadata.cargo-all-features]
-skip_feature_sets = [["arm"], ["rp2040-w5500"], ["stm32f746-nucleo"]]
+skip_feature_sets = [["arm"], ["rp2040-w5500"], ["rp2350-w6100"], ["stm32f746-nucleo"]]
 
 [dev-dependencies]
 cotton-ssdp = { path = "../cotton-ssdp" }
@@ -30,6 +30,7 @@ uuid = { version = "1.8", default-features = false, features = ["v4"] }
 arm = []
 stm32f746-nucleo = ["arm"]
 rp2040-w5500 = ["arm"]
+rp2350-w6100 = ["arm"]
 
 [[test]]
 name = "device"
