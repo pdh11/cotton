@@ -936,9 +936,12 @@ impl<HC: HostController> UsbBus<HC> {
         device: &UnconfiguredDevice,
         visitor: &mut impl DescriptorVisitor,
     ) -> Result<(), UsbError> {
-        // TODO: descriptor suites >64 byte (Ella!)
-        let mut buf = [0u8; 64];
-        let sz = self
+        // Handle descriptor suites > 64 byte
+        // 1. Read the first 9 bytes (configuration descriptor)
+        // 2. If necessary, read the whole descriptor suite,
+        //    using the length from the configuration descriptor
+        let mut buf = [0u8; 256];
+        let mut sz = self
             .driver
             .control_transfer(
                 device.address(),
@@ -948,11 +951,36 @@ impl<HC: HostController> UsbBus<HC> {
                     bRequest: GET_DESCRIPTOR,
                     wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
                     wIndex: 0,
-                    wLength: 64,
+                    wLength: 9,
                 },
                 DataPhase::In(&mut buf),
             )
             .await?;
+
+        let total_length = buf[2] as usize | ((buf[3] as usize) << 8);
+
+        if total_length > 9 {
+            if total_length <= buf.len() {
+                sz = self
+                    .driver
+                    .control_transfer(
+                        device.address(),
+                        device.packet_size_ep0,
+                        SetupPacket {
+                            bmRequestType: DEVICE_TO_HOST,
+                            bRequest: GET_DESCRIPTOR,
+                            wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
+                            wIndex: 0,
+                            wLength: total_length as u16,
+                        },
+                        DataPhase::In(&mut buf),
+                    )
+                    .await?;
+            } else {
+                return Err(UsbError::ProtocolError);
+            }
+        }
+
         crate::wire::parse_descriptors(&buf[0..sz], visitor);
         Ok(())
     }
