@@ -34,7 +34,7 @@ impl UsbShared {
             let bs = regs.buff_status().read().bits();
             for i in 0..15 {
                 if (bs & (3 << (i * 2))) != 0 {
-                    defmt::info!("IRQ wakes {}", i);
+                    defmt::trace!("IRQ wakes {}", i);
                     self.pipe_wakers[i].wake();
                 }
             }
@@ -141,7 +141,7 @@ impl Stream for Rp2040DeviceDetect {
         };
 
         if device_status != self.status {
-            defmt::println!(
+            defmt::trace!(
                 "DE ready {:x} {}->{}",
                 status.bits(),
                 self.status,
@@ -185,7 +185,7 @@ impl Future for Rp2040ControlEndpoint<'_> {
         let intr = regs.intr().read();
         let bcsh = regs.buff_cpu_should_handle().read();
         if (intr.bits() & 0x458) != 0 {
-            defmt::info!(
+            defmt::trace!(
                 "CE ready {:x} {:x} {:x}",
                 status.bits(),
                 intr.bits(),
@@ -338,7 +338,7 @@ impl Rp2040InterruptPipe {
             dpram
                 .ep_buffer_control((which * 2) as usize)
                 .modify(|_, w| w.available_0().set_bit());
-            defmt::println!(
+            defmt::trace!(
                 "IE ready inte {:x} iec {:x} ecr {:x} epbc {:x}",
                 regs.inte().read().bits(),
                 regs.int_ep_ctrl().read().bits(),
@@ -1113,30 +1113,30 @@ impl Rp2040HostController {
             );
             */
             if status.data_seq_error().bit() {
-                defmt::println!("DataSeqError");
+                defmt::trace!("DataSeqError");
                 return Err(UsbError::DataSeqError);
             }
             if status.stall_rec().bit() {
-                defmt::println!("Stall");
+                defmt::trace!("Stall");
                 return Err(UsbError::Stall);
             }
             // if status.nak_rec().bit() {
             //     return Err(UsbError::Nak);
             // }
             if status.rx_overflow().bit() {
-                defmt::println!("Overflow");
+                defmt::trace!("Overflow");
                 return Err(UsbError::Overflow);
             }
             if status.rx_timeout().bit() {
-                defmt::println!("Timeout");
+                defmt::trace!("Timeout");
                 return Err(UsbError::Timeout);
             }
             if status.bit_stuff_error().bit() {
-                defmt::println!("BitStuff");
+                defmt::trace!("BitStuff");
                 return Err(UsbError::BitStuffError);
             }
             if status.crc_error().bit() {
-                defmt::println!("CRCError");
+                defmt::trace!("CRCError");
                 return Err(UsbError::CrcError);
             }
 
