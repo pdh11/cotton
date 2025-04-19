@@ -337,7 +337,7 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
     let mut index = 0;
 
     while buf.len() > index + 2 {
-        let dlen = buf[index] as usize;
+        let mut dlen = buf[index] as usize;
         let dtype = buf[index + 1];
 
         if dlen < 2 || buf.len() < index + dlen {
@@ -346,6 +346,8 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
 
         match dtype {
             CONFIGURATION_DESCRIPTOR => {
+                dlen = Ord::min(dlen, size_of::<ConfigurationDescriptor>());
+
                 if let Ok(c) =
                     bytemuck::try_from_bytes(&buf[index..index + dlen])
                 {
@@ -353,6 +355,8 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
                 }
             }
             INTERFACE_DESCRIPTOR => {
+                dlen = Ord::min(dlen, size_of::<InterfaceDescriptor>());
+
                 if let Ok(i) =
                     bytemuck::try_from_bytes(&buf[index..index + dlen])
                 {
@@ -360,13 +364,17 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
                 }
             }
             ENDPOINT_DESCRIPTOR => {
+                dlen = Ord::min(dlen, size_of::<EndpointDescriptor>());
+
                 if let Ok(e) =
                     bytemuck::try_from_bytes(&buf[index..index + dlen])
                 {
                     v.on_endpoint(e);
                 }
             }
-            _ => v.on_other(&buf[index..(index + dlen)]),
+            _ => {
+                v.on_other(&buf[index..(index + dlen)]);
+            }
         }
 
         index += dlen;

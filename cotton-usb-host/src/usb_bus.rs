@@ -936,9 +936,14 @@ impl<HC: HostController> UsbBus<HC> {
         device: &UnconfiguredDevice,
         visitor: &mut impl DescriptorVisitor,
     ) -> Result<(), UsbError> {
-        // TODO: descriptor suites >64 byte (Ella!)
-        let mut buf = [0u8; 64];
-        let sz = self
+        // Handle descriptor suites > 64 byte
+        //   256 is arbitrary, but should be enough for most devices
+        //   TinyUSB uses 256 - https://github.com/hathach/tinyusb/blob/5572168994a29266df6cbf12b46919498d3ece66/examples/host/hid_controller/src/tusb_config.h#L103
+        // 1. Read the first 9 bytes (configuration descriptor)
+        // 2. If necessary, read the whole descriptor suite,
+        //    using the length from the configuration descriptor
+        let mut buf = [0u8; 256];
+        let mut sz = self
             .driver
             .control_transfer(
                 device.address(),
@@ -948,11 +953,36 @@ impl<HC: HostController> UsbBus<HC> {
                     bRequest: GET_DESCRIPTOR,
                     wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
                     wIndex: 0,
-                    wLength: 64,
+                    wLength: 9,
                 },
                 DataPhase::In(&mut buf),
             )
             .await?;
+
+        let total_length = buf[2] as usize | ((buf[3] as usize) << 8);
+
+        if total_length > 9 {
+            if total_length <= buf.len() {
+                sz = self
+                    .driver
+                    .control_transfer(
+                        device.address(),
+                        device.packet_size_ep0,
+                        SetupPacket {
+                            bmRequestType: DEVICE_TO_HOST,
+                            bRequest: GET_DESCRIPTOR,
+                            wValue: ((CONFIGURATION_DESCRIPTOR as u16) << 8),
+                            wIndex: 0,
+                            wLength: total_length as u16,
+                        },
+                        DataPhase::In(&mut buf),
+                    )
+                    .await?;
+            } else {
+                return Err(UsbError::ProtocolError);
+            }
+        }
+
         crate::wire::parse_descriptors(&buf[0..sz], visitor);
         Ok(())
     }

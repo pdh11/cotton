@@ -57,6 +57,12 @@ const ELLA: &[u8] = &[
     5, 9, 13, 64, 2, 4, 8, 37, 1, 0, 0, 1, 0, 0, 9, 4, 4, 0, 0, 1, 2, 32, 5,
 ];
 
+fn example_config_descriptor_only(buf: &mut [u8]) -> usize {
+  example_config_descriptor(buf);
+
+  9
+}
+  
 fn example_config_descriptor(buf: &mut [u8]) -> usize {
     let total_length = (core::mem::size_of::<ConfigurationDescriptor>()
         + core::mem::size_of::<InterfaceDescriptor>()
@@ -366,7 +372,7 @@ trait ExtraExpectations {
     fn expect_add_to_multi_interrupt_pipe(&mut self);
 
     /// Expect a call to get_basic_configuration (for a certain address),
-    /// which reads the configuration descriptor.
+    /// which reads the configuration and all other descriptor.
     fn expect_get_configuration<const ADDR: u8>(&mut self);
 
     /// Expect a call to get_basic_configuration (for a certain address),
@@ -426,16 +432,30 @@ impl ExtraExpectations for MockHostControllerInner {
     }
 
     fn expect_get_configuration<const ADDR: u8>(&mut self) {
+        // performs an initial get of configuration descriptor 
         self.expect_control_transfer()
             .times(1)
-            .withf(is_get_configuration_descriptor::<ADDR>)
-            .returning(control_transfer_ok_with(example_config_descriptor));
+            .withf(is_get_configuration_descriptor_only::<ADDR>)
+            .returning(control_transfer_ok_with(example_config_descriptor_only));
+
+        // then does a full get of all descriptors      
+        self.expect_control_transfer()
+          .times(1)
+          .withf(is_get_configuration_descriptor_full::<ADDR>)
+          .returning(control_transfer_ok_with(example_config_descriptor));
     }
 
     fn expect_get_double_configuration<const ADDR: u8>(&mut self) {
+        // performs an initial get of configuration descriptor 
         self.expect_control_transfer()
             .times(1)
-            .withf(is_get_configuration_descriptor::<ADDR>)
+            .withf(is_get_configuration_descriptor_only::<ADDR>)
+            .returning(control_transfer_ok_with(example_config_descriptor_only));
+
+        // then does a full get of all descriptors        
+        self.expect_control_transfer()
+            .times(1)
+            .withf(is_get_configuration_descriptor_full::<ADDR>)
             .returning(control_transfer_ok_with(double_config_descriptor));
     }
 
@@ -649,7 +669,7 @@ fn configure_get_configuration_pends() {
 
             hc.expect_control_transfer()
                 .times(1)
-                .withf(is_get_configuration_descriptor::<5>)
+                .withf(is_get_configuration_descriptor_only::<5>)
                 .returning(control_transfer_pending);
         },
         |f| {
@@ -676,6 +696,38 @@ fn is_get_configuration_descriptor<const ADDR: u8>(
         && s.wIndex == 0
         && s.wLength > 0
         && d.is_in()
+}
+
+fn is_get_configuration_descriptor_only<const ADDR: u8>(
+  a: &u8,
+  p: &u8,
+  s: &SetupPacket,
+  d: &DataPhase,
+) -> bool {
+  *a == ADDR
+      && *p == 8
+      && s.bmRequestType == DEVICE_TO_HOST
+      && s.bRequest == GET_DESCRIPTOR
+      && s.wValue == 0x200
+      && s.wIndex == 0
+      && s.wLength == 9
+      && d.is_in()
+}
+
+fn is_get_configuration_descriptor_full<const ADDR: u8>(
+  a: &u8,
+  p: &u8,
+  s: &SetupPacket,
+  d: &DataPhase,
+) -> bool {
+  *a == ADDR
+      && *p == 8
+      && s.bmRequestType == DEVICE_TO_HOST
+      && s.bRequest == GET_DESCRIPTOR
+      && s.wValue == 0x200
+      && s.wIndex == 0
+      && s.wLength > 9
+      && d.is_in()
 }
 
 #[test]
@@ -725,7 +777,7 @@ fn get_basic_configuration_bad_configuration_value() {
 
     hc.inner
         .expect_control_transfer()
-        .times(1)
+        .times(2)
         .withf(is_get_configuration_descriptor::<5>)
         .returning(control_transfer_ok_with(|bytes| {
             example_config_descriptor(bytes);
