@@ -937,6 +937,8 @@ impl<HC: HostController> UsbBus<HC> {
         visitor: &mut impl DescriptorVisitor,
     ) -> Result<(), UsbError> {
         // Handle descriptor suites > 64 byte
+        //   256 is arbitrary, but should be enough for most devices
+        //   TinyUSB uses 256 - https://github.com/hathach/tinyusb/blob/5572168994a29266df6cbf12b46919498d3ece66/examples/host/hid_controller/src/tusb_config.h#L103
         // 1. Read the first 9 bytes (configuration descriptor)
         // 2. If necessary, read the whole descriptor suite,
         //    using the length from the configuration descriptor
