@@ -35,6 +35,15 @@ fn short_delay(ms: usize) -> impl Future<Output = ()> {
     }
 }
 
+/// USB descriptors from a DisplayLink DL-3000 "Ella" (>256 bytes)
+///
+/// To read raw descriptors:
+/// ```
+/// $ sudo python3
+/// > import usb
+/// > dev = usb.core.find(idVendor=0x424, idProduct=0x4064) # as needed
+/// > usb.control.get_descriptor(dev, 0x400, usb.util.DESC_TYPE_CONFIG, 0)
+/// ```
 const ELLA: &[u8] = &[
     9, 2, 180, 1, 5, 1, 0, 128, 250, 9, 4, 0, 0, 4, 255, 0, 3, 0, 12, 95, 1,
     0, 10, 0, 4, 4, 1, 0, 4, 0, 7, 5, 2, 2, 0, 2, 0, 7, 5, 8, 2, 0, 2, 0, 7,
@@ -211,6 +220,33 @@ fn double_config_descriptor(buf: &mut [u8]) -> usize {
     57
 }
 
+fn ella_config_descriptor(buf: &mut [u8]) -> usize {
+    let len = Ord::min(ELLA.len(), buf.len());
+    buf[..len].copy_from_slice(&ELLA[..len]);
+
+    len
+}
+
+
+/// A configuration descriptor with *no* following descriptors
+///
+/// it's not clear that this is legit, but the code allows for it
+fn minimal_config_descriptor(buf: &mut [u8]) -> usize {
+    let c = ConfigurationDescriptor {
+        bLength: core::mem::size_of::<ConfigurationDescriptor>() as u8,
+        bDescriptorType: CONFIGURATION_DESCRIPTOR,
+        wTotalLength: 9u16.to_le_bytes(),
+        bNumInterfaces: 0,
+        bConfigurationValue: 0,
+        iConfiguration: 0,
+        bmAttributes: 0,
+        bMaxPower: 0,
+    };
+    buf[0..9].copy_from_slice(bytemuck::bytes_of(&c));
+
+    9
+}
+
 const UNCONFIGURED_DEVICE: UnconfiguredDevice = UnconfiguredDevice {
     usb_address: 5,
     usb_speed: UsbSpeed::Full12,
@@ -238,6 +274,14 @@ const EXAMPLE_DEVICE: UsbDevice = UsbDevice {
     packet_size_ep0: 8,
     in_endpoints_bitmap: 4,
     out_endpoints_bitmap: 2,
+};
+
+const MINIMAL_DEVICE: UsbDevice = UsbDevice {
+    usb_address: 5,
+    usb_speed: UsbSpeed::Full12,
+    packet_size_ep0: 8,
+    in_endpoints_bitmap: 0,
+    out_endpoints_bitmap: 0,
 };
 
 // Not sure why this isn't in the standard library
@@ -682,6 +726,100 @@ fn configure_get_configuration_pends() {
             assert!(rr.is_pending());
             let rr = r.as_mut().poll(f.c);
             assert!(rr.is_pending());
+        },
+    );
+}
+
+#[test]
+fn configure_get_configuration_second_transfer_pends() {
+    do_test(
+        |hc| {
+            hc.expect_multi_interrupt_pipe_ignored();
+            hc.expect_set_configuration::<5, 1>();
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor_only::<5>)
+                .returning(control_transfer_ok_with(example_config_descriptor_only));
+
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor::<5>)
+                .returning(control_transfer_pending);
+        },
+        |f| {
+            let mut r = pin!(f.bus.configure(unconfigured_device(), 1));
+            let rr = r.as_mut().poll(f.c);
+            assert!(rr.is_pending());
+            let rr = r.as_mut().poll(f.c);
+            assert!(rr.is_pending());
+        },
+    );
+}
+
+#[test]
+fn configure_get_configuration_second_transfer_fails() {
+    do_test(
+        |hc| {
+            hc.expect_multi_interrupt_pipe_ignored();
+            hc.expect_set_configuration::<5, 1>();
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor_only::<5>)
+                .returning(control_transfer_ok_with(example_config_descriptor_only));
+
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor::<5>)
+                .returning(control_transfer_timeout);
+        },
+        |f| {
+            let r = pin!(f.bus.configure(unconfigured_device(), 1));
+            let rr = r.poll(f.c).to_option().unwrap();
+            assert_eq!(rr, Err(UsbError::Timeout));
+        },
+    );
+}
+
+#[test]
+fn configure_get_configuration_no_second_transfer() {
+    do_test(
+        |hc| {
+            hc.expect_multi_interrupt_pipe_ignored();
+            hc.expect_set_configuration::<5, 1>();
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor_only::<5>)
+                .returning(control_transfer_ok_with(minimal_config_descriptor));
+            // If there are no further descriptors (the nil device,
+            // with no interfaces or endpoints) then there's no second
+            // control transfer because we got everything the first
+            // time.
+        },
+        |f| {
+            let r = pin!(f.bus.configure(unconfigured_device(), 1));
+            let rr = r.poll(f.c).to_option().unwrap();
+            assert_eq!(rr, Ok(MINIMAL_DEVICE));
+        },
+    );
+}
+
+#[test]
+fn configure_get_configuration_oversize_fails() {
+    do_test(
+        |hc| {
+            hc.expect_multi_interrupt_pipe_ignored();
+            hc.expect_set_configuration::<5, 1>();
+            hc.expect_control_transfer()
+                .times(1)
+                .withf(is_get_configuration_descriptor_only::<5>)
+                .returning(control_transfer_ok_with(ella_config_descriptor));
+        },
+        |f| {
+            let r = pin!(f.bus.configure(unconfigured_device(), 1));
+            let rr = r.poll(f.c).to_option().unwrap();
+            // The Ella configuration is valid, but it's >256 bytes, so we
+            // don't (yet) support it.
+            assert_eq!(rr, Err(UsbError::ProtocolError));
         },
     );
 }
