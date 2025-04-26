@@ -308,13 +308,13 @@ pub struct ShowDescriptors;
 
 impl DescriptorVisitor for ShowDescriptors {
     fn on_configuration(&mut self, c: &ConfigurationDescriptor) {
-        debug::println!("{c:?}");
+        debug::println!("{:?}", c);
     }
     fn on_interface(&mut self, i: &InterfaceDescriptor) {
-        debug::println!("  {i:?}");
+        debug::println!("  {:?}", i);
     }
     fn on_endpoint(&mut self, e: &EndpointDescriptor) {
-        debug::println!("    {e:?}");
+        debug::println!("    {:?}", e);
     }
     fn on_other(&mut self, d: &[u8]) {
         let dlen = d[0];
@@ -325,7 +325,7 @@ impl DescriptorVisitor for ShowDescriptors {
             0x40 => "vendor",
             _ => "reserved",
         };
-        debug::println!("  {domain} type {dtype} len {dlen} skipped");
+        debug::println!("  {} type {} len {} skipped", domain, dtype, dlen);
     }
 }
 

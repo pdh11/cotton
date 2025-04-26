@@ -696,7 +696,7 @@ impl<HC: HostController> UsbBus<HC> {
             )
             .await?;
         if sz < 8 {
-            debug::println!("control in {sz}/8");
+            debug::println!("control in {}/8", sz);
             return Err(UsbError::ProtocolError);
         }
 
@@ -719,7 +719,7 @@ impl<HC: HostController> UsbBus<HC> {
             )
             .await?;
         if sz < 18 {
-            debug::println!("control in {sz}/18");
+            debug::println!("control in {}/18", sz);
             return Err(UsbError::ProtocolError);
         }
 
@@ -1014,7 +1014,7 @@ impl<HC: HostController> UsbBus<HC> {
         }
 
         let ports = descriptors[2];
-        debug::println!("{ports}-port hub");
+        debug::println!("{}-port hub", ports);
 
         // Ports are numbered from 1..=N (not 0..N)
         for port in 1..=ports {
@@ -1138,12 +1138,15 @@ impl<HC: HostController> UsbBus<HC> {
         }
         let port_bitmap = BitSet(port_bitmap);
         for port in port_bitmap.iter() {
-            debug::println!("I'm told to investigate port {port}");
+            debug::println!("I'm told to investigate port {}", port);
 
             let (state, changes) =
                 self.get_hub_port_status(packet.address, port).await?;
             debug::println!(
-                "  port {port} status3 {state:x} {changes:x}"
+                "  port {} status3 {:x} {:x}",
+                port,
+                state,
+                changes
             );
 
             if changes != 0 {

@@ -199,7 +199,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
             .await
             .map_err(Error::Transport)?;
         if sz < 13 {
-            debug::println!("Bad CSW {sz}/13");
+            debug::println!("Bad CSW {}/13", sz);
             return Err(Error::ProtocolError);
         }
         /*
@@ -209,7 +209,7 @@ impl<HC: HostController> ScsiTransport for MassStorage<'_, HC> {
         let residue = u32::from_le_bytes(csw[8..12].try_into().unwrap());
         let status = csw[12];
         if status != 0 || residue != 0 {
-            debug::println!("status {status} residue {residue}");
+            debug::println!("status {} residue {}", status, residue);
         }
         match status {
             0 => Ok(response),

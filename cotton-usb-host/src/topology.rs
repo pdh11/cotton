@@ -29,7 +29,7 @@ impl Debug for Topology {
             i: usize,
             f: &mut Formatter<'_>,
         ) -> Result<(), Error> {
-            write!(f, "{i}").unwrap();
+            write!(f, "{}", i).unwrap();
 
             let mut any = false;
             for j in 1..(MAX_DEVICES as usize) {
