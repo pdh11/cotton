@@ -333,6 +333,9 @@ impl DescriptorVisitor for ShowDescriptors {
 ///
 /// And make callbacks via the [`DescriptorVisitor`] for everything
 /// that's found.
+///
+/// USB 2.0 s9.5 says that undersize descriptors should be rejected,
+/// oversize descriptors should be silently truncated.
 pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
     let mut index = 0;
 
@@ -346,27 +349,37 @@ pub fn parse_descriptors(buf: &[u8], v: &mut impl DescriptorVisitor) {
 
         match dtype {
             CONFIGURATION_DESCRIPTOR => {
+                let min_dlen =
+                    Ord::min(dlen, size_of::<ConfigurationDescriptor>());
+
                 if let Ok(c) =
-                    bytemuck::try_from_bytes(&buf[index..index + dlen])
+                    bytemuck::try_from_bytes(&buf[index..index + min_dlen])
                 {
                     v.on_configuration(c);
                 }
             }
             INTERFACE_DESCRIPTOR => {
+                let min_dlen =
+                    Ord::min(dlen, size_of::<InterfaceDescriptor>());
+
                 if let Ok(i) =
-                    bytemuck::try_from_bytes(&buf[index..index + dlen])
+                    bytemuck::try_from_bytes(&buf[index..index + min_dlen])
                 {
                     v.on_interface(i);
                 }
             }
             ENDPOINT_DESCRIPTOR => {
+                let min_dlen = Ord::min(dlen, size_of::<EndpointDescriptor>());
+
                 if let Ok(e) =
-                    bytemuck::try_from_bytes(&buf[index..index + dlen])
+                    bytemuck::try_from_bytes(&buf[index..index + min_dlen])
                 {
                     v.on_endpoint(e);
                 }
             }
-            _ => v.on_other(&buf[index..(index + dlen)]),
+            _ => {
+                v.on_other(&buf[index..(index + dlen)]);
+            }
         }
 
         index += dlen;

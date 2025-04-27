@@ -10,6 +10,7 @@ struct Interface {
 struct TestVisitor {
     configuration: Option<ConfigurationDescriptor>,
     interfaces: Vec<Interface>,
+    others: Vec<Vec<u8>>,
 }
 
 impl DescriptorVisitor for TestVisitor {
@@ -31,7 +32,10 @@ impl DescriptorVisitor for TestVisitor {
         self.interfaces.last_mut().unwrap().endpoints.push(*e);
     }
 
-    fn on_other(&mut self, _d: &[u8]) {}
+    fn on_other(&mut self, d: &[u8]) {
+        assert!(self.configuration.is_some());
+        self.others.push((*d).to_vec());
+    }
 }
 
 struct IgnoreVisitor;
@@ -62,6 +66,30 @@ const ELLA: &[u8] = &[
 
 const HUB: &[u8] = &[9, 41, 4, 0, 0, 50, 100, 0, 255];
 
+/// Yamaha DGX205 Midi Keyboard, CONFIG_DESCRIPTOR 101 bytes
+///
+/// Has 2 interfaces, one for the USB audio and one for the MIDI interface.
+/// Includes Class-Specific descriptors (36) for midi.
+///
+/// ** Endpoints are oversized (9 bytes) **
+///
+#[rustfmt::skip]
+const YAMAHA: &[u8] = &[
+    9, 2, 101, 0, 2, 1, 0, 128, 50,
+    9, 4, 0, 0, 0, 1, 1, 0, 0,
+    9, 36, 1, 0, 1, 9, 0, 1, 1,
+    9, 4, 1, 0, 2, 1, 3, 0, 0,
+    7, 36, 1, 0, 1, 65, 0,
+    6, 36, 2, 1, 1, 0,
+    6, 36, 2, 2, 2, 0,
+    9, 36, 3, 1, 3, 1, 2, 1, 0,
+    9, 36, 3, 2, 4, 1, 1, 1, 0,
+    9, 5, 2, 2, 32, 0, 0, 0, 0,
+    5, 37, 1, 1, 1,
+    9, 5, 129, 2, 32, 0, 0, 0, 0,
+    5, 37, 1, 1, 3,
+];
+
 #[test]
 fn parse_ella() {
     parse_descriptors(ELLA, &mut ShowDescriptors);
@@ -74,6 +102,23 @@ fn parse_ella() {
     assert_eq!(v.interfaces[0].descriptor.bInterfaceClass, 255);
     assert_eq!(v.interfaces[0].endpoints.len(), 4);
     assert_eq!(v.interfaces[0].endpoints[3].bmAttributes, 3);
+}
+
+#[test]
+fn parse_yamaha() {
+    parse_descriptors(YAMAHA, &mut ShowDescriptors);
+    let mut v = TestVisitor::default();
+    parse_descriptors(YAMAHA, &mut v);
+    assert!(v.configuration.is_some());
+    let cfg = v.configuration.unwrap();
+    assert_eq!(cfg.bNumInterfaces, 2);
+    assert_eq!(v.interfaces.len(), 2);
+    assert_eq!(v.interfaces[0].descriptor.bInterfaceClass, 1);
+    assert_eq!(v.interfaces[0].endpoints.len(), 0);
+    assert_eq!(v.interfaces[1].endpoints.len(), 2);
+    assert_eq!(v.interfaces[1].endpoints[0].bmAttributes, 2);
+    assert_eq!(v.interfaces[1].endpoints[1].bEndpointAddress, 0x81);
+    assert_eq!(v.others.len(), 8);
 }
 
 #[test]
@@ -101,4 +146,23 @@ fn invalid_descriptors() {
 fn reserved_descriptor() {
     // Mostly a test for Miri
     parse_descriptors(&[3, 96, 1], &mut ShowDescriptors);
+}
+
+#[test]
+fn oversized_descriptors() {
+    // See USB 2.0 s9.5
+
+    // An oversize (11 instead of 9) config descriptor
+    let mut v = TestVisitor::default();
+    parse_descriptors(&[11, 2, 101, 0, 2, 1, 0, 128, 50, 99, 99], &mut v);
+    assert!(v.configuration.is_some());
+
+    // An oversize (11 instead of 9) interface descriptor
+    let mut v = TestVisitor::default();
+    #[rustfmt::skip]
+    parse_descriptors(&[
+        9, 2, 101, 0, 2, 1, 0, 128, 50,
+        11, 4, 101, 0, 2, 1, 0, 128, 50, 99, 99
+    ], &mut v);
+    assert!(!v.interfaces.is_empty());
 }
