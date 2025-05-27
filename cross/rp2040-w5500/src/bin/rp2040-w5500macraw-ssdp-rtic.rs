@@ -8,7 +8,7 @@ extern crate alloc;
 use core::ptr;
 use defmt_rtt as _; // global logger
 use defmt_rtt as _;
-use embedded_alloc::Heap;
+use embedded_alloc::LlffHeap as Heap;
 use panic_probe as _;
 use rp_pico as _; // includes boot2
 use smoltcp::iface::{self, SocketStorage};

@@ -27,12 +27,12 @@ futures-util = { version = "0.3.31", default-features = false, features = [
   "async-await-macro",
 ], optional = true }
 slotmap = { version = "1", default-features = false }
-nix = { version = "0.29", default-features = false, features = [
+nix = { version = "0.30", default-features = false, features = [
   "net",
   "socket",
   "uio",
 ], optional = true }
-libc = { version = "0.2.155", default-features = false, optional = true }
+libc = { version = "0.2.171", default-features = false, optional = true }
 uuid = { version = "1.8", default-features = false, features = [
   "v4",
 ], optional = true }

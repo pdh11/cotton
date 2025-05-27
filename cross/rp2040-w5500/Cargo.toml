@@ -52,9 +52,9 @@ cotton-w5500 = { path = "../../cotton-w5500", default-features = false, features
 ] }
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7"
-defmt = "0.3.10"
-defmt-rtt = "0.4.0"
-panic-probe = { version = "0.3.2", features = ["print-defmt"] }
+defmt = "1"
+defmt-rtt = "1"
+panic-probe = { version = "1", features = ["print-defmt"] }
 rp-pico = "0.9"
 w5500-dhcp = { version = "0.7", default-features = false, features = [
   "defmt",
@@ -83,6 +83,6 @@ smoltcp = { version = "0.12", features = [
   "proto-dhcpv4",
   "socket-dhcpv4",
 ], default-features = false }
-embedded-alloc = "0.5"
+embedded-alloc = { version = "0.6", features = ["llff"] }
 uuid = { version = "1.8", default-features = false, features = ["v8"] }
 git-version = "0.3.9"
