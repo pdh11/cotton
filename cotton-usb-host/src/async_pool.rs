@@ -150,7 +150,7 @@ impl Pool {
     ///
     /// # See also
     /// [`Pool::try_alloc()`] for a synchronous version
-    pub async fn alloc(&self) -> Pooled {
+    pub async fn alloc(&self) -> Pooled<'_> {
         let fut = PoolFuture { pool: self };
         fut.await
     }
@@ -162,7 +162,7 @@ impl Pool {
     ///
     /// # See also
     /// [`Pool::alloc()`] for an asynchronous version
-    pub fn try_alloc(&self) -> Option<Pooled> {
+    pub fn try_alloc(&self) -> Option<Pooled<'_>> {
         Some(Pooled {
             n: self.alloc_internal()?,
             pool: self,
