@@ -30,7 +30,7 @@ impl SsdpTest {
                 }
                 if start.elapsed() > timeout {
                     eprintln!("{:?}: Didn't find it", Instant::now());
-                    assert_contains!(v, notification_type);
+                    assert_contains!(v, *notification_type);
                     return;
                 }
                 // drop the lock
