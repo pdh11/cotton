@@ -5,10 +5,10 @@ description = "SCSI commands and abstractions"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
 categories = []
-edition = "2021"
+edition.workspace = true
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
 license = "CC0-1.0"
-rust-version = "1.80"
+rust-version.workspace = true
 
 [dependencies]
 bytemuck = "1.9"

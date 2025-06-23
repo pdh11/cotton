@@ -6,9 +6,9 @@ homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
 categories = ["network-programming"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
-edition = "2021"
+edition.workspace = true
 license = "CC0-1.0"
-rust-version = "1.80"
+rust-version.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
