@@ -21,7 +21,7 @@ skip_feature_sets = [["arm"], ["rp2040-w5500"], ["stm32f746-nucleo"]]
 [dev-dependencies]
 cotton-ssdp = { path = "../cotton-ssdp" }
 serial_test = { version = "3" }
-assertables = { version = "9.7" }
+assertables = { version = "9.7.1" }
 nonblock = { version = "0.2" }
 mio = { version = "1", default-features = false, features = ["os-poll", "net"] }
 uuid = { version = "1.8", default-features = false, features = ["v4"] }
