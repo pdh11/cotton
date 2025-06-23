@@ -717,7 +717,7 @@ mod tests {
     #[test]
     fn target_match_ssdp_all() {
         assert!(target_match("ssdp:all", "upnp::rootdevice"));
-        assert_eq!(false, target_match("upnp::rootdevice", "ssdp:all"));
+        assert!(!target_match("upnp::rootdevice", "ssdp:all"));
     }
 
     #[test]
@@ -732,35 +732,30 @@ mod tests {
             "upnp::ContentDirectory:1",
             "upnp::ContentDirectory:2"
         ));
-        assert_eq!(
-            false,
-            target_match(
+        assert!(
+            !target_match(
                 "upnp::ContentDirectory:2",
                 "upnp::ContentDirectory:1"
             )
         );
 
         // Various noncanonical forms
-        assert_eq!(
-            false,
-            target_match("upnp::ContentDirectory", "upnp::ContentDirectory:1")
+        assert!(
+            !target_match("upnp::ContentDirectory", "upnp::ContentDirectory:1")
         );
-        assert_eq!(
-            false,
-            target_match("upnp::ContentDirectory:1", "upnp::ContentDirectory")
+        assert!(
+            !target_match("upnp::ContentDirectory:1", "upnp::ContentDirectory")
         );
-        assert_eq!(false, target_match("fnord", "upnp::ContentDirectory:1"));
-        assert_eq!(false, target_match("upnp::ContentDirectory:1", "fnord"));
-        assert_eq!(
-            false,
-            target_match(
+        assert!(!target_match("fnord", "upnp::ContentDirectory:1"));
+        assert!(!target_match("upnp::ContentDirectory:1", "fnord"));
+        assert!(
+            !target_match(
                 "upnp::ContentDirectory:1",
                 "upnp::ContentDirectory:X"
             )
         );
-        assert_eq!(
-            false,
-            target_match(
+        assert!(
+            !target_match(
                 "upnp::ContentDirectory:X",
                 "upnp::ContentDirectory:1"
             )
@@ -903,7 +898,7 @@ mod tests {
             if self.injecting_multicast_error {
                 Err(udp::Error::Syscall(
                     udp::Syscall::JoinMulticast,
-                    std::io::Error::new(std::io::ErrorKind::Other, "injected"),
+                    std::io::Error::other("injected"),
                 ))
             } else {
                 self.mcasts.lock().unwrap().push((
@@ -923,7 +918,7 @@ mod tests {
             if self.injecting_multicast_error {
                 Err(udp::Error::Syscall(
                     udp::Syscall::LeaveMulticast,
-                    std::io::Error::new(std::io::ErrorKind::Other, "injected"),
+                    std::io::Error::other("injected"),
                 ))
             } else {
                 self.mcasts.lock().unwrap().push((
@@ -1297,7 +1292,7 @@ mod tests {
         let n = FakeSocket::build_notify("upnp::Renderer:3");
         f.e.on_data(&n, LOCAL_SRC, remote_src(), Instant::now());
 
-        assert_eq!(false, f.c.contains_byebye("upnp::Renderer:3"));
+        assert!(!f.c.contains_byebye("upnp::Renderer:3"));
         assert!(f.c.contains_notify("upnp::Renderer:3"));
     }
 
@@ -1648,7 +1643,7 @@ mod tests {
         let n = FakeSocket::build_byebye("upnp::Renderer:3");
         f.e.on_data(&n, LOCAL_SRC, remote_src(), Instant::now());
 
-        assert_eq!(false, f.c.contains_notify("upnp::Renderer:3"));
+        assert!(!f.c.contains_notify("upnp::Renderer:3"));
         assert!(f.c.contains_byebye("upnp::Renderer:3"));
     }
 

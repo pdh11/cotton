@@ -16,7 +16,8 @@ impl Wake for NoOpWaker {
     fn wake(self: Arc<Self>) {}
 }
 
-pub type MockError = scsi_transport::Error<UsbError>;
+type MockError = scsi_transport::Error<UsbError>;
+type PinnedFuture = Pin<Box<dyn Future<Output = Result<usize, UsbError>>>>;
 
 /*
 fn no_delay(_ms: usize) -> impl Future<Output = ()> {
@@ -29,7 +30,7 @@ fn control_transfer_ok<const N: usize>(
     _: u8,
     _: SetupPacket,
     _: cotton_usb_host::host_controller::DataPhase,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::ready(Ok(N)))
 }
 
@@ -38,7 +39,7 @@ fn control_transfer_pends(
     _: u8,
     _: SetupPacket,
     _: cotton_usb_host::host_controller::DataPhase,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::pending())
 }
 
@@ -47,7 +48,7 @@ fn control_transfer_fails(
     _: u8,
     _: SetupPacket,
     _: cotton_usb_host::host_controller::DataPhase,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::ready(Err(UsbError::Timeout)))
 }
 
@@ -58,7 +59,7 @@ fn bulk_out_ok<const N: usize>(
     _: &[u8],
     _: TransferType,
     _: &Cell<bool>,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::ready(Ok(N)))
 }
 
@@ -69,7 +70,7 @@ fn bulk_out_fails(
     _: &[u8],
     _: TransferType,
     _: &Cell<bool>,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::ready(Err(UsbError::Timeout)))
 }
 
@@ -80,7 +81,7 @@ fn bulk_out_pends(
     _: &[u8],
     _: TransferType,
     _: &Cell<bool>,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::pending())
 }
 
@@ -93,7 +94,7 @@ fn bulk_in_ok_with<F: FnMut(&mut [u8]) -> usize>(
     &mut [u8],
     TransferType,
     &Cell<bool>,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     move |_, _, _, d, _, _| {
         let n = f(d);
         Box::pin(future::ready(Ok(n)))
@@ -107,7 +108,7 @@ fn bulk_in_fails(
     _: &mut [u8],
     _: TransferType,
     _: &Cell<bool>,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::ready(Err(UsbError::Timeout)))
 }
 
@@ -118,7 +119,7 @@ fn bulk_in_stalls(
     _: &mut [u8],
     _: TransferType,
     _: &Cell<bool>,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::ready(Err(UsbError::Stall)))
 }
 
@@ -129,7 +130,7 @@ fn bulk_in_pends(
     _: &mut [u8],
     _: TransferType,
     _: &Cell<bool>,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     Box::pin(future::pending())
 }
 

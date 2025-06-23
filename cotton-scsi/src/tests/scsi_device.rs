@@ -204,9 +204,11 @@ impl ContextExtras for core::task::Context<'_> {
     }
 }
 
+type PinnedFuture = Pin<Box<dyn Future<Output = Result<usize, MockError>>>>;
+
 fn command_nodata_ok(
     _: &[u8],
-) -> Pin<Box<dyn Future<Output = Result<usize, MockError>>>> {
+) -> PinnedFuture {
     Box::pin(future::ready(Ok(0)))
 }
 
@@ -228,7 +230,7 @@ pub fn command_ok_with<T: bytemuck::NoUninit>(
 ) -> impl FnMut(
     &[u8],
     &mut [u8],
-) -> Pin<Box<dyn Future<Output = Result<usize, MockError>>>> {
+) -> PinnedFuture {
     move |_, d| {
         let size = core::mem::size_of::<T>();
         d[0..size].copy_from_slice(bytemuck::bytes_of(&reply));

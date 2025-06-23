@@ -349,7 +349,7 @@ mod tests {
         let e = Service::new_inner(
             poll.registry(),
             (SSDP_TOKEN1, SSDP_TOKEN2),
-            |_| Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST")),
+            |_| Err(std::io::Error::other("TEST")),
             bogus_register,
             cotton_netif::get_interfaces().unwrap().collect(),
         );
@@ -369,7 +369,7 @@ mod tests {
             (SSDP_TOKEN1, SSDP_TOKEN2),
             |p| {
                 if p == 0 {
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, "TEST"))
+                    Err(std::io::Error::other("TEST"))
                 } else {
                     Ok(std::net::UdpSocket::bind("127.0.0.1:0").unwrap())
                 }

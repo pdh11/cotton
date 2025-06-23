@@ -140,7 +140,7 @@ mod tests {
 
         let e = super::Error::Syscall(
             Syscall::JoinMulticast,
-            ::std::io::Error::new(::std::io::ErrorKind::Other, "injected"),
+            ::std::io::Error::other("injected"),
         );
         let m = format!("{e}");
         assert_eq!(m, "error from syscall JoinMulticast".to_string());
@@ -154,7 +154,7 @@ mod tests {
     fn debug_syscall_error() {
         let e = Error::Syscall(
             Syscall::JoinMulticast,
-            ::std::io::Error::new(::std::io::ErrorKind::Other, "injected"),
+            ::std::io::Error::other("injected"),
         );
         let e = format!("{e:?}");
         assert_eq!(e, "Syscall(JoinMulticast, Custom { kind: Other, error: \"injected\" })".to_string());

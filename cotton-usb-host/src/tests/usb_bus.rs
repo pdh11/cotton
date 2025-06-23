@@ -353,6 +353,8 @@ fn control_transfer_ok<const N: usize>(
     Box::pin(future::ready(Ok(N)))
 }
 
+type PinnedFuture = Pin<Box<dyn Future<Output = Result<usize, UsbError>>>>;
+
 // This is by some margin the most insane function signature I have yet
 // written in Rust -- but it does make its call sites neater!
 #[rustfmt::skip]
@@ -363,7 +365,7 @@ fn control_transfer_ok_with<F: FnMut(&mut [u8]) -> usize>(
     u8,
     SetupPacket,
     DataPhase,
-) -> Pin<Box<dyn Future<Output = Result<usize, UsbError>>>> {
+) -> PinnedFuture {
     move |_, _, _, mut d| {
         let mut n = 0;
         d.in_with(|bytes| n = f(bytes));
@@ -1022,11 +1024,11 @@ fn set_address_pends() {
                 .withf(is_set_address::<5>)
                 .returning(control_transfer_pending);
         },
-        |mut f| {
+        |f| {
             let mut fut = pin!(f.bus.set_address(unaddressed_device(), 5));
-            let poll = fut.as_mut().poll(&mut f.c);
+            let poll = fut.as_mut().poll(f.c);
             assert!(poll.is_pending());
-            let poll = fut.as_mut().poll(&mut f.c);
+            let poll = fut.as_mut().poll(f.c);
             assert!(poll.is_pending());
         },
     );
@@ -3587,7 +3589,7 @@ fn bulk_in_transfer() {
                         && *e == 8
                         && d.len() == 16
                         && *t == TransferType::VariableSize
-                        && p.get() == false
+                        && !p.get()
                 })
                 .returning(bulk_in_ok::<16>);
         },
@@ -3623,7 +3625,7 @@ fn bulk_out_transfer() {
                         && *e == 8
                         && d.len() == 16
                         && *t == TransferType::FixedSize
-                        && p.get() == false
+                        && !p.get()
                 })
                 .returning(bulk_out_ok::<16>);
         },

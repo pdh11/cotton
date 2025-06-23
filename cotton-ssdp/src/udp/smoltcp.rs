@@ -230,10 +230,10 @@ mod tests {
             smoltcp::socket::udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         let udp_handle = sockets.add(udp_socket);
 
-        let mut udp_socket =
+        let udp_socket =
             sockets.get_mut::<smoltcp::socket::udp::Socket>(udp_handle);
         _ = udp_socket.bind(1900);
-        let ws = WrappedSocket::new(&mut udp_socket);
+        let ws = WrappedSocket::new(udp_socket);
 
         let rc = ws.send_with(
             20,
@@ -284,13 +284,13 @@ mod tests {
             smoltcp::socket::udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
         let udp_handle = sockets.add(udp_socket);
 
-        let mut udp_socket =
+        let udp_socket =
             sockets.get_mut::<smoltcp::socket::udp::Socket>(udp_handle);
         //
         // No bound local port => send_with returns Unaddressable
         //_ = udp_socket.bind(1900);
         //
-        let ws = WrappedSocket::new(&mut udp_socket);
+        let ws = WrappedSocket::new(udp_socket);
 
         let rc = ws.send_with(
             20,
