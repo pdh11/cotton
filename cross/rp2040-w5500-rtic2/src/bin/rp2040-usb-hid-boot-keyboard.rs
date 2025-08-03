@@ -44,7 +44,7 @@ mod app {
 
     #[init()]
     fn init(c: init::Context) -> (Shared, Local) {
-        defmt::println!(
+        defmt::info!(
             "{} from {} {}-g{}",
             env!("CARGO_BIN_NAME"),
             env!("CARGO_PKG_NAME"),
@@ -130,11 +130,11 @@ mod app {
         let mut p = pin!(stack.device_events(&hub_state, rtic_delay));
 
         loop {
-            defmt::println!("loop");
+            defmt::info!("loop");
             let device = p.next().await;
 
             if let Some(DeviceEvent::EnumerationError(h, p, e)) = device {
-                defmt::println!(
+                defmt::info!(
                     "Enumeration error {} on hub {} port {}",
                     e,
                     h,
@@ -142,10 +142,10 @@ mod app {
                 );
             }
 
-            defmt::println!("{:?}", hub_state.topology());
+            defmt::info!("{:?}", hub_state.topology());
 
             if let Some(DeviceEvent::Connect(device, info)) = device {
-                defmt::println!("Got device {:x} {:x}", device, info);
+                defmt::info!("Got device {:x} {:x}", device, info);
 
                 let _ = stack.get_configuration(&device, &mut ShowDescriptors).await;
 
@@ -155,7 +155,7 @@ mod app {
                     continue;
                 };
                 if let Some(cfg) = hid.identify() {
-                    defmt::println!("Could be HID");
+                    defmt::info!("Could be HID");
                     let Ok(device) = stack.configure(device, cfg).await else {
                         continue;
                     };
@@ -163,7 +163,7 @@ mod app {
                     let Ok(mut ms) = Hid::new(&stack, device) else {
                         continue;
                     };
-                    defmt::println!("Is HID!");
+                    defmt::info!("Is HID!");
 
                     let hid_stream = pin!(ms.handle());
 
@@ -183,13 +183,13 @@ mod app {
                                 Event::Device(ev) => {
                                     if let DeviceEvent::Disconnect(bs) = ev {
                                         if bs.contains(address) {
-                                            defmt::println!("HID disconnect");
+                                            defmt::info!("HID disconnect");
                                             break;
                                         }
                                     }
                                 }
                                 Event::Report(hr) => {
-                                    defmt::println!("HID report {:?}", hr);
+                                    defmt::info!("HID report {:?}", hr);
                                 }
                             }
                         }
@@ -203,4 +203,7 @@ mod app {
     fn usb_interrupt(cx: usb_interrupt::Context) {
         cx.shared.shared.on_irq();
     }
+
+    defmt::timestamp!("{=u64:tus}", Mono::now().ticks());
 }
+
