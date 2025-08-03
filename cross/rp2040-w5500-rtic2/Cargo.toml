@@ -88,3 +88,4 @@ rtic-common = "1"
 futures-util = { version = "0.3", default-features = false }
 static_cell = "2"
 portable-atomic = { version = "1", features = ["critical-section"] }
+pc-keyboard = { git = "https://github.com/rust-embedded-community/pc-keyboard.git", rev="6d03cf7" }

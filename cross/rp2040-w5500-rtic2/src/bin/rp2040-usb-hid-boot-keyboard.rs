@@ -126,6 +126,7 @@ mod app {
         );
         let hub_state = HubState::default();
         let stack = UsbBus::new(driver);
+        let mut kb = pc_keyboard::UsbKeyboard::new(pc_keyboard::layouts::Uk105Key, pc_keyboard::HandleControl::MapLettersToUnicode);
 
         let mut p = pin!(stack.device_events(&hub_state, rtic_delay));
 
@@ -190,6 +191,23 @@ mod app {
                                 }
                                 Event::Report(hr) => {
                                     defmt::info!("HID report {:?}", hr);
+                                    let report = pc_keyboard::UsbBootKeyboardReport {
+                                        modifiers: hr.bytes[0],
+                                        keys: [hr.bytes[2], hr.bytes[3], hr.bytes[4], hr.bytes[5], hr.bytes[6], hr.bytes[7]],
+                                    };
+                                    for key_event in kb.handle_report(&report) {
+                                        match key_event {
+                                            pc_keyboard::DecodedKey::RawKey(key_code) => {
+                                                defmt::info!("Raw Key: {:?}", key_code as u8);
+                                            },
+                                            pc_keyboard::DecodedKey::Unicode(c) if c.is_alphanumeric() => {
+                                                defmt::info!("Unicode: '{=char}'", c);
+                                            },
+                                            pc_keyboard::DecodedKey::Unicode(c) => {
+                                                defmt::info!("Unicode: \\U+{=u32:04X}", c as u32);
+                                            },
+                                        }
+                                    }
                                 }
                             }
                         }
