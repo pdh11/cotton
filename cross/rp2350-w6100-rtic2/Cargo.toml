@@ -1,0 +1,36 @@
+[package]
+authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]
+name = "cross-rp2350-w6100"
+publish = false
+edition = "2021"
+version = "0.1.0"
+autotests = false
+
+[dependencies]
+cortex-m = "0.7.2"
+cortex-m-rt = "0.7"
+critical-section = "1.2"
+defmt = "1"
+defmt-rtt = "1"
+rp235x-hal = {version = "0.3.0", features = ["critical-section-impl", "rt", "defmt"]}
+rp235x-pac = { git = "https://github.com/jannic-dev-forks/rp235x-pac", rev = "fa7fc1f", version = "0.1" }
+git-version = "0.3.9"
+panic-probe = { version = "1", features = ["print-defmt"] }
+
+rtic = { version = "2.1", features = ["thumbv8main-backend"] }
+rtic-monotonics = { version = "2.0.2", features = ["rp235x"] }
+
+cotton-usb-host = { path = "../../cotton-usb-host", default-features = false, features = [
+  "rp235x",
+] }
+cotton-usb-host-msc = { path = "../../cotton-usb-host-msc", default-features = false, features = [
+  "defmt",
+] }
+cotton-scsi = { path = "../../cotton-scsi", default-features = false }
+
+futures-util = { version = "0.3", default-features = false }
+
+static_cell = "2"
+
+[patch.crates-io]
+rp235x-pac = { git = "https://github.com/jannic-dev-forks/rp235x-pac", rev = "fa7fc1f", version = "0.1" }

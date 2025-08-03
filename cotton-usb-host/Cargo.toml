@@ -19,6 +19,7 @@ skip_feature_sets = [["rp2040"], ["defmt"]]
 [dependencies]
 futures = { version = "0.3", default-features = false }
 defmt = { version = "1", optional = true }
+rp235x-pac = { git = "https://github.com/jannic-dev-forks/rp235x-pac", rev = "fa7fc1f", version = "0.1", optional = true }
 rp2040-pac = { version = "0.6", optional = true }
 cortex-m = { version = "0.7.7", optional = true }
 rtic-common = { version = "1", optional = true }        # For WakerRegistration
@@ -30,4 +31,5 @@ bytemuck = "1.9"
 default = ["std"]
 std = ["critical-section/std", "futures/std", "dep:mockall"]
 rp2040 = ["defmt", "dep:rp2040-pac", "dep:rtic-common", "dep:cortex-m"]
+rp235x = ["defmt", "dep:rp235x-pac", "dep:rtic-common", "dep:cortex-m"]
 defmt = ["dep:defmt"]
