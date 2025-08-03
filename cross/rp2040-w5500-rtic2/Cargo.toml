@@ -24,8 +24,7 @@ doctest = false
 harness = false
 
 [profile.dev]
-opt-level = "s"
-lto = true
+opt-level = 1
 codegen-units = 1
 
 [profile.release]
