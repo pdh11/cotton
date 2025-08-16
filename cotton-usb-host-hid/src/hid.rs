@@ -13,6 +13,13 @@ pub struct Hid<'a, HC: HostController> {
     in_ep: u8,
 }
 
+#[cfg(feature = "defmt")]
+impl<HC> defmt::Format for Hid<'_, HC> where HC: HostController {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "Hid(dev={}, ep={=u8})", self.device, self.in_ep);
+    }
+}
+
 /// A report from our HID device
 ///
 /// NB: Only supports 8-byte reports from a Boot mode keyboard.
