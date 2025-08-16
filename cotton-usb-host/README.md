@@ -13,8 +13,9 @@ Part of the [Cotton](https://github.com/pdh11/cotton) project.
 ## A no-std, no-alloc USB host stack for embedded devices
 
 This crate enables the USB host-controller peripheral on the RP2040
-microcontroller, allowing USB devices (memory sticks, keyboards, hubs,
-etc.) to be connected directly to the RP2040 and controlled by it.
+and RP2350 microcontrollers, allowing USB devices (memory sticks,
+keyboards, hubs, etc.) to be connected directly to the RP2040/2350 and
+controlled by it.
 
 USB operation is _asynchronous_ and so this crate is suited for use
 with embedded asynchronous executors such as
@@ -30,18 +31,23 @@ Includes:
 Currently supports:
 
  - RP2040 (USB 1.1 host)[^1]
+ - RP235x (USB 1.1 host)[^1]
 
 System-tests and examples:
 
  - [rp2040-usb-hid-boot-keyboard](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-hid-boot-keyboard.rs): identifying
    and driving USB keyboards ("Human Interface Devices", HID);
  - [rp2040-usb-msc](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-msc.rs):
-   identifying and driving mass-storage class devices (e.g., USB flash
+   RP2040 identifying and driving mass-storage class devices (e.g., USB flash
    drives); **WARNING** this _writes_ to the USB drive, don't use one with
    data on that you want to keep;
  - [rp2040-usb-otge100](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-otge100.rs):
    identifying (not yet really "driving") a Plugable USB2-OTGE100
    Ethernet adaptor (based on ASIX AX88772).
+ - [rp2040-usb-msc](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-msc.rs):
+   RP2350 identifying and driving mass-storage class devices (e.g., USB flash
+   drives); **WARNING** this _writes_ to the USB drive, don't use one with
+   data on that you want to keep;
 
 Limitations:
 

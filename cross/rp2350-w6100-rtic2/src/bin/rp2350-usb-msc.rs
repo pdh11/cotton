@@ -18,7 +18,7 @@ mod app {
         AsyncBlockDevice, PeripheralType, ScsiBlockDevice, ScsiDevice,
     };
     use cotton_usb_host::device::identify::IdentifyFromDescriptors;
-    use cotton_usb_host::host::rp235x::{UsbShared, UsbStatics};
+    use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::usb_bus::{DeviceEvent, HubState, UsbBus};
     use cotton_usb_host::wire::ShowDescriptors;
     use cotton_usb_host_msc::{IdentifyMassStorage, MassStorage};
@@ -123,7 +123,7 @@ mod app {
             ConstStaticCell::new(UsbStatics::new());
         let statics = USB_STATICS.take();
 
-        let driver = cotton_usb_host::host::rp235x::Rp235xHostController::new(
+        let driver = cotton_usb_host::host::rp2040::Rp2040HostController::new(
             cx.local.resets,
             cx.local.regs.take().unwrap(),
             cx.local.dpram.take().unwrap(),
