@@ -9,7 +9,7 @@ extern crate std;
 pub use std::println;
 
 #[cfg(all(target_os = "none", feature = "defmt"))]
-pub use defmt::println;
+pub use defmt::debug as println;
 
 #[cfg(all(
     not(feature = "std"),
