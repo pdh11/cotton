@@ -418,12 +418,16 @@ impl<HC: HostController> Stream for HubStateStream<'_, HC> {
 ///
 pub struct UsbBus<HC: HostController> {
     driver: HC,
+    root_device_speed: Cell<Option<UsbSpeed>>,
 }
 
 impl<HC: HostController> UsbBus<HC> {
     /// Create a new USB host bus from a host-controller driver
     pub fn new(driver: HC) -> Self {
-        Self { driver }
+        Self {
+            driver,
+            root_device_speed: Cell::new(None),
+        }
     }
 
     /// Obtain a stream of hotplug/hot-unplug events
@@ -498,6 +502,7 @@ impl<HC: HostController> UsbBus<HC> {
                 match ev {
                     InternalEvent::Root(status) => {
                         if let DeviceStatus::Present(speed) = status {
+                            self.root_device_speed.set(Some(speed));
                             self.driver.reset_root_port(true);
                             delay_ms(50).await;
                             self.driver.reset_root_port(false);
@@ -615,6 +620,7 @@ impl<HC: HostController> UsbBus<HC> {
             let delay_ms = delay_ms_in.clone();
             async move {
                 if let DeviceStatus::Present(speed) = status {
+                    self.root_device_speed.set(Some(speed));
                     self.driver.reset_root_port(true);
                     delay_ms(50).await;
                     self.driver.reset_root_port(false);
@@ -636,9 +642,21 @@ impl<HC: HostController> UsbBus<HC> {
         })
     }
 
-    fn get_transfer_extras(&self, _speed: UsbSpeed) -> TransferExtras {
-        // FIXME
-        TransferExtras::Normal
+    /// Are any special transfer settings needed?
+    ///
+    /// We need to add a preamble if talking to a Low-Speed device via
+    /// a Full-Speed hub (see USB 2.0 section 8.6.5); note that we
+    /// don't need to traverse the whole bus for this, as if the root
+    /// device is FS and our target is LS then there *must* be a hub
+    /// involved somewhere.
+    fn get_transfer_extras(&self, speed: UsbSpeed) -> TransferExtras {
+        if self.root_device_speed.get() == Some(UsbSpeed::Full12)
+            && speed == UsbSpeed::Low1_5
+        {
+            TransferExtras::WithPreamble
+        } else {
+            TransferExtras::Normal
+        }
     }
 
     /// Configures a device, moving it from "Address" to "Configured" state
@@ -916,15 +934,15 @@ impl<HC: HostController> UsbBus<HC> {
     ///  - interval_ms: polling interval, in milliseconds
     pub fn interrupt_endpoint_in(
         &self,
-        address: u8,
+        device: &UsbDevice,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
     ) -> impl Stream<Item = InterruptPacket> + '_ {
-        let transfer_extras = TransferExtras::Normal; // FIXME self.get_transfer_extras(device.usb_speed);
+        let transfer_extras = self.get_transfer_extras(device.usb_speed);
         self.driver
             .alloc_interrupt_pipe(
-                address,
+                device.usb_address,
                 transfer_extras,
                 endpoint,
                 max_packet_size,

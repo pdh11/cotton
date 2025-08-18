@@ -5,8 +5,14 @@
 
 ### Changed
 
-* Add TransferExtras (Normal or WithPreamble) to HostController methods
-* This is a breaking change for HostControllers, but not for UsbBus users
+* Add `TransferExtras` (`Normal` or `WithPreamble`) to `HostController` methods
+  * This is a breaking change for HostControllers, but not for UsbBus users
+* `UsbBus::interrupt_endpoint_in()` now takes `&UsbDevice`, not just the address
+  * This is a breaking change (but callers will likely be easy to change)
+
+### Fixed
+
+* Low-Speed devices behind Full-Speed hubs need special treatment (GH-12)
 
 ## [0.1.1] 2025-04-27
 

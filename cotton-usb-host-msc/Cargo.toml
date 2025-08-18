@@ -1,6 +1,6 @@
 [package]
 name = "cotton-usb-host-msc"
-version = "0.1.0"
+version = "0.1.1"
 description = "USB mass-storage host for embedded devices"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
@@ -11,7 +11,7 @@ license = "CC0-1.0"
 rust-version.workspace = true
 
 [dependencies]
-cotton-usb-host = { version = "0.1", path = "../cotton-usb-host", default-features = false }
+cotton-usb-host = { version = "0.2", path = "../cotton-usb-host", default-features = false }
 cotton-scsi = { version = "0.1", path = "../cotton-scsi", default-features = false }
 bytemuck = "1.9"
 futures = { version = "0.3", default-features = false }

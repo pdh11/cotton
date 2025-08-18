@@ -1088,7 +1088,7 @@ fn interrupt_endpoint_in() {
         });
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.interrupt_endpoint_in(5, 2, 8, 10));
+    let r = pin!(bus.interrupt_endpoint_in(&EXAMPLE_DEVICE, 2, 8, 10));
     let rr = r.poll_next(&mut c);
     assert!(rr.is_ready());
 }
@@ -1105,7 +1105,7 @@ fn interrupt_endpoint_in_pends() {
         .returning(|_, _, _, _, _| Box::pin(future::pending()));
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.interrupt_endpoint_in(5, 2, 8, 10));
+    let mut r = pin!(bus.interrupt_endpoint_in(&EXAMPLE_DEVICE, 2, 8, 10));
     let rr = r.as_mut().poll_next(&mut c);
     assert!(rr.is_pending());
     let rr = r.as_mut().poll_next(&mut c);
@@ -1114,12 +1114,31 @@ fn interrupt_endpoint_in_pends() {
 
 fn is_get_device_descriptor<const N: u16>(
     a: &u8,
-    _e: &TransferExtras,
+    e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
 ) -> bool {
     *a == 0
+        && *e == TransferExtras::Normal
+        && *p == 8
+        && s.bmRequestType == DEVICE_TO_HOST
+        && s.bRequest == GET_DESCRIPTOR
+        && s.wValue == 0x100
+        && s.wIndex == 0
+        && s.wLength == N
+        && d.is_in()
+}
+
+fn is_get_device_descriptor_lowspeed<const N: u16>(
+    a: &u8,
+    e: &TransferExtras,
+    p: &u8,
+    s: &SetupPacket,
+    d: &DataPhase,
+) -> bool {
+    *a == 0
+        && *e == TransferExtras::WithPreamble
         && *p == 8
         && s.bmRequestType == DEVICE_TO_HOST
         && s.bRequest == GET_DESCRIPTOR
@@ -1169,6 +1188,37 @@ fn new_device() {
     let bus = UsbBus::new(hc);
 
     let r = pin!(bus.new_device(UsbSpeed::Full12));
+    let rr = r.poll(&mut c);
+    let (_device, di) = unwrap_poll(rr).unwrap().unwrap();
+    assert_eq!(di.vid, 0x1234);
+    assert_eq!(di.pid, 0x5678);
+}
+
+#[test]
+fn new_device_lowspeed() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+
+    let mut hc = MockHostController::default();
+
+    // First call (wLength == 8)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_device_descriptor_lowspeed::<8>)
+        .returning(control_transfer_ok_with(device_descriptor_prefix));
+
+    // Second call (wLength == 18)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_device_descriptor_lowspeed::<18>)
+        .returning(control_transfer_ok_with(device_descriptor));
+
+    let bus = UsbBus::new(hc);
+
+    bus.root_device_speed.set(Some(UsbSpeed::Full12));
+    let r = pin!(bus.new_device(UsbSpeed::Low1_5));
     let rr = r.poll(&mut c);
     let (_device, di) = unwrap_poll(rr).unwrap().unwrap();
     assert_eq!(di.vid, 0x1234);
