@@ -16,8 +16,8 @@ use futures::future::FutureExt;
 use futures::{Future, Stream, StreamExt};
 
 pub use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
-    UsbError, UsbSpeed,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferExtras,
+    TransferType, UsbError, UsbSpeed,
 };
 
 /// Basic information about a USB device, perhaps sufficient to select a driver
@@ -369,6 +369,7 @@ impl<HC: HostController> HubState<HC> {
             if p.is_none() {
                 *p = Some(hc.try_alloc_interrupt_pipe(
                     address,
+                    TransferExtras::Normal,
                     endpoint,
                     max_packet_size as u16,
                     interval_ms,
@@ -489,12 +490,7 @@ impl<HC: HostController> UsbBus<HC> {
 
         futures::stream::select(
             root_device.map(InternalEvent::Root),
-            HubStateStream { state: hub_state }
-                /*
-                MultiInterruptStream::<HC::MultiInterruptPipe> {
-                    pipe: &hub_state.pipes,
-                } */
-                .map(InternalEvent::Packet),
+            HubStateStream { state: hub_state }.map(InternalEvent::Packet),
         )
         .then(move |ev| {
             let delay_ms = delay_ms_in.clone();
@@ -640,6 +636,11 @@ impl<HC: HostController> UsbBus<HC> {
         })
     }
 
+    fn get_transfer_extras(&self, _speed: UsbSpeed) -> TransferExtras {
+        // FIXME
+        TransferExtras::Normal
+    }
+
     /// Configures a device, moving it from "Address" to "Configured" state
     ///
     /// See USB 2.0 figure 9-1. "Configured" state is the useful one, where
@@ -649,9 +650,11 @@ impl<HC: HostController> UsbBus<HC> {
         device: UnconfiguredDevice,
         configuration_value: u8,
     ) -> Result<UsbDevice, UsbError> {
+        let transfer_extras = self.get_transfer_extras(device.usb_speed);
         self.driver
             .control_transfer(
                 device.address(),
+                transfer_extras,
                 device.packet_size_ep0,
                 SetupPacket {
                     bmRequestType: HOST_TO_DEVICE,
@@ -678,12 +681,14 @@ impl<HC: HostController> UsbBus<HC> {
         &self,
         speed: UsbSpeed,
     ) -> Result<(UnaddressedDevice, DeviceInfo), UsbError> {
+        let transfer_extras = self.get_transfer_extras(speed);
         // Read prefix of device descriptor
         let mut descriptors = [0u8; 18];
         let sz = self
             .driver
             .control_transfer(
                 0,
+                transfer_extras,
                 8,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
@@ -707,6 +712,7 @@ impl<HC: HostController> UsbBus<HC> {
             .driver
             .control_transfer(
                 0,
+                transfer_extras,
                 packet_size_ep0,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
@@ -745,9 +751,11 @@ impl<HC: HostController> UsbBus<HC> {
         device: UnaddressedDevice,
         address: u8,
     ) -> Result<UnconfiguredDevice, UsbError> {
+        let transfer_extras = self.get_transfer_extras(device.usb_speed);
         self.driver
             .control_transfer(
                 0,
+                transfer_extras,
                 device.packet_size_ep0,
                 SetupPacket {
                     bmRequestType: HOST_TO_DEVICE,
@@ -805,9 +813,11 @@ impl<HC: HostController> UsbBus<HC> {
         setup: SetupPacket,
         data_phase: DataPhase<'_>,
     ) -> Result<usize, UsbError> {
+        let transfer_extras = self.get_transfer_extras(device.usb_speed);
         self.driver
             .control_transfer(
                 device.usb_address,
+                transfer_extras,
                 device.packet_size_ep0,
                 setup,
                 data_phase,
@@ -826,6 +836,7 @@ impl<HC: HostController> UsbBus<HC> {
         self.driver
             .control_transfer(
                 ep.usb_address,
+                TransferExtras::Normal,
                 8,
                 SetupPacket {
                     bmRequestType: 2,
@@ -910,9 +921,11 @@ impl<HC: HostController> UsbBus<HC> {
         max_packet_size: u16,
         interval_ms: u8,
     ) -> impl Stream<Item = InterruptPacket> + '_ {
+        let transfer_extras = TransferExtras::Normal; // FIXME self.get_transfer_extras(device.usb_speed);
         self.driver
             .alloc_interrupt_pipe(
                 address,
+                transfer_extras,
                 endpoint,
                 max_packet_size,
                 interval_ms,
@@ -936,6 +949,7 @@ impl<HC: HostController> UsbBus<HC> {
         device: &UnconfiguredDevice,
         visitor: &mut impl DescriptorVisitor,
     ) -> Result<(), UsbError> {
+        let transfer_extras = self.get_transfer_extras(device.usb_speed);
         // Handle descriptor suites > 64 byte
         //   256 is arbitrary, but should be enough for most devices
         //   TinyUSB uses 256 - https://github.com/hathach/tinyusb/blob/5572168994a29266df6cbf12b46919498d3ece66/examples/host/hid_controller/src/tusb_config.h#L103
@@ -947,6 +961,7 @@ impl<HC: HostController> UsbBus<HC> {
             .driver
             .control_transfer(
                 device.address(),
+                transfer_extras,
                 device.packet_size_ep0,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST,
@@ -967,6 +982,7 @@ impl<HC: HostController> UsbBus<HC> {
                     .driver
                     .control_transfer(
                         device.address(),
+                        transfer_extras,
                         device.packet_size_ep0,
                         SetupPacket {
                             bmRequestType: DEVICE_TO_HOST,
@@ -1027,6 +1043,7 @@ impl<HC: HostController> UsbBus<HC> {
             .driver
             .control_transfer(
                 device.address(),
+                TransferExtras::Normal,
                 device.packet_size_ep0,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST | CLASS_REQUEST,
@@ -1064,6 +1081,7 @@ impl<HC: HostController> UsbBus<HC> {
         self.driver
             .control_transfer(
                 hub_address,
+                TransferExtras::Normal,
                 8,
                 SetupPacket {
                     bmRequestType: DEVICE_TO_HOST
@@ -1095,6 +1113,7 @@ impl<HC: HostController> UsbBus<HC> {
         self.driver
             .control_transfer(
                 hub_address,
+                TransferExtras::Normal,
                 8,
                 SetupPacket {
                     bmRequestType: HOST_TO_DEVICE
@@ -1120,6 +1139,7 @@ impl<HC: HostController> UsbBus<HC> {
         self.driver
             .control_transfer(
                 hub_address,
+                TransferExtras::Normal,
                 8,
                 SetupPacket {
                     bmRequestType: HOST_TO_DEVICE

@@ -81,6 +81,17 @@ pub enum DeviceStatus {
     Absent,
 }
 
+/// Special treatment for a particular transfer
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum TransferExtras {
+    /// Normal transfer
+    Normal,
+    /// Low-speed transfer to a high-speed hub (USB 2.0 s8.6.5)
+    WithPreamble,
+}
+
 /// The data phase of a USB control-endpoint transaction
 ///
 /// A transaction on a control endpoint involves one of:
@@ -214,6 +225,7 @@ pub trait HostController {
     fn control_transfer(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         packet_size: u8,
         setup: SetupPacket,
         data_phase: DataPhase<'_>,
@@ -227,6 +239,8 @@ pub trait HostController {
     /// The passed-in data_toggle must be correct for the current state
     /// of the endpoint, and is updated for the endpoint state after the
     /// transaction.
+    ///
+    /// NB No "transfer_extras": LS devices can't have bulk endpoints.
     fn bulk_in_transfer(
         &self,
         address: u8,
@@ -245,6 +259,8 @@ pub trait HostController {
     /// The passed-in data_toggle must be correct for the current state
     /// of the endpoint, and is updated for the endpoint state after the
     /// transaction.
+    ///
+    /// NB No "transfer_extras": LS devices can't have bulk endpoints.
     fn bulk_out_transfer(
         &self,
         address: u8,
@@ -267,6 +283,7 @@ pub trait HostController {
     fn alloc_interrupt_pipe(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
@@ -284,6 +301,7 @@ pub trait HostController {
     fn try_alloc_interrupt_pipe(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,

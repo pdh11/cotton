@@ -5,6 +5,9 @@
 
 ### Changed
 
+* Add TransferExtras (Normal or WithPreamble) to HostController methods
+* This is a breaking change for HostControllers, but not for UsbBus users
+
 ## [0.1.1] 2025-04-27
 
 ### Changed

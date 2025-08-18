@@ -1,5 +1,6 @@
 use super::*;
 use cotton_scsi::scsi_transport;
+use cotton_usb_host::host_controller::TransferExtras;
 use cotton_usb_host::mocks::{MockHostController, MockHostControllerInner};
 use cotton_usb_host::usb_bus::{create_test_device, UsbBus};
 use cotton_usb_host::wire::SetupPacket;
@@ -27,6 +28,7 @@ fn no_delay(_ms: usize) -> impl Future<Output = ()> {
 
 fn control_transfer_ok<const N: usize>(
     _: u8,
+    _: TransferExtras,
     _: u8,
     _: SetupPacket,
     _: cotton_usb_host::host_controller::DataPhase,
@@ -36,6 +38,7 @@ fn control_transfer_ok<const N: usize>(
 
 fn control_transfer_pends(
     _: u8,
+    _: TransferExtras,
     _: u8,
     _: SetupPacket,
     _: cotton_usb_host::host_controller::DataPhase,
@@ -45,6 +48,7 @@ fn control_transfer_pends(
 
 fn control_transfer_fails(
     _: u8,
+    _: TransferExtras,
     _: u8,
     _: SetupPacket,
     _: cotton_usb_host::host_controller::DataPhase,
@@ -87,14 +91,8 @@ fn bulk_out_pends(
 
 fn bulk_in_ok_with<F: FnMut(&mut [u8]) -> usize>(
     mut f: F,
-) -> impl FnMut(
-    u8,
-    u8,
-    u16,
-    &mut [u8],
-    TransferType,
-    &Cell<bool>,
-) -> PinnedFuture {
+) -> impl FnMut(u8, u8, u16, &mut [u8], TransferType, &Cell<bool>) -> PinnedFuture
+{
     move |_, _, _, d, _, _| {
         let n = f(d);
         Box::pin(future::ready(Ok(n)))
