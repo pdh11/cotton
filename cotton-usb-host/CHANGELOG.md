@@ -3,7 +3,18 @@
 
 ## Unreleased
 
+## [0.2.0] 2025-08-20
+
+### Fixed
+
+* Low-Speed devices behind Full-Speed hubs need special treatment (GH-12)
+
 ### Changed
+
+* Add `TransferExtras` (`Normal` or `WithPreamble`) to `HostController` methods
+  * This is a breaking change for HostControllers, but not for UsbBus users
+* `UsbBus::interrupt_endpoint_in()` now takes `&UsbDevice`, not just the address
+  * This is a breaking change (but callers will likely be easy to change)
 
 ## [0.1.1] 2025-04-27
 

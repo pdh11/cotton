@@ -227,7 +227,6 @@ fn ella_config_descriptor(buf: &mut [u8]) -> usize {
     len
 }
 
-
 /// A configuration descriptor with *no* following descriptors
 ///
 /// it's not clear that this is legit, but the code allows for it
@@ -330,6 +329,7 @@ fn basic_configuration() {
 
 fn is_set_configuration<const ADDR: u8, const N: u16>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -346,6 +346,7 @@ fn is_set_configuration<const ADDR: u8, const N: u16>(
 
 fn control_transfer_ok<const N: usize>(
     _: u8,
+    _e: TransferExtras,
     _: u8,
     _: SetupPacket,
     _: DataPhase,
@@ -362,11 +363,12 @@ fn control_transfer_ok_with<F: FnMut(&mut [u8]) -> usize>(
     mut f: F,
 ) -> impl FnMut(
     u8,
+    TransferExtras,
     u8,
     SetupPacket,
     DataPhase,
 ) -> PinnedFuture {
-    move |_, _, _, mut d| {
+    move |_, _, _, _, mut d| {
         let mut n = 0;
         d.in_with(|bytes| n = f(bytes));
         Box::pin(future::ready(Ok(n)))
@@ -375,6 +377,7 @@ fn control_transfer_ok_with<F: FnMut(&mut [u8]) -> usize>(
 
 fn control_transfer_pending(
     _: u8,
+    _e: TransferExtras,
     _: u8,
     _: SetupPacket,
     _: DataPhase,
@@ -384,6 +387,7 @@ fn control_transfer_pending(
 
 fn control_transfer_timeout(
     _: u8,
+    _e: TransferExtras,
     _: u8,
     _: SetupPacket,
     _: DataPhase,
@@ -470,7 +474,7 @@ trait ExtraExpectations {
 impl ExtraExpectations for MockHostControllerInner {
     fn expect_add_to_multi_interrupt_pipe(&mut self) {
         self.expect_try_alloc_interrupt_pipe()
-            .returning(|_, _, _, _| Ok(MockInterruptPipe::new()));
+            .returning(|_, _, _, _, _| Ok(MockInterruptPipe::new()));
     }
 
     fn expect_multi_interrupt_pipe_ignored(&mut self) {
@@ -741,7 +745,9 @@ fn configure_get_configuration_second_transfer_pends() {
             hc.expect_control_transfer()
                 .times(1)
                 .withf(is_get_configuration_descriptor_only::<5>)
-                .returning(control_transfer_ok_with(example_config_descriptor_only));
+                .returning(control_transfer_ok_with(
+                    example_config_descriptor_only,
+                ));
 
             hc.expect_control_transfer()
                 .times(1)
@@ -767,7 +773,9 @@ fn configure_get_configuration_second_transfer_fails() {
             hc.expect_control_transfer()
                 .times(1)
                 .withf(is_get_configuration_descriptor_only::<5>)
-                .returning(control_transfer_ok_with(example_config_descriptor_only));
+                .returning(control_transfer_ok_with(
+                    example_config_descriptor_only,
+                ));
 
             hc.expect_control_transfer()
                 .times(1)
@@ -791,7 +799,9 @@ fn configure_get_configuration_no_second_transfer() {
             hc.expect_control_transfer()
                 .times(1)
                 .withf(is_get_configuration_descriptor_only::<5>)
-                .returning(control_transfer_ok_with(minimal_config_descriptor));
+                .returning(control_transfer_ok_with(
+                    minimal_config_descriptor,
+                ));
             // If there are no further descriptors (the nil device,
             // with no interfaces or endpoints) then there's no second
             // control transfer because we got everything the first
@@ -828,6 +838,7 @@ fn configure_get_configuration_oversize_fails() {
 
 fn is_get_configuration_descriptor<const ADDR: u8>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -844,6 +855,7 @@ fn is_get_configuration_descriptor<const ADDR: u8>(
 
 fn is_get_configuration_descriptor_only<const ADDR: u8>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -860,6 +872,7 @@ fn is_get_configuration_descriptor_only<const ADDR: u8>(
 
 fn is_get_configuration_descriptor_full<const ADDR: u8>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -982,6 +995,7 @@ fn get_basic_configuration_fails() {
 
 fn is_set_address<const N: u8>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -1062,8 +1076,8 @@ fn interrupt_endpoint_in() {
     let mut hc = MockHostController::default();
     hc.inner
         .expect_alloc_interrupt_pipe()
-        .withf(|a, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
-        .returning(|_, _, _, _| {
+        .withf(|a, _, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
+        .returning(|_, _, _, _, _| {
             Box::pin(future::ready({
                 let mut ip = MockInterruptPipe::new();
                 ip.expect_poll_next().returning(|_| {
@@ -1074,7 +1088,7 @@ fn interrupt_endpoint_in() {
         });
     let bus = UsbBus::new(hc);
 
-    let r = pin!(bus.interrupt_endpoint_in(5, 2, 8, 10));
+    let r = pin!(bus.interrupt_endpoint_in(&EXAMPLE_DEVICE, 2, 8, 10));
     let rr = r.poll_next(&mut c);
     assert!(rr.is_ready());
 }
@@ -1087,11 +1101,11 @@ fn interrupt_endpoint_in_pends() {
     let mut hc = MockHostController::default();
     hc.inner
         .expect_alloc_interrupt_pipe()
-        .withf(|a, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
-        .returning(|_, _, _, _| Box::pin(future::pending()));
+        .withf(|a, _, e, m, i| *a == 5 && *e == 2 && *m == 8 && *i == 10)
+        .returning(|_, _, _, _, _| Box::pin(future::pending()));
     let bus = UsbBus::new(hc);
 
-    let mut r = pin!(bus.interrupt_endpoint_in(5, 2, 8, 10));
+    let mut r = pin!(bus.interrupt_endpoint_in(&EXAMPLE_DEVICE, 2, 8, 10));
     let rr = r.as_mut().poll_next(&mut c);
     assert!(rr.is_pending());
     let rr = r.as_mut().poll_next(&mut c);
@@ -1100,11 +1114,31 @@ fn interrupt_endpoint_in_pends() {
 
 fn is_get_device_descriptor<const N: u16>(
     a: &u8,
+    e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
 ) -> bool {
     *a == 0
+        && *e == TransferExtras::Normal
+        && *p == 8
+        && s.bmRequestType == DEVICE_TO_HOST
+        && s.bRequest == GET_DESCRIPTOR
+        && s.wValue == 0x100
+        && s.wIndex == 0
+        && s.wLength == N
+        && d.is_in()
+}
+
+fn is_get_device_descriptor_lowspeed<const N: u16>(
+    a: &u8,
+    e: &TransferExtras,
+    p: &u8,
+    s: &SetupPacket,
+    d: &DataPhase,
+) -> bool {
+    *a == 0
+        && *e == TransferExtras::WithPreamble
         && *p == 8
         && s.bmRequestType == DEVICE_TO_HOST
         && s.bRequest == GET_DESCRIPTOR
@@ -1154,6 +1188,37 @@ fn new_device() {
     let bus = UsbBus::new(hc);
 
     let r = pin!(bus.new_device(UsbSpeed::Full12));
+    let rr = r.poll(&mut c);
+    let (_device, di) = unwrap_poll(rr).unwrap().unwrap();
+    assert_eq!(di.vid, 0x1234);
+    assert_eq!(di.pid, 0x5678);
+}
+
+#[test]
+fn new_device_lowspeed() {
+    let w = Waker::from(Arc::new(NoOpWaker));
+    let mut c = core::task::Context::from_waker(&w);
+
+    let mut hc = MockHostController::default();
+
+    // First call (wLength == 8)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_device_descriptor_lowspeed::<8>)
+        .returning(control_transfer_ok_with(device_descriptor_prefix));
+
+    // Second call (wLength == 18)
+    hc.inner
+        .expect_control_transfer()
+        .times(1)
+        .withf(is_get_device_descriptor_lowspeed::<18>)
+        .returning(control_transfer_ok_with(device_descriptor));
+
+    let bus = UsbBus::new(hc);
+
+    bus.root_device_speed.set(Some(UsbSpeed::Full12));
+    let r = pin!(bus.new_device(UsbSpeed::Low1_5));
     let rr = r.poll(&mut c);
     let (_device, di) = unwrap_poll(rr).unwrap().unwrap();
     assert_eq!(di.vid, 0x1234);
@@ -1298,6 +1363,7 @@ fn new_device_second_call_short() {
 
 fn is_get_hub_descriptor<const ADDR: u8>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -1328,6 +1394,7 @@ fn giant_hub_descriptor(bytes: &mut [u8]) -> usize {
 
 fn is_set_port_power<const ADDR: u8, const N: u8>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -1460,7 +1527,7 @@ fn new_hub_try_add_fails() {
     do_test(
         |hc| {
             hc.expect_try_alloc_interrupt_pipe()
-                .returning(|_, _, _, _| Err(UsbError::TooManyDevices));
+                .returning(|_, _, _, _, _| Err(UsbError::TooManyDevices));
             hc.expect_get_configuration::<5>();
             hc.expect_set_configuration::<5, 1>();
             hc.expect_get_configuration::<5>();
@@ -1621,6 +1688,7 @@ fn handle_hub_packet_empty() {
 
 fn is_get_port_status<const N: u8>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -1645,6 +1713,7 @@ fn port_status<const STATE: u16, const CHANGES: u16>(
 
 fn is_clear_port_feature<const PORT: u8, const FEATURE: u16>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -1661,6 +1730,7 @@ fn is_clear_port_feature<const PORT: u8, const FEATURE: u16>(
 
 fn is_set_port_feature<const PORT: u8, const FEATURE: u16>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -3236,6 +3306,7 @@ fn device_events_hub_packet_pends() {
 
 fn is_read_mac_address(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,
@@ -3318,7 +3389,7 @@ fn hub_state_fills_up() {
     let mut hc = MockHostController::default();
     hc.inner
         .expect_try_alloc_interrupt_pipe()
-        .returning(|_, _, _, _| Ok(MockInterruptPipe::default()));
+        .returning(|_, _, _, _, _| Ok(MockInterruptPipe::default()));
     let hub_state = HubState::default();
 
     for i in 0..15 {
@@ -3487,6 +3558,7 @@ fn open_out_endpoint_ludicrous() {
 
 fn is_clear_endpoint_feature<const EP: u8, const FEATURE: u16>(
     a: &u8,
+    _e: &TransferExtras,
     p: &u8,
     s: &SetupPacket,
     d: &DataPhase,

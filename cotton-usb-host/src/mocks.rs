@@ -1,6 +1,6 @@
 use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
-    UsbError,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferExtras,
+    TransferType, UsbError,
 };
 use crate::wire::SetupPacket;
 use futures::Future;
@@ -48,6 +48,7 @@ mock! {
         pub fn control_transfer<'a>(
             &self,
             address: u8,
+            transfer_extras: TransferExtras,
             packet_size: u8,
             setup: SetupPacket,
             data_phase: DataPhase<'a>,
@@ -79,6 +80,7 @@ mock! {
         pub fn alloc_interrupt_pipe(
             &self,
             address: u8,
+            transfer_extras: TransferExtras,
             endpoint: u8,
             max_packet_size: u16,
             interval_ms: u8,
@@ -88,6 +90,7 @@ mock! {
         pub fn try_alloc_interrupt_pipe(
             &self,
             address: u8,
+            transfer_extras: TransferExtras,
             endpoint: u8,
             max_packet_size: u16,
             interval_ms: u8,
@@ -131,12 +134,18 @@ impl HostController for MockHostController {
     fn control_transfer(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         packet_size: u8,
         setup: SetupPacket,
         data_phase: DataPhase<'_>,
     ) -> impl core::future::Future<Output = Result<usize, UsbError>> {
-        self.inner
-            .control_transfer(address, packet_size, setup, data_phase)
+        self.inner.control_transfer(
+            address,
+            transfer_extras,
+            packet_size,
+            setup,
+            data_phase,
+        )
     }
 
     fn bulk_in_transfer(
@@ -180,12 +189,14 @@ impl HostController for MockHostController {
     fn alloc_interrupt_pipe(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
     ) -> impl Future<Output = Self::InterruptPipe> {
         self.inner.alloc_interrupt_pipe(
             address,
+            transfer_extras,
             endpoint,
             max_packet_size,
             interval_ms,
@@ -195,12 +206,14 @@ impl HostController for MockHostController {
     fn try_alloc_interrupt_pipe(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
     ) -> Result<Self::InterruptPipe, UsbError> {
         self.inner.try_alloc_interrupt_pipe(
             address,
+            transfer_extras,
             endpoint,
             max_packet_size,
             interval_ms,

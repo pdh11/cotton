@@ -1,8 +1,8 @@
 use crate::async_pool::Pool;
 use crate::debug;
 use crate::host_controller::{
-    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferType,
-    UsbError, UsbSpeed,
+    DataPhase, DeviceStatus, HostController, InterruptPacket, TransferExtras,
+    TransferType, UsbError, UsbSpeed,
 };
 use crate::wire::{Direction, EndpointType, SetupPacket};
 use core::cell::Cell;
@@ -844,6 +844,7 @@ impl Rp2040HostController {
     async fn send_setup(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         setup: &SetupPacket,
     ) -> Result<(), UsbError> {
         self.dpram.epx_control().write(|w| {
@@ -881,6 +882,8 @@ impl Rp2040HostController {
         self.regs.sie_ctrl().modify(|_, w| {
             w.receive_data().clear_bit();
             w.send_data().clear_bit();
+            w.preamble_en()
+                .bit(transfer_extras == TransferExtras::WithPreamble);
             w.send_setup().set_bit()
         });
 
@@ -1240,6 +1243,7 @@ impl Rp2040HostController {
         &self,
         pipe: Pipe,
         address: u8,
+        transfer_extras: TransferExtras,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
@@ -1252,6 +1256,8 @@ impl Rp2040HostController {
                 .bits(address)
                 .endpoint()
                 .bits(endpoint)
+                .intep_preamble()
+                .bit(transfer_extras == TransferExtras::WithPreamble)
                 .intep_dir()
                 .clear_bit() // IN
         });
@@ -1421,13 +1427,14 @@ impl HostController for Rp2040HostController {
     async fn control_transfer<'a>(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         packet_size: u8,
         setup: SetupPacket,
         data_phase: DataPhase<'a>,
     ) -> Result<usize, UsbError> {
         let _pipe = self.alloc_pipe(EndpointType::Control).await;
 
-        self.send_setup(address, &setup).await?;
+        self.send_setup(address, transfer_extras, &setup).await?;
         match data_phase {
             DataPhase::In(buf) => {
                 let sz = self
@@ -1573,6 +1580,7 @@ impl HostController for Rp2040HostController {
     async fn alloc_interrupt_pipe(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
@@ -1582,6 +1590,7 @@ impl HostController for Rp2040HostController {
         self.interrupt_pipe(
             pipe,
             address,
+            transfer_extras,
             endpoint,
             max_packet_size,
             interval_ms,
@@ -1591,6 +1600,7 @@ impl HostController for Rp2040HostController {
     fn try_alloc_interrupt_pipe(
         &self,
         address: u8,
+        transfer_extras: TransferExtras,
         endpoint: u8,
         max_packet_size: u16,
         interval_ms: u8,
@@ -1600,6 +1610,7 @@ impl HostController for Rp2040HostController {
             Ok(self.interrupt_pipe(
                 pipe,
                 address,
+                transfer_extras,
                 endpoint,
                 max_packet_size,
                 interval_ms,
