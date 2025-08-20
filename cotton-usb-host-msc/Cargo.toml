@@ -1,6 +1,6 @@
 [package]
 name = "cotton-usb-host-msc"
-version = "0.1.1"
+version = "0.2.0"
 description = "USB mass-storage host for embedded devices"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
