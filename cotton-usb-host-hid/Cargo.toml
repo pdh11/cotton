@@ -1,0 +1,21 @@
+[package]
+name = "cotton-usb-host-hid"
+version = "0.1.0"
+description = "USB HID host for embedded devices"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = []
+edition = "2021"
+authors = ["Jonathan Pallant <github@thejpster.org.uk>"]
+license = "CC0-1.0"
+rust-version = "1.80"
+
+[dependencies]
+cotton-usb-host = { version = "0.1", path = "../cotton-usb-host", default-features = false }
+futures = { version = "0.3", default-features = false }
+defmt = { version = "0.3.10", optional = true }
+
+[features]
+default = ["std"]
+std = ["cotton-usb-host/std"]
+defmt = ["dep:defmt", "cotton-usb-host/defmt"]
