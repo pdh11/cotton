@@ -45,7 +45,7 @@ impl<'a, HC: HostController> Hid<'a, HC> {
     pub fn handle(&mut self) -> impl Stream<Item = HidReport> + '_ {
         self.bus
             .interrupt_endpoint_in(
-                self.device.address(),
+                &self.device,
                 self.in_ep,
                 Self::PKT_LEN,
                 Self::INTERVAL_MS,
