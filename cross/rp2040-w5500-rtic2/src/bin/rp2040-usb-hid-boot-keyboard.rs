@@ -7,14 +7,18 @@ use rp_pico as _; // includes boot2
 
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [ADC_IRQ_FIFO])]
 mod app {
+
     use core::future::Future;
     use core::pin::pin;
+
     use cotton_usb_host::device::identify::IdentifyFromDescriptors;
     use cotton_usb_host::host::rp2040::{UsbShared, UsbStatics};
     use cotton_usb_host::usb_bus::{DeviceEvent, HubState, UsbBus};
     use cotton_usb_host::wire::ShowDescriptors;
     use cotton_usb_host_hid::{hid, Hid, IdentifyHid};
+    use embedded_hal::digital::OutputPin;
     use futures_util::StreamExt;
+    use rp2040_hal::gpio::{bank0::Gpio25, FunctionSio, PullDown, SioOutput};
     use rp_pico::pac;
     use rtic_monotonics::rp2040::prelude::*;
     use static_cell::ConstStaticCell;
@@ -38,6 +42,8 @@ mod app {
         resets: pac::RESETS,
         regs: Option<pac::USBCTRL_REGS>,
         dpram: Option<pac::USBCTRL_DPRAM>,
+        led_pin:
+            rp2040_hal::gpio::Pin<Gpio25, FunctionSio<SioOutput>, PullDown>,
     }
 
     rp2040_timer_monotonic!(Mono); // 1MHz!
@@ -71,6 +77,16 @@ mod app {
         .ok()
         .unwrap();
 
+        let sio = rp2040_hal::Sio::new(device.SIO);
+        let pins = rp_pico::Pins::new(
+            device.IO_BANK0,
+            device.PADS_BANK0,
+            sio.gpio_bank0,
+            &mut resets,
+        );
+        let mut led_pin = pins.led.into_push_pull_output();
+        led_pin.set_high().unwrap();
+
         Mono::start(device.TIMER, &resets);
 
         // The timer doesn't increment if either RP2040 core is under
@@ -101,6 +117,7 @@ mod app {
                 regs: Some(device.USBCTRL_REGS),
                 dpram: Some(device.USBCTRL_DPRAM),
                 resets,
+                led_pin,
             },
         )
     }
@@ -111,7 +128,7 @@ mod app {
         ))
     }
 
-    #[task(local = [regs, dpram, resets], shared = [&shared], priority = 2)]
+    #[task(local = [regs, dpram, resets, led_pin], shared = [&shared], priority = 2)]
     async fn usb_task(cx: usb_task::Context) {
         static USB_STATICS: ConstStaticCell<UsbStatics> =
             ConstStaticCell::new(UsbStatics::new());
@@ -144,6 +161,8 @@ mod app {
                     h,
                     p
                 );
+
+                // TODO: need to reset something here, because we can get stuck
             }
 
             defmt::info!("Hub Topology: {:?}", hub_state.topology());
@@ -160,7 +179,9 @@ mod app {
                     .await;
 
                 let mut hid = IdentifyHid::default();
-                if let Err(e) = stack.get_configuration(&device, &mut hid).await {
+                if let Err(e) =
+                    stack.get_configuration(&device, &mut hid).await
+                {
                     defmt::error!("Failed to get device config: {:?}", e);
                     continue;
                 };
@@ -182,6 +203,7 @@ mod app {
                         }
                     };
                     defmt::info!("< Got HID device {:?}", ms);
+                    defmt::info!("- Press the Up/Down Arrow keys to control the LED on GPIO25!");
 
                     let hid_stream = pin!(ms.handle());
 
@@ -225,6 +247,14 @@ mod app {
                                     for key_event in kb.handle_report(&report)
                                     {
                                         match key_event {
+                                            pc_keyboard::DecodedKey::RawKey(key_code) if key_code == pc_keyboard::KeyCode::ArrowUp => {
+                                                defmt::info!("< Raw Key: ArrowUp (LED On)");
+                                                cx.local.led_pin.set_high().unwrap();
+                                            }
+                                            pc_keyboard::DecodedKey::RawKey(key_code) if key_code == pc_keyboard::KeyCode::ArrowDown => {
+                                                defmt::info!("< Raw Key: ArrowDown (LED Off)");
+                                                cx.local.led_pin.set_low().unwrap();
+                                            }
                                             pc_keyboard::DecodedKey::RawKey(key_code) => {
                                                 defmt::info!("< Raw Key: {:?}", key_code as u8);
                                             },
