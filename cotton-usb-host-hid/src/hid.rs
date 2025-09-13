@@ -1,7 +1,10 @@
 use cotton_usb_host::{
     device::identify::IdentifyFromDescriptors,
     usb_bus::{HostController, UsbBus, UsbDevice, UsbError},
-    wire::{ConfigurationDescriptor, DescriptorVisitor, InterfaceDescriptor},
+    wire::{
+        ConfigurationDescriptor, DescriptorVisitor, EndpointDescriptor,
+        InterfaceDescriptor,
+    },
 };
 use futures::{Stream, StreamExt};
 
@@ -36,8 +39,8 @@ impl<'a, HC: HostController> Hid<'a, HC> {
     pub fn new(
         bus: &'a UsbBus<HC>,
         device: UsbDevice,
+        in_ep: u8,
     ) -> Result<Self, UsbError> {
-        let in_ep = device.in_endpoints().iter().next().unwrap_or_default();
         Ok(Self { bus, device, in_ep })
     }
 
@@ -69,6 +72,8 @@ impl<'a, HC: HostController> Hid<'a, HC> {
 pub struct IdentifyHid {
     current_configuration: Option<u8>,
     hid_configuration: Option<u8>,
+    hid_interface: bool,
+    hid_endpoint: Option<u8>,
 }
 
 impl IdentifyHid {
@@ -83,6 +88,13 @@ impl IdentifyHid {
     ///
     /// See https://www.usb.org/sites/default/files/hid1_11.pdf Appendix B.
     pub const INTERFACE_SUBCLASS_BOOT: u8 = 1;
+
+    /// Endpoint on which to listen for HID reports
+    ///
+    /// Or None if no HID interface was detected.
+    pub fn endpoint(&self) -> Option<u8> {
+        self.hid_endpoint
+    }
 }
 
 impl DescriptorVisitor for IdentifyHid {
@@ -90,7 +102,7 @@ impl DescriptorVisitor for IdentifyHid {
         self.current_configuration = Some(c.bConfigurationValue);
     }
     fn on_interface(&mut self, i: &InterfaceDescriptor) {
-        match (
+        self.hid_interface = match (
             i.bInterfaceClass,
             i.bInterfaceSubClass,
             i.bInterfaceProtocol,
@@ -101,6 +113,7 @@ impl DescriptorVisitor for IdentifyHid {
                 Self::INTERFACE_PROTOCOL_KEYBOARD,
             ) => {
                 self.hid_configuration = self.current_configuration;
+                true
             }
             _ => {
                 debug::println!(
@@ -109,7 +122,14 @@ impl DescriptorVisitor for IdentifyHid {
                     i.bInterfaceSubClass,
                     i.bInterfaceProtocol
                 );
+                false
             }
+        }
+    }
+    fn on_endpoint(&mut self, e: &EndpointDescriptor) {
+        if self.hid_interface {
+            debug::println!("HID endpoint is {}", e.bEndpointAddress);
+            self.hid_endpoint = Some(e.bEndpointAddress & 0x7F);
         }
     }
 }

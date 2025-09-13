@@ -194,8 +194,15 @@ mod app {
                             continue;
                         }
                     };
+                    let endpoint = match hid.endpoint() {
+                        Some(e) => e,
+                        None => {
+                            defmt::warn!("- No endpoint on HID interface");
+                            continue;
+                        }
+                    };
                     let address = device.address();
-                    let mut ms = match Hid::new(&stack, device) {
+                    let mut ms = match Hid::new(&stack, device, endpoint) {
                         Ok(ms) => ms,
                         Err(e) => {
                             defmt::warn!("- Hid::new() returned {:?}", e);
