@@ -86,7 +86,7 @@ impl IdentifyHid {
     /// the mode we want, because it means we can assume what the descriptor
     /// looks like without having to parse it.
     ///
-    /// See https://www.usb.org/sites/default/files/hid1_11.pdf Appendix B.
+    /// See <https://www.usb.org/sites/default/files/hid1_11.pdf> Appendix B.
     pub const INTERFACE_SUBCLASS_BOOT: u8 = 1;
 
     /// Endpoint on which to listen for HID reports
