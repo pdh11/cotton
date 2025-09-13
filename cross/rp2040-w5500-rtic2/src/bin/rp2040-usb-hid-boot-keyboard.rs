@@ -254,11 +254,11 @@ mod app {
                                     for key_event in kb.handle_report(&report)
                                     {
                                         match key_event {
-                                            pc_keyboard::DecodedKey::RawKey(key_code) if key_code == pc_keyboard::KeyCode::ArrowUp => {
+                                            pc_keyboard::DecodedKey::RawKey(pc_keyboard::KeyCode::ArrowUp) => {
                                                 defmt::info!("< Raw Key: ArrowUp (LED On)");
                                                 cx.local.led_pin.set_high().unwrap();
                                             }
-                                            pc_keyboard::DecodedKey::RawKey(key_code) if key_code == pc_keyboard::KeyCode::ArrowDown => {
+                                            pc_keyboard::DecodedKey::RawKey(pc_keyboard::KeyCode::ArrowDown) => {
                                                 defmt::info!("< Raw Key: ArrowDown (LED Off)");
                                                 cx.local.led_pin.set_low().unwrap();
                                             }
