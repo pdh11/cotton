@@ -17,7 +17,10 @@ pub struct Hid<'a, HC: HostController> {
 }
 
 #[cfg(feature = "defmt")]
-impl<HC> defmt::Format for Hid<'_, HC> where HC: HostController {
+impl<HC> defmt::Format for Hid<'_, HC>
+where
+    HC: HostController,
+{
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "Hid(dev={}, ep={=u8})", self.device, self.in_ep);
     }
@@ -139,3 +142,7 @@ impl IdentifyFromDescriptors for IdentifyHid {
         self.hid_configuration
     }
 }
+
+#[cfg(all(test, feature = "std"))]
+#[path = "tests/hid.rs"]
+mod tests;
