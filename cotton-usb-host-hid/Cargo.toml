@@ -5,10 +5,10 @@ description = "USB HID host for embedded devices"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
 categories = []
-edition = "2021"
-authors = ["Jonathan Pallant <github@thejpster.org.uk>"]
+edition.workspace = true
+authors = ["Jonathan Pallant <github@thejpster.org.uk>", "Peter Hartley <pdh@utter.chaos.org.uk>"]
 license = "CC0-1.0"
-rust-version = "1.80"
+rust-version.workspace = true
 
 [dependencies]
 cotton-usb-host = { version = "0.2", path = "../cotton-usb-host", default-features = false }

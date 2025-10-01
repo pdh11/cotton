@@ -33,6 +33,8 @@ Currently supports:
 
 System-tests and examples:
 
+ - [rp2040-usb-hid-boot-keyboard](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-hid-boot-keyboard.rs): identifying
+   and driving USB keyboards ("Human Interface Devices", HID);
  - [rp2040-usb-msc](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-msc.rs):
    identifying and driving mass-storage class devices (e.g., USB flash
    drives); **WARNING** this _writes_ to the USB drive, don't use one with
@@ -134,6 +136,10 @@ called `UsbBus::device_events()`, it will receive `DeviceInfo` objects
 which allow your code to identify relevant devices either by class
 code (for generic class drivers such as mass-storage or HID) or by VID
 and PID (for device-specific drivers).
+
+The cotton-usb-host-msc crate includes example usage of bulk endpoints;
+the cotton-usb-host-hid crate uses an interrupt endpoint. (Isochronous
+endpoints are not currently supported.)
 
 ## Writing drivers for alternative host controllers
 
