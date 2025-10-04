@@ -2,9 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
-#![cfg_attr(docsrs, feature(doc_cfg_hide))]
-#![cfg_attr(docsrs, doc(cfg_hide(doc)))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 mod debug;
 
 /// A generic SCSI device
