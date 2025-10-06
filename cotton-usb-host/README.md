@@ -63,7 +63,7 @@ freestanding hubs which _appear_ to have more than about 7 downstream
 ports, are in fact multiple hubs in a trenchcoat.
 
 Library documentation is [on
-docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/).
+docs.rs](https://docs.rs/cotton-usb-host/latest/cotton_usb_host/).
 
 ## Using cotton-usb-host with a Raspberry&nbsp;Pi Pico
 
