@@ -1,6 +1,6 @@
 [package]
 name = "cotton-usb-host"
-version = "0.2.0"
+version = "0.2.1"
 description = "USB host stack for embedded devices"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
