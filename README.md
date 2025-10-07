@@ -44,6 +44,13 @@ So far:
    [![docs.rs](https://img.shields.io/docsrs/cotton-usb-host)](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/): a no-std, no-alloc asynchronous
    USB *host* stack, initially for RP2040.
 
+ - [cotton-usb-host-hid](https://crates.io/crates/cotton-usb-host-hid)
+   [![Crates.io](https://img.shields.io/crates/v/cotton-usb-host-hid)](https://crates.io/crates/cotton-usb-host-hid)
+   [![Crates.io](https://img.shields.io/crates/d/cotton-usb-host-hid)](https://crates.io/crates/cotton-usb-host-hid)
+   [![docs.rs](https://img.shields.io/docsrs/cotton-usb-host-hid)](https://docs.rs/cotton-usb-host-hid/latest/cotton_usb-host-hid/): USB "Human Interface Device" (HID) keyboard support (i.e.,
+   supporting attaching USB keyboards to a microcontroller, to allow keyboard
+   input).
+
  - [cotton-usb-host-msc](https://crates.io/crates/cotton-usb-host-msc)
    [![Crates.io](https://img.shields.io/crates/v/cotton-usb-host-msc)](https://crates.io/crates/cotton-usb-host-msc)
    [![Crates.io](https://img.shields.io/crates/d/cotton-usb-host-msc)](https://crates.io/crates/cotton-usb-host-msc)
@@ -103,6 +110,9 @@ itself will be useful to others:
     combining [Embassy](https://embassy.dev) +
     cotton-unique +
     cotton-ssdp; proof-of-concept, not very Embassy-idiomatic;
+
+  - [rp2040-usb-hid-boot-keyboard](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-hid-boot-keyboard.rs):
+   combining RTIC&nbsp;2 + cotton-usb-host + cotton-usb-host-hid;
 
   - [rp2040-usb-msc](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-msc.rs):
    combining RTIC&nbsp;2 + cotton-usb-host + cotton-usb-host-msc;

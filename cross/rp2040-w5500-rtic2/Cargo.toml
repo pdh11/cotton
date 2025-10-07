@@ -32,11 +32,14 @@ codegen-units = 1
 opt-level = "s"
 lto = true
 codegen-units = 1
-strip = "symbols"
+debug = 2
 
 [dependencies]
 cotton-usb-host = { path = "../../cotton-usb-host", default-features = false, features = [
   "rp2040",
+] }
+cotton-usb-host-hid = { path = "../../cotton-usb-host-hid", default-features = false, features = [
+  "defmt",
 ] }
 cotton-usb-host-msc = { path = "../../cotton-usb-host-msc", default-features = false, features = [
   "defmt",
@@ -55,6 +58,7 @@ cortex-m = "0.7.7"
 cortex-m-rt = "0.7"
 defmt = "1"
 defmt-rtt = "1"
+futures = { version = "0.3", default-features = false }
 panic-probe = { version = "1", features = ["print-defmt"] }
 rp-pico = "0.9"
 rp2040-flash = "0.5"
@@ -85,3 +89,5 @@ rtic-common = "1"
 futures-util = { version = "0.3", default-features = false }
 static_cell = "2"
 portable-atomic = { version = "1", features = ["critical-section"] }
+# Relies on pc-keyboard USB support, which is not in 0.8.0
+pc-keyboard = { git = "https://github.com/rust-embedded-community/pc-keyboard.git", rev="6d03cf7" }
