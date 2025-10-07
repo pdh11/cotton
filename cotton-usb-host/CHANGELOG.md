@@ -3,6 +3,13 @@
 
 ## Unreleased
 
+## [0.2.1] 2025-10-07
+
+### Fixed
+
+* RP2040: Fixed race-condition in ISR that could lead to transfer-complete
+  interrupts getting dropped (and everything grinding to a halt).
+
 ## [0.2.0] 2025-08-20
 
 ### Fixed
