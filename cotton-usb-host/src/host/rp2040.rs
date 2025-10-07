@@ -25,9 +25,10 @@ impl UsbShared {
         let regs = unsafe { pac::USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
         /*defmt::info!(
-                    "IRQ ints={:x} inte={:x}",
+           "IRQ ints={:x} inte={:x} intr={:x}",
                     ints.bits(),
-            regs.inte().read().bits()
+            regs.inte().read().bits(),
+            regs.intr().read().bits(),
         );*/
 
         if ints.buff_status().bit() {
@@ -50,15 +51,18 @@ impl UsbShared {
             self.pipe_wakers[0].wake();
         }
 
-        // Disable any remaining interrupts so we don't have an IRQ storm
-        let bits = regs.ints().read().bits();
+        // Disable any remaining interrupts so we don't have an IRQ storm.
+        // DO NOT re-read regs.ints() otherwise it will lose any interrupts
+        // whose status changed DURING the ISR!
+        let bits = ints.bits();
         unsafe {
             regs.inte().modify(|r, w| w.bits(r.bits() & !bits));
         }
         /*        defmt::info!(
-            "IRQ2 ints={:x} inte={:x}",
+            "IRQ2 ints={:x} inte={:x} intr={:x}",
             bits,
-            regs.inte().read().bits()
+            regs.inte().read().bits(),
+            regs.intr().read().bits()
         ); */
     }
 }
