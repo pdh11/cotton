@@ -20,7 +20,7 @@ tokio = { version = "1.24", default-features = false, features = [
   "net",
   "rt",
 ], optional = true }
-tokio-stream = { version = "0.1.2", default-features = false, optional = true }
+tokio-stream = { version = "0.1.4", default-features = false, optional = true }
 futures = { version = "0.3", default-features = false, optional = true }
 futures-util = { version = "0.3.31", default-features = false, features = [
   "async-await",
