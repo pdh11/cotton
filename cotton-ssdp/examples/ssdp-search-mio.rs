@@ -18,7 +18,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2))?;
 
-    let uuid = uuid::Uuid::new_v4();
+    let uuid =
+        uuid::Builder::from_random_bytes(fastrand::u128(..).to_ne_bytes())
+            .into_uuid();
+
     ssdp.advertise(
         uuid.to_string(),
         cotton_ssdp::Advertisement {

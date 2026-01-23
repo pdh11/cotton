@@ -61,7 +61,11 @@ pub fn ssdp_test<F: FnOnce(SsdpTest) -> () + panic::UnwindSafe>(
                 Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2))
                     .unwrap();
 
-            let uuid = uuid::Uuid::new_v4();
+            let uuid = uuid::Builder::from_random_bytes(
+                fastrand::u128(..).to_ne_bytes(),
+            )
+            .into_uuid();
+
             ssdp.advertise(
                 uuid.to_string(),
                 cotton_ssdp::Advertisement {

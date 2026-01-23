@@ -14,7 +14,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut netif = cotton_netif::get_interfaces_async()?;
     let mut ssdp = AsyncService::new()?;
     let mut map = HashMap::new();
-    let uuid = uuid::Uuid::new_v4();
+    let uuid =
+        uuid::Builder::from_random_bytes(fastrand::u128(..).to_ne_bytes())
+            .into_uuid();
 
     ssdp.advertise(
         uuid.to_string(),

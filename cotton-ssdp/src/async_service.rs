@@ -4,7 +4,6 @@ use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
 use futures::Stream;
-use rand::RngCore;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -92,10 +91,8 @@ impl AsyncService {
     }
 
     fn new_inner(create: InnerNewFn) -> Result<Self, std::io::Error> {
-        let inner = Arc::new(create(Engine::new(
-            rand::rng().next_u32(),
-            Instant::now(),
-        ))?);
+        let inner =
+            Arc::new(create(Engine::new(fastrand::u32(..), Instant::now()))?);
         let inner2 = inner.clone();
 
         tokio::spawn(async move {
