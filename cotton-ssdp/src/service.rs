@@ -3,7 +3,6 @@ use crate::refresh_timer::StdTimebase;
 use crate::udp;
 use crate::udp::TargetedReceive;
 use crate::{Advertisement, Notification};
-use rand::RngCore;
 use std::time::Instant;
 
 struct SyncCallback {
@@ -101,7 +100,8 @@ this simpler example is not in itself compliant with that document.)
 # let mut poll = mio::Poll::new().unwrap();
 # #[cfg(not(miri))]
 # let mut ssdp = Service::new(poll.registry(), (SSDP_TOKEN1, SSDP_TOKEN2)).unwrap();
-    let uuid = uuid::Uuid::new_v4();
+    let uuid = uuid::Builder::from_random_bytes(
+        fastrand::u128(..).to_ne_bytes()).into_uuid();
 # #[cfg(not(miri))]
     ssdp.advertise(
         uuid.to_string(),
@@ -187,7 +187,7 @@ impl Service {
             mio::net::UdpSocket::from_std(socket(1900u16)?);
         let mut search_socket = mio::net::UdpSocket::from_std(socket(0u16)?); // ephemeral port
         let mut engine = Engine::<SyncCallback, StdTimebase>::new(
-            rand::rng().next_u32(),
+            fastrand::u32(..),
             Instant::now(),
         );
 

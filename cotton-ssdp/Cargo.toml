@@ -33,15 +33,8 @@ nix = { version = "0.30", default-features = false, features = [
   "uio",
 ], optional = true }
 libc = { version = "0.2.171", default-features = false, optional = true }
-uuid = { version = "1.8", default-features = false, features = [
-  "v4",
-], optional = true }
+uuid = { version = "1.8", default-features = false, optional = true }
 socket2 = { version = "0.5", default-features = false, optional = true }
-rand = { version = "0.9", default-features = false, features = [
-  "std",
-  "std_rng",
-  "thread_rng",
-], optional = true }
 mio = { version = "1", default-features = false, features = [
   "os-poll",
   "net",
@@ -56,6 +49,7 @@ smoltcp = { version = "0.12", default-features = false, features = [
   "socket-dhcpv4",
   "multicast"
 ], optional = true }
+fastrand = { version = "2", optional = true }
 
 [dev-dependencies]
 serial_test = { version = "3" }
@@ -67,7 +61,7 @@ std = [
   "dep:libc",
   "dep:nix",
   "dep:socket2",
-  "dep:rand",
+  "dep:fastrand",
   "dep:uuid",
   "smoltcp/alloc",
   "smoltcp/std",
