@@ -12,6 +12,6 @@ cortex-m-rt = "0.7"
 critical-section = "1.2"
 defmt = "1"
 defmt-rtt = "1"
-rp235x-hal = {version = "0.3.0", features = ["critical-section-impl", "rt", "defmt"]}
+rp235x-hal = {version = "0.4.0", features = ["critical-section-impl", "rt", "defmt"]}
 git-version = "0.3.9"
 panic-probe = { version = "1", features = ["print-defmt"] }
