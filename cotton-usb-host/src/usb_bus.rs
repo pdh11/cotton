@@ -392,10 +392,21 @@ impl<HC: HostController> Stream for HubStateStream<'_, HC> {
         self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> Poll<Option<Self::Item>> {
-        for pipe in self.state.pipes.borrow_mut().iter_mut().flatten() {
-            let poll = pipe.poll_next_unpin(cx);
-            if poll.is_ready() {
-                return poll;
+        for slot in self.state.pipes.borrow_mut().iter_mut() {
+            if let Some(pipe) = slot {
+                match pipe.poll_next_unpin(cx) {
+                    Poll::Ready(Some(packet)) => {
+                        return Poll::Ready(Some(packet));
+                    }
+                    Poll::Ready(None) => {
+                        // Pipe terminated (e.g. device disconnected and
+                        // the host controller halted the endpoint). Drop
+                        // the pipe so its resources are freed and this
+                        // slot can be reused for a future hub.
+                        *slot = None;
+                    }
+                    Poll::Pending => {}
+                }
             }
         }
         Poll::Pending
@@ -552,6 +563,14 @@ impl<HC: HostController> UsbBus<HC> {
                                 .topology
                                 .borrow_mut()
                                 .device_disconnect(0, 1);
+                            // Drop all hub interrupt pipes so their
+                            // resources are freed.  Without this, a
+                            // reconnected hub would find occupied slots
+                            // in `pipes` from the previous connection.
+                            for slot in hub_state.pipes.borrow_mut().iter_mut()
+                            {
+                                *slot = None;
+                            }
                             DeviceEvent::Disconnect(BitSet(0xFFFF_FFFF))
                         }
                     }
