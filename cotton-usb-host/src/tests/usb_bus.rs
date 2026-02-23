@@ -3236,6 +3236,33 @@ fn device_events_hub_packet() {
 }
 
 #[test]
+fn device_events_hub_packet_end_of_stream() {
+    do_test(
+        |hc| {
+            hc.expect_device_detect().returning(|| {
+                let mut mdd = MockDeviceDetect::new();
+                mdd.expect_poll_next().returning(|_| Poll::Pending);
+                mdd
+            });
+        },
+        |f| {
+            f.hub_state.pipes.borrow_mut()[0] = {
+                let mut ip = MockInterruptPipe::new();
+                ip.expect_poll_next().returning(|_| {
+                    Poll::Ready(None)
+                });
+                Some(ip)
+            };
+            let stream = pin!(f.bus.device_events(&f.hub_state, no_delay));
+
+            let poll = stream.poll_next(f.c);
+            let result = unwrap_poll(poll);
+            assert_eq!(result, None);
+        },
+    );
+}
+
+#[test]
 fn device_events_hub_packet_fails() {
     do_test(
         |hc| {
