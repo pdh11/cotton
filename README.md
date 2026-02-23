@@ -158,6 +158,16 @@ Changes to the Minimum Supported Rust Version are breaking changes and get
 a new major version. This policy may change in future, but such a change would
 itself be a breaking change and get a new major version.
 
+Cotton requests the MSRV-aware resolver (see .cargo/config.toml). This
+means that it should remain buildable with its current MSRV even if
+some dependencies update their MSRV in a minor version -- just so long
+as the "cargo update" or "cargo fetch" operation is done with cargo
+1.84 or later:
+
+    cargo +1.85 update
+    cargo +1.80 build
+
+
 ### Licence
 
 Everything is licensed under Creative Commons CC0, qv.
