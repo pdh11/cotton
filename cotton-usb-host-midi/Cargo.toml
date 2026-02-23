@@ -1,0 +1,19 @@
+[package]
+name = "cotton-usb-host-midi"
+version = "0.1.0"
+description = "USB MIDI host for embedded devices"
+homepage = "https://github.com/pdh11/cotton"
+repository = "https://github.com/pdh11/cotton"
+categories = []
+edition.workspace = true
+license = "CC0-1.0"
+rust-version.workspace = true
+
+[dependencies]
+cotton-usb-host = { version = "0.2", path = "../cotton-usb-host", default-features = false }
+defmt = { version = "1", optional = true }
+
+[features]
+default = ["std"]
+std = ["cotton-usb-host/std"]
+defmt = ["dep:defmt", "cotton-usb-host/defmt"]

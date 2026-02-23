@@ -6,6 +6,7 @@ members = [
   "cotton-unique",
   "cotton-usb-host",
   "cotton-usb-host-hid",
+  "cotton-usb-host-midi",
   "cotton-usb-host-msc",
   "cotton-w5500",
   "systemtests",
