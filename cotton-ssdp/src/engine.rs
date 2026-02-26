@@ -184,29 +184,25 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
 
         for (key, value) in &mut self.advertisements {
             match &value.response_needed {
-                ResponseNeeded::Multicast(instant) => {
-                    if now >= *instant {
-                        value.notify_on_all(key, &self.interfaces, socket);
-                        value.response_needed = ResponseNeeded::None;
-                    }
+                ResponseNeeded::Multicast(instant) if now >= *instant => {
+                    value.notify_on_all(key, &self.interfaces, socket);
+                    value.response_needed = ResponseNeeded::None;
                 }
                 ResponseNeeded::Unicast(
                     instant,
                     wasfrom,
                     wasto,
                     response_type,
-                ) => {
-                    if now >= *instant {
-                        Self::send_response(
-                            socket,
-                            *wasto,
-                            *wasfrom,
-                            key,
-                            response_type,
-                            &value.advertisement.location,
-                        );
-                        value.response_needed = ResponseNeeded::None;
-                    }
+                ) if now >= *instant => {
+                    Self::send_response(
+                        socket,
+                        *wasto,
+                        *wasfrom,
+                        key,
+                        response_type,
+                        &value.advertisement.location,
+                    );
+                    value.response_needed = ResponseNeeded::None;
                 }
                 _ => (),
             }
@@ -400,14 +396,12 @@ impl<CB: Callback, T: Timebase> Engine<CB, T> {
                                     previous_from,
                                     _,
                                     _,
-                                ) => {
-                                    if wasfrom != previous_from {
+                                ) if wasfrom != previous_from => {
                                         // Two different searchers are now
                                         // asking for this: send a
                                         // multicast reply.
-                                        value.response_needed =
-                                            ResponseNeeded::Multicast(instant);
-                                    }
+                                    value.response_needed =
+                                        ResponseNeeded::Multicast(instant);
                                 }
                                 _ => (),
                             }
