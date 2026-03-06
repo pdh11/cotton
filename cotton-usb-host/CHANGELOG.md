@@ -3,6 +3,12 @@
 
 ## Unreleased
 
+## [0.2.2] 2026-03-06
+
+### Fixed
+
+* Fix hub disconnect/reconnect (@tacertain)
+
 ## [0.2.1] 2025-10-07
 
 ### Fixed
