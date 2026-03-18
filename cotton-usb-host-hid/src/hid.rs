@@ -28,7 +28,7 @@ where
 
 /// A report from our HID device
 ///
-/// NB: Only supports 8-byte reports from a Boot mode keyboard.
+/// NB: Only supports 8-byte reports from a Boot mode keyboard & mice.
 #[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HidReport {
