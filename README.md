@@ -47,8 +47,8 @@ So far:
  - [cotton-usb-host-hid](https://crates.io/crates/cotton-usb-host-hid)
    [![Crates.io](https://img.shields.io/crates/v/cotton-usb-host-hid)](https://crates.io/crates/cotton-usb-host-hid)
    [![Crates.io](https://img.shields.io/crates/d/cotton-usb-host-hid)](https://crates.io/crates/cotton-usb-host-hid)
-   [![docs.rs](https://img.shields.io/docsrs/cotton-usb-host-hid)](https://docs.rs/cotton-usb-host-hid/latest/cotton_usb-host-hid/): USB "Human Interface Device" (HID) keyboard support (i.e.,
-   supporting attaching USB keyboards to a microcontroller, to allow keyboard
+   [![docs.rs](https://img.shields.io/docsrs/cotton-usb-host-hid)](https://docs.rs/cotton-usb-host-hid/latest/cotton_usb-host-hid/): USB "Human Interface Device" (HID) keyboard & mouse support (i.e.,
+   supporting attaching USB keyboards & mice to a microcontroller, to allow keyboard & mouse
    input).
 
  - [cotton-usb-host-msc](https://crates.io/crates/cotton-usb-host-msc)

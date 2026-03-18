@@ -20,4 +20,4 @@ help you if you want your microcontroller to _appear_ as a HID
 device when plugged into a USB host such a laptop -- that's the other
 way around!
 
-Currently only HID Keyboards in 'BIOS' mode are supported.
+Currently only HID Keyboards in 'BIOS' mode and mice are supported.
