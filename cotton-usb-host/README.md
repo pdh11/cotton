@@ -31,6 +31,11 @@ Currently supports:
 
  - RP2040 (USB 1.1 host)[^1]
 
+Also supports, via other crates:
+
+ - i.MX RT 1062 as used in Teensy 4.1, see
+   [imxrt-usbh](https://github.com/imxrt-rs/imxrt-usbh)
+
 System-tests and examples:
 
  - [rp2040-usb-hid-boot-keyboard](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500-rtic2/src/bin/rp2040-usb-hid-boot-keyboard.rs): identifying
@@ -156,6 +161,9 @@ The RP2040 support is in this repo to provide a convenient worked example;
 specific host-controller support for other microcontrollers probably
 belongs in those microcontrollers' HAL crates.
 
+Support for i.MX RT processors (such as used in the Teensy 4.1) has been
+implemented in [imxrt-usbh](https://github.com/imxrt-rs/imxrt-usbh).
+
 ## TODO
 
 TODO before merge
@@ -165,7 +173,6 @@ TODO before merge
  - [x] Interlocking to avoid contending on pipe 0
  - [x] Rename types to wire
  - [x] Introduce delay to process_hub_packet and do away with currently_resetting
- - [ ] Remove from HubEventStream on disconnect
  - [x] Move all tests to src/tests
 
 TODO before 0.1.0:
