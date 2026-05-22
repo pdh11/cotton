@@ -1065,7 +1065,7 @@ impl<HC: HostController> UsbBus<HC> {
     ) -> Result<UsbDevice, UsbError> {
         debug::println!("gbc!");
         let bc = self.get_basic_configuration(&device).await?;
-        debug::println!("cfg: {:?}", &bc);
+        debug::println!("cfg: {:?}", bc);
         let device = self.configure(device, bc.configuration_value).await?;
         hub_state.try_add(
             &self.driver,
