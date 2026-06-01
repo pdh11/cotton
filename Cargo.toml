@@ -18,3 +18,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 rust-version = "1.80"
+
+[workspace.dependencies]
+nix = { version = "0.31", default-features = false }
+libc = { version = "0.2.180", default-features = false }
