@@ -1,6 +1,6 @@
 [package]
 name = "cotton-netif"
-version = "0.1.0"
+version = "0.2.0"
 description = "Enumerating available network interfaces and their IP addresses"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
@@ -35,10 +35,8 @@ futures-util = { version = "0.3.31", default-features = false, features = [
   "async-await-macro",
 ], optional = true }
 async-stream = { version = "0.3.1", default-features = false, optional = true }
-nix = { version = "0.30", default-features = false, features = [
-  "net",
-], optional = true }
-libc = { version = "0.2.171", default-features = false, optional = true }
+nix = { workspace = true, features = ["net"], optional = true }
+libc = { workspace = true, optional = true }
 
 [features]
 default = ["std", "async", "sync"]

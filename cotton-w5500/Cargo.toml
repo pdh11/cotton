@@ -1,6 +1,6 @@
 [package]
 name = "cotton-w5500"
-version = "0.2.0"
+version = "0.3.0"
 description = "smoltcp driver for Wiznet W5500 SPI-to-Ethernet chip in MACRAW mode"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
@@ -27,7 +27,7 @@ rp2040-hal = { version = "0.10", optional = true }
 embedded-hal-bus = { version = "0.1", optional = true }
 
 [dev-dependencies]
-mockall = "0.13"
+mockall.workspace = true
 
 [features]
 default = ["smoltcp", "std"]

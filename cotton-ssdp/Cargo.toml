@@ -1,6 +1,6 @@
 [package]
 name = "cotton-ssdp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Implementing SSDP, the Simple Service Discovery Protocol"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
@@ -14,7 +14,7 @@ rust-version.workspace = true
 all-features = true
 
 [dependencies]
-cotton-netif = { path = "../cotton-netif", version = "0.1.0", default-features = false }
+cotton-netif = { path = "../cotton-netif", version = "0.2", default-features = false }
 tokio = { version = "1.24", default-features = false, features = [
   "macros",
   "net",
@@ -27,14 +27,14 @@ futures-util = { version = "0.3.31", default-features = false, features = [
   "async-await-macro",
 ], optional = true }
 slotmap = { version = "1", default-features = false }
-nix = { version = "0.30", default-features = false, features = [
+nix = { workspace = true, features = [
   "net",
   "socket",
   "uio",
 ], optional = true }
-libc = { version = "0.2.171", default-features = false, optional = true }
+libc = { workspace = true, optional = true }
 uuid = { version = "1.8", default-features = false, optional = true }
-socket2 = { version = "0.5", default-features = false, optional = true }
+socket2 = { version = "0.6", default-features = false, optional = true }
 mio = { version = "1", default-features = false, features = [
   "os-poll",
   "net",
