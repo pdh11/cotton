@@ -34,7 +34,7 @@ nix = { workspace = true, features = [
 ], optional = true }
 libc = { workspace = true, optional = true }
 uuid = { version = "1.8", default-features = false, optional = true }
-socket2 = { version = "0.5", default-features = false, optional = true }
+socket2 = { version = "0.6", default-features = false, optional = true }
 mio = { version = "1", default-features = false, features = [
   "os-poll",
   "net",
