@@ -17,7 +17,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 
 [workspace.dependencies]
 nix = { version = "0.31", default-features = false }

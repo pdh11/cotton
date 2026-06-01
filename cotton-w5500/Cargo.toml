@@ -1,6 +1,6 @@
 [package]
 name = "cotton-w5500"
-version = "0.2.0"
+version = "0.3.0"
 description = "smoltcp driver for Wiznet W5500 SPI-to-Ethernet chip in MACRAW mode"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"

@@ -1,6 +1,6 @@
 [package]
 name = "cotton-unique"
-version = "0.2.0"
+version = "0.3.0"
 description = "Deterministic per-device unique IDs for embedded systems"
 homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
