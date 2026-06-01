@@ -14,7 +14,7 @@ rust-version.workspace = true
 bytemuck = "1.9"
 futures = { version = "0.3", default-features = false }
 defmt = { version = "1", optional = true }
-mockall = { version = "0.13", optional = true }
+mockall = { workspace = true, optional = true }
 
 [features]
 default = ["std"]

@@ -22,3 +22,4 @@ rust-version = "1.80"
 [workspace.dependencies]
 nix = { version = "0.31", default-features = false }
 libc = { version = "0.2.180", default-features = false }
+mockall = { version = "0.14" }
