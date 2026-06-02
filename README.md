@@ -154,18 +154,14 @@ My long-term goals for this project as a whole:
 
 ### MSRV policy
 
-Changes to the Minimum Supported Rust Version are breaking changes and get
-a new major version. This policy may change in future, but such a change would
-itself be a breaking change and get a new major version.
+Cotton's MSRV is now 1.85, new enough to include the MSRV-aware dependency
+resolver. This means that future MSRV updates will be minor version bumps only,
+not major version bumps, because they will not break downstream builds.
 
-Cotton requests the MSRV-aware resolver (see .cargo/config.toml). This
-means that it should remain buildable with its current MSRV even if
-some dependencies update their MSRV in a minor version -- just so long
-as the "cargo update" or "cargo fetch" operation is done with cargo
-1.84 or later:
-
-    cargo +1.85 update
-    cargo +1.80 build
+The final releases which still built with pre-MSRV-aware versions
+(1.80) were cotton-netif&nbsp;0.2, cotton-scsi&nbsp;0.2, cotton-ssdp&nbsp;0.2,
+cotton-unique&nbps;0.3, cotton-usb-host&nbsp;0.2, cotton-usb-host-hid&nbsp;0.1,
+cotton-usb-msc&nbsp;0.2, and cotton-w5500&nbsp;0.2.
 
 
 ### Licence
