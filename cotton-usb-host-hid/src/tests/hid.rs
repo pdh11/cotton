@@ -109,10 +109,50 @@ const DELL_KEYBOARD: &[u8] = &[
     16, 1, 0, 1, 34, 216, 0, 7, 5, 130, 3, 8, 0, 10,
 ];
 
+const PI_KEYBOARD: &[u8] = &[
+    // configuration 1
+    9, 2, 59, 0, 2, 1, 0, 160, 50,
+    // interface #0: HID keyboard
+    9, 4, 0, 0, 1, 3, 1, 1, 0,
+    // HID dtor
+    9, 33, 17, 1, 0, 1, 34, 65, 0,
+    // EP dtor: 1, interrupt, IN
+    7, 5, 129, 3, 8, 0, 10,
+    // interface #1: HID unspecified
+    9, 4, 1, 0, 1, 3, 0, 0, 0,
+    // HID dtor
+    9, 33, 17, 1, 0, 1, 34, 59, 0,
+    // EP dtor: 2, interrupt, IN
+    7, 5, 130, 3, 5, 0, 10
+    ];
+
 #[test]
 fn test_identify_dell() {
     let mut hid = IdentifyHid::default();
     cotton_usb_host::wire::parse_descriptors(DELL_KEYBOARD, &mut hid);
+    assert_eq!(hid.identify(), Some(1));
+    assert_eq!(hid.endpoint(), Some(1));
+}
+
+#[test]
+fn test_identify_pi() {
+    let mut hid = IdentifyHid::default();
+    cotton_usb_host::wire::parse_descriptors(PI_KEYBOARD, &mut hid);
+    assert_eq!(hid.identify(), Some(1));
+    assert_eq!(hid.endpoint(), Some(1));
+}
+
+#[test]
+fn test_dont_identify_pi_as_mouse() {
+    let mut hid = IdentifyHid::new(IdentifyHidType::Mouse);
+    cotton_usb_host::wire::parse_descriptors(PI_KEYBOARD, &mut hid);
+    assert_eq!(hid.identify(), None);
+}
+
+#[test]
+fn test_identify_pi_as_any() {
+    let mut hid = IdentifyHid::new(IdentifyHidType::Both);
+    cotton_usb_host::wire::parse_descriptors(PI_KEYBOARD, &mut hid);
     assert_eq!(hid.identify(), Some(1));
     assert_eq!(hid.endpoint(), Some(1));
 }
@@ -152,6 +192,27 @@ fn test_dont_identify_hid_mouse() {
     let mut hid = IdentifyHid::default();
     cotton_usb_host::wire::parse_descriptors(GIGABYTE_MOUSE, &mut hid);
     assert_eq!(hid.identify(), None);
+}
+
+#[test]
+fn test_dont_identify_hid_mouse_as_keyboard() {
+    let mut hid = IdentifyHid::new(IdentifyHidType::Keyboard);
+    cotton_usb_host::wire::parse_descriptors(GIGABYTE_MOUSE, &mut hid);
+    assert_eq!(hid.identify(), None);
+}
+
+#[test]
+fn test_identify_hid_mouse() {
+    let mut hid = IdentifyHid::new(IdentifyHidType::Mouse);
+    cotton_usb_host::wire::parse_descriptors(GIGABYTE_MOUSE, &mut hid);
+    assert_eq!(hid.identify(), Some(1));
+}
+
+#[test]
+fn test_identify_hid_mouse_as_any() {
+    let mut hid = IdentifyHid::new(IdentifyHidType::Both);
+    cotton_usb_host::wire::parse_descriptors(GIGABYTE_MOUSE, &mut hid);
+    assert_eq!(hid.identify(), Some(1));
 }
 
 const HANDBAG: &[u8] = &[
