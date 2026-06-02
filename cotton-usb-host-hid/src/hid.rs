@@ -28,7 +28,7 @@ where
 
 /// A report from our HID device
 ///
-/// NB: Only supports 8-byte reports from a Boot mode keyboard.
+/// NB: Only supports 8-byte reports from a Boot mode keyboard & mice.
 #[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HidReport {
@@ -47,7 +47,7 @@ impl<'a, HC: HostController> Hid<'a, HC> {
         Ok(Self { bus, device, in_ep })
     }
 
-    /// Produce a stream of HID reports from a Boot-mode keyboard
+    /// Produce a stream of HID reports from a Boot-mode keyboard or mouse
     pub fn handle(&mut self) -> impl Stream<Item = HidReport> + '_ {
         self.bus
             .interrupt_endpoint_in(
@@ -77,6 +77,7 @@ pub struct IdentifyHid {
     hid_configuration: Option<u8>,
     hid_interface: bool,
     hid_endpoint: Option<u8>,
+    hid_match_type: IdentifyHidType
 }
 
 impl IdentifyHid {
@@ -98,6 +99,16 @@ impl IdentifyHid {
     pub fn endpoint(&self) -> Option<u8> {
         self.hid_endpoint
     }
+
+    pub fn new(hid_type: IdentifyHidType) -> Self {
+        IdentifyHid {
+            current_configuration: None,
+            hid_configuration: None,
+            hid_interface: false,
+            hid_endpoint: None,
+            hid_match_type: hid_type
+        }
+    }
 }
 
 impl DescriptorVisitor for IdentifyHid {
@@ -108,13 +119,11 @@ impl DescriptorVisitor for IdentifyHid {
         self.hid_interface = match (
             i.bInterfaceClass,
             i.bInterfaceSubClass,
-            i.bInterfaceProtocol,
         ) {
             (
                 Self::INTERFACE_CLASS,
                 Self::INTERFACE_SUBCLASS_BOOT,
-                Self::INTERFACE_PROTOCOL_KEYBOARD,
-            ) => {
+            ) if self.hid_match_type.match_protocol(i.bInterfaceProtocol) => {
                 self.hid_configuration = self.current_configuration;
                 true
             }
@@ -140,6 +149,30 @@ impl DescriptorVisitor for IdentifyHid {
 impl IdentifyFromDescriptors for IdentifyHid {
     fn identify(&self) -> Option<u8> {
         self.hid_configuration
+    }
+}
+
+#[derive(Default)]
+pub enum IdentifyHidType {
+    #[default]
+    Keyboard,
+    Mouse,
+    Both
+}
+
+impl IdentifyHidType {
+    /// This is the bInterfaceProtocol for Keyboards
+    pub const INTERFACE_PROTOCOL_KEYBOARD: u8 = 1;
+    /// This is the bInterfaceProtocol for Mice
+    pub const INTERFACE_PROTOCOL_MOUSE: u8 = 2;
+
+    pub fn match_protocol(&self, interface_type: u8) -> bool {
+        match self {
+            Self::Keyboard => interface_type == Self::INTERFACE_PROTOCOL_KEYBOARD,
+            Self::Mouse => interface_type == Self::INTERFACE_PROTOCOL_MOUSE,
+            Self::Both => interface_type == Self::INTERFACE_PROTOCOL_KEYBOARD || 
+                interface_type == Self::INTERFACE_PROTOCOL_MOUSE,
+        }
     }
 }
 
