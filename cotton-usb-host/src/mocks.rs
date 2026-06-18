@@ -44,7 +44,7 @@ mock! {
         #[allow(missing_docs)]
         pub fn reset_root_port(&self, rst: bool);
 
-        #[allow(missing_docs)]
+        #[allow(missing_docs, clippy::extra_unused_lifetimes)]
         pub fn control_transfer<'a>(
             &self,
             address: u8,

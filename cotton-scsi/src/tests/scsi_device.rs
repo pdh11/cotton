@@ -4,14 +4,7 @@ use mockall::mock;
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::pin::{pin, Pin};
-use std::sync::Arc;
-use std::task::{Poll, Wake, Waker};
-
-pub struct NoOpWaker;
-
-impl Wake for NoOpWaker {
-    fn wake(self: Arc<Self>) {}
-}
+use std::task::{Poll, Waker};
 
 pub type MockError = Error<<MockScsiTransport as ScsiTransport>::Error>;
 
@@ -82,8 +75,7 @@ fn do_test<
     mut setup: SetupFn,
     mut test: TestFn,
 ) {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let mut c = core::task::Context::from_waker(Waker::noop());
 
     let mut hc = MockScsiTransport::new();
 

@@ -2,13 +2,12 @@ use super::*;
 use crate::scsi_device::tests::{
     command_in_fails, command_in_pends, command_ok_with, command_out_fails,
     command_out_ok, command_out_pends, ContextExtras, ExtraExpectations,
-    MockScsiTransport, MockScsiTransportInner, NoOpWaker,
+    MockScsiTransport, MockScsiTransportInner,
 };
 use crate::scsi_device::{
     ReadCapacity10Reply, ReadCapacity16Reply,
     ReportSupportedOperationCodesReply,
 };
-use std::sync::Arc;
 use std::task::Waker;
 
 struct Fixture<'a> {
@@ -23,8 +22,7 @@ fn do_test<
     mut setup: SetupFn,
     mut test: TestFn,
 ) {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let mut c = core::task::Context::from_waker(Waker::noop());
 
     let mut hc = MockScsiTransport::new();
 

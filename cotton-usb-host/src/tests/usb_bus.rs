@@ -9,15 +9,8 @@ use crate::wire::{
 };
 use futures::{future, Future};
 use std::pin::{pin, Pin};
-use std::sync::Arc;
-use std::task::{Poll, Wake, Waker};
+use std::task::{Poll, Waker};
 extern crate alloc;
-
-struct NoOpWaker;
-
-impl Wake for NoOpWaker {
-    fn wake(self: Arc<Self>) {}
-}
 
 fn no_delay(_ms: usize) -> impl Future<Output = ()> {
     future::ready(())
@@ -617,8 +610,8 @@ fn do_test<
     mut setup: SetupFn,
     mut test: TestFn,
 ) {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 
@@ -905,8 +898,8 @@ fn get_basic_configuration() {
 
 #[test]
 fn get_basic_configuration_bad_descriptors() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner.expect_multi_interrupt_pipe_ignored();
@@ -926,8 +919,8 @@ fn get_basic_configuration_bad_descriptors() {
 
 #[test]
 fn get_basic_configuration_bad_configuration_value() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner.expect_multi_interrupt_pipe_ignored();
@@ -951,8 +944,8 @@ fn get_basic_configuration_bad_configuration_value() {
 
 #[test]
 fn get_basic_configuration_pends() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner.expect_multi_interrupt_pipe_ignored();
@@ -974,8 +967,8 @@ fn get_basic_configuration_pends() {
 
 #[test]
 fn get_basic_configuration_fails() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner.expect_multi_interrupt_pipe_ignored();
@@ -1012,8 +1005,8 @@ fn is_set_address<const N: u8>(
 
 #[test]
 fn set_address() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner
@@ -1050,8 +1043,8 @@ fn set_address_pends() {
 
 #[test]
 fn set_address_fails() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner
@@ -1070,8 +1063,8 @@ fn set_address_fails() {
 
 #[test]
 fn interrupt_endpoint_in() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner
@@ -1095,8 +1088,8 @@ fn interrupt_endpoint_in() {
 
 #[test]
 fn interrupt_endpoint_in_pends() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
     hc.inner
@@ -1166,8 +1159,8 @@ fn device_descriptor(bytes: &mut [u8]) -> usize {
 
 #[test]
 fn new_device() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 
@@ -1196,8 +1189,8 @@ fn new_device() {
 
 #[test]
 fn new_device_lowspeed() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 
@@ -1227,8 +1220,8 @@ fn new_device_lowspeed() {
 
 #[test]
 fn new_device_first_call_errors() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 
@@ -1251,8 +1244,8 @@ fn new_device_first_call_errors() {
 
 #[test]
 fn new_device_first_call_short() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 
@@ -1275,8 +1268,8 @@ fn new_device_first_call_short() {
 
 #[test]
 fn new_device_second_call_errors() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 
@@ -1304,8 +1297,8 @@ fn new_device_second_call_errors() {
 
 #[test]
 fn new_device_second_call_pends() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 
@@ -1334,8 +1327,8 @@ fn new_device_second_call_pends() {
 
 #[test]
 fn new_device_second_call_short() {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let w = Waker::noop();
+    let mut c = core::task::Context::from_waker(w);
 
     let mut hc = MockHostController::default();
 

@@ -5,14 +5,7 @@ use cotton_usb_host::mocks::{
 use cotton_usb_host::usb_bus::{create_test_device, InterruptPacket, UsbBus};
 use futures::future;
 use std::pin::pin;
-use std::sync::Arc;
-use std::task::{Poll, Wake, Waker};
-
-struct NoOpWaker;
-
-impl Wake for NoOpWaker {
-    fn wake(self: Arc<Self>) {}
-}
+use std::task::{Poll, Waker};
 
 trait PollExtras<T> {
     fn to_option(self) -> Option<T>;
@@ -39,8 +32,7 @@ fn do_test<
     mut setup: SetupFn,
     mut test: TestFn,
 ) {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let mut c = core::task::Context::from_waker(Waker::noop());
 
     let mut hc = MockHostController::default();
 
