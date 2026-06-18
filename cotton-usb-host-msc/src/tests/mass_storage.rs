@@ -8,14 +8,7 @@ use futures::{future, Future};
 use std::cell::Cell;
 use std::fmt::Debug;
 use std::pin::{pin, Pin};
-use std::sync::Arc;
-use std::task::{Poll, Wake, Waker};
-
-struct NoOpWaker;
-
-impl Wake for NoOpWaker {
-    fn wake(self: Arc<Self>) {}
-}
+use std::task::{Poll, Waker};
 
 type MockError = scsi_transport::Error<UsbError>;
 type PinnedFuture = Pin<Box<dyn Future<Output = Result<usize, UsbError>>>>;
@@ -157,8 +150,7 @@ fn do_test<
     mut setup: SetupFn,
     mut test: TestFn,
 ) {
-    let w = Waker::from(Arc::new(NoOpWaker));
-    let mut c = core::task::Context::from_waker(&w);
+    let mut c = core::task::Context::from_waker(Waker::noop());
 
     let mut hc = MockHostController::default();
 
