@@ -9,3 +9,6 @@ mod stm32f746_nucleo;
 
 #[cfg(feature = "rp2040-w5500")]
 mod rp2040_w5500;
+
+#[cfg(feature = "rp2350-w6100")]
+mod rp2350_w6100;

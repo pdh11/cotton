@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+* Add support for RP2350 (it's the same peripheral as RP2040 really)
+
 ## [0.3.0] 2026-06-02
 
 ### Changed

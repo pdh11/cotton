@@ -229,7 +229,7 @@
   # release for arm64-linux. Building takes a while -- over an hour on
   # a Raspberry Pi 3!
   - name: install probe-rs
-    command: /home/laminar/.cargo/bin/cargo install probe-rs --features cli creates=/home/laminar/.cargo/bin/probe-rs
+    command: /home/laminar/.cargo/bin/cargo install probe-rs-tools creates=/home/laminar/.cargo/bin/probe-rs
 
 
 
@@ -391,8 +391,18 @@
         sleep 1
         echo "1-1.5.1" > /sys/bus/usb/drivers/usb/bind
         echo "1-1.5.2" > /sys/bus/usb/drivers/usb/bind
+        echo "1-1.5.3" > /sys/bus/usb/drivers/usb/bind
+        echo "1-1.5.4.1" > /sys/bus/usb/drivers/usb/bind
+        echo "1-1.5.4.2" > /sys/bus/usb/drivers/usb/bind
+        echo "1-1.5.4.3" > /sys/bus/usb/drivers/usb/bind
+        echo "1-1.5.4.4" > /sys/bus/usb/drivers/usb/bind
         uhubctl -l 1-1.5 -a on -p 1
         uhubctl -l 1-1.5 -a on -p 2
+        uhubctl -l 1-1.5 -a on -p 3
+        uhubctl -l 1-1.5.4 -a on -p 1
+        uhubctl -l 1-1.5.4 -a on -p 2
+        uhubctl -l 1-1.5.4 -a on -p 3
+        uhubctl -l 1-1.5.4 -a on -p 4
 
   # Set up end-of-test script
   - name: tests-off
@@ -401,8 +411,19 @@
       mode: 0755
       content: |
         #!/bin/bash -x
+        echo "1-1.5.4.1" > /sys/bus/usb/drivers/usb/unbind
+        echo "1-1.5.4.2" > /sys/bus/usb/drivers/usb/unbind
+        echo "1-1.5.4.3" > /sys/bus/usb/drivers/usb/unbind
+        echo "1-1.5.4.4" > /sys/bus/usb/drivers/usb/unbind
+        uhubctl -l 1-1.5.4 -a off -p 1
+        uhubctl -l 1-1.5.4 -a off -p 2
+        uhubctl -l 1-1.5.4 -a off -p 3
+        uhubctl -l 1-1.5.4 -a off -p 4
         echo "1-1.5.1" > /sys/bus/usb/drivers/usb/unbind
         echo "1-1.5.2" > /sys/bus/usb/drivers/usb/unbind
+        echo "1-1.5.3" > /sys/bus/usb/drivers/usb/unbind
         uhubctl -l 1-1.5 -a off -p 1
         uhubctl -l 1-1.5 -a off -p 2
+        uhubctl -l 1-1.5 -a off -p 3
+        uhubctl -l 1-1.5 -a off -p 1
         gpioset gpiochip0 13=0

@@ -10,8 +10,29 @@ use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::Stream;
-use rp2040_pac as pac;
 use rtic_common::waker_registration::CriticalSectionWakerRegistration;
+
+// Import the PAC
+//
+// This is a bit icky, as the USB peripheral is basically the same between
+// RP2040 and RP2350, but there is no single trait that covers both. So we
+// play tricks with "use as", which has the disadvantage (compared to traits)
+// that you can't verify that RP2350 will build just because RP2040 builds, or
+// vice versa.
+
+#[cfg(all(feature = "rp2040", feature = "rp235x"))]
+compile_error!("Only one of features 'rp2040' and 'rp235x' can be enabled in any one build");
+
+#[cfg(feature = "rp2040")]
+use rp2040_pac::{
+    self as pac, usbctrl_dpram, usbctrl_regs, USBCTRL_DPRAM, USBCTRL_REGS,
+};
+
+#[cfg(feature = "rp235x")]
+use rp235x_pac::{
+    self as pac, usb as usbctrl_regs, usb_dpram as usbctrl_dpram,
+    USB as USBCTRL_REGS, USB_DPRAM as USBCTRL_DPRAM,
+};
 
 /// Data shared between interrupt handler and thread-mode code
 pub struct UsbShared {
@@ -22,7 +43,7 @@ pub struct UsbShared {
 impl UsbShared {
     /// IRQ handler
     pub fn on_irq(&self) {
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let regs = unsafe { USBCTRL_REGS::steal() };
         let ints = regs.ints().read();
         /*defmt::info!(
            "IRQ ints={:x} inte={:x} intr={:x}",
@@ -43,7 +64,7 @@ impl UsbShared {
         }
         if (ints.bits() & 1) != 0 {
             // This clears the interrupt but does NOT clear sie_status.speed!
-            unsafe { regs.sie_status().modify(|_, w| w.speed().bits(3)) };
+            //unsafe { regs.sie_status().modify(|_, w| w.speed().bits(3)) };
             self.device_waker.wake();
         }
         if (ints.bits() & 0x458) != 0 {
@@ -136,7 +157,7 @@ impl Stream for Rp2040DeviceDetect {
         //defmt::trace!("DE register");
         self.waker.register(cx.waker());
 
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let regs = unsafe { USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
         let device_status = match status.speed().bits() {
             0 => DeviceStatus::Absent,
@@ -178,13 +199,13 @@ impl<'a> Rp2040ControlEndpoint<'a> {
 }
 
 impl Future for Rp2040ControlEndpoint<'_> {
-    type Output = pac::usbctrl_regs::sie_status::R;
+    type Output = usbctrl_regs::sie_status::R;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         //defmt::trace!("CE register");
         self.waker.register(cx.waker());
 
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let regs = unsafe { USBCTRL_REGS::steal() };
         let status = regs.sie_status().read();
         let intr = regs.intr().read();
         let bcsh = regs.buff_cpu_should_handle().read();
@@ -237,8 +258,8 @@ impl Future for Rp2040BulkEndpoint<'_> {
         defmt::trace!("BE register");
         self.waker.register(cx.waker());
 
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
-        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        let regs = unsafe { USBCTRL_REGS::steal() };
+        let dpram = unsafe { USBCTRL_DPRAM::steal() };
         let intr = regs.intr().read();
         let epc = dpram.ep_control(((self.n - 1) * 2) as usize);
         let epbc = dpram.ep_buffer_control((self.n * 2) as usize);
@@ -304,8 +325,8 @@ impl Rp2040InterruptPipe {
     }
 
     fn poll(&self) -> Option<InterruptPacket> {
-        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
+        let dpram = unsafe { USBCTRL_DPRAM::steal() };
+        let regs = unsafe { USBCTRL_REGS::steal() };
         let which = self.pipe.which();
         let bc = dpram.ep_buffer_control((which * 2) as usize).read();
         if bc.full_0().bit() {
@@ -393,8 +414,7 @@ enum ZeroLengthPacket {
 }
 
 trait Packetiser {
-    fn prepare(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL)
-        -> bool;
+    fn prepare(&mut self, reg: &usbctrl_dpram::EP_BUFFER_CONTROL) -> bool;
 }
 
 struct InPacketiser {
@@ -444,10 +464,7 @@ impl InPacketiser {
 }
 
 impl Packetiser for InPacketiser {
-    fn prepare(
-        &mut self,
-        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
-    ) -> bool {
+    fn prepare(&mut self, reg: &usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
         let val = reg.read();
         match self.next_prep {
             0 => {
@@ -552,10 +569,7 @@ impl<'a> OutPacketiser<'a> {
 }
 
 impl Packetiser for OutPacketiser<'_> {
-    fn prepare(
-        &mut self,
-        reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL,
-    ) -> bool {
+    fn prepare(&mut self, reg: &usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
         let val = reg.read();
         match self.next_prep {
             0 => {
@@ -637,7 +651,7 @@ impl Packetiser for OutPacketiser<'_> {
 }
 
 trait Depacketiser {
-    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) -> bool;
+    fn retire(&mut self, reg: &usbctrl_dpram::EP_BUFFER_CONTROL) -> bool;
 }
 
 struct InDepacketiser<'a> {
@@ -665,7 +679,7 @@ impl<'a> InDepacketiser<'a> {
 }
 
 impl Depacketiser for InDepacketiser<'_> {
-    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
+    fn retire(&mut self, reg: &usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
         let val = reg.read();
         match self.next_retire {
             0 => {
@@ -744,7 +758,7 @@ impl OutDepacketiser {
 }
 
 impl Depacketiser for OutDepacketiser {
-    fn retire(&mut self, reg: &pac::usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
+    fn retire(&mut self, reg: &usbctrl_dpram::EP_BUFFER_CONTROL) -> bool {
         let val = reg.read();
         match self.next_retire {
             0 => {
@@ -768,26 +782,32 @@ impl Depacketiser for OutDepacketiser {
     }
 }
 
-/// Implementation of HostController for RP2040
+/// Implementation of HostController for RP2040 and RP235x
 pub struct Rp2040HostController {
     shared: &'static UsbShared,
     statics: &'static UsbStatics,
-    regs: pac::USBCTRL_REGS,
-    dpram: pac::USBCTRL_DPRAM,
+    regs: USBCTRL_REGS,
+    dpram: USBCTRL_DPRAM,
 }
 
 impl Rp2040HostController {
-    /// Create a new RP2040HostController
+    /// Create a new RP2040HostController for a RP2xxx
     ///
     /// You'll need a rp2040::UsbShared, a rp2040::UsbStatics, and the
     /// register blocks from the PAC. (We only borrow the RESETS
     /// block, but we take ownership of the USB-specific ones.)
     ///
-    /// See rp2040-usb-otge100.rs for a complete working example.
+    /// Note that "resets" is a different structure on RP2040 from RP2350,
+    /// but they have the same API. You cannot build cotton-usb-host for
+    /// *both* RP2040 and RP2350 in the same build (but then that wouldn't
+    /// make much sense anyway.)
+    ///
+    /// See rp2040-usb-otge100.rs for a complete working example on RP2040,
+    /// rp2350-usb-msc.rs for a working example on RP2350.
     pub fn new(
         resets: &mut pac::RESETS,
-        regs: pac::USBCTRL_REGS,
-        dpram: pac::USBCTRL_DPRAM,
+        regs: USBCTRL_REGS,
+        dpram: USBCTRL_DPRAM,
         shared: &'static UsbShared,
         statics: &'static UsbStatics,
     ) -> Self {
@@ -802,7 +822,12 @@ impl Rp2040HostController {
             w.vbus_detect().set_bit();
             w.vbus_detect_override_en().set_bit()
         });
-        regs.main_ctrl().modify(|_, w| {
+        regs.main_ctrl().modify(|r, w| {
+            // Clear MAIN_CTRL.PHY_ISO, which is RP2350-only, but harmless
+            // on RP2040
+            unsafe {
+                w.bits(r.bits() & !4);
+            }
             w.sim_timing().clear_bit();
             w.host_ndevice().set_bit();
             w.controller_en().set_bit()
@@ -814,9 +839,13 @@ impl Rp2040HostController {
             w.sof_en().set_bit()
         });
 
+        // Because rp235x_pac only declares pac::Interrupt to be a
+        // cortex_m::InterruptNumber in target_arch="arm" builds, we can only
+        // compile these lines in such builds.
+        #[cfg(target_arch = "arm")]
         unsafe {
-            pac::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
-            pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
+            cortex_m::peripheral::NVIC::unpend(pac::Interrupt::USBCTRL_IRQ);
+            cortex_m::peripheral::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
         }
 
         regs.inte().write(|w| w.host_conn_dis().set_bit());
@@ -1253,8 +1282,8 @@ impl Rp2040HostController {
         interval_ms: u8,
     ) -> Rp2040InterruptPipe {
         let n = pipe.which();
-        let regs = unsafe { pac::USBCTRL_REGS::steal() };
-        let dpram = unsafe { pac::USBCTRL_DPRAM::steal() };
+        let regs = unsafe { USBCTRL_REGS::steal() };
+        let dpram = unsafe { USBCTRL_DPRAM::steal() };
         regs.host_addr_endp((n - 1) as usize).write(|w| unsafe {
             w.address()
                 .bits(address)
