@@ -29,7 +29,6 @@ tokio = { version = "1.24", default-features = false, features = [
   "sync",
   "rt",
 ], optional = true }
-tokio-test = { version = "0.4", default-features = false, optional = true }
 futures-util = { version = "0.3.31", default-features = false, features = [
   "async-await",
   "async-await-macro",
@@ -37,6 +36,9 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 async-stream = { version = "0.3.1", default-features = false, optional = true }
 nix = { workspace = true, features = ["net"], optional = true }
 libc = { workspace = true, optional = true }
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+tokio-test = { version = "0.4", default-features = false }
 
 [features]
 default = ["std", "async", "sync"]
@@ -46,7 +48,6 @@ async = [
   "dep:tokio",
   "dep:futures-util",
   "dep:async-stream",
-  "dep:tokio-test",
   "dep:neli",
   "dep:nix",
 ]
