@@ -19,6 +19,7 @@ tokio = { version = "1.24", default-features = false, features = [
   "macros",
   "net",
   "rt",
+  "time",
 ], optional = true }
 tokio-stream = { version = "0.1.4", default-features = false, optional = true }
 futures = { version = "0.3", default-features = false, optional = true }
@@ -33,7 +34,6 @@ nix = { workspace = true, features = [
   "uio",
 ], optional = true }
 libc = { workspace = true, optional = true }
-uuid = { version = "1.8", default-features = false, optional = true }
 socket2 = { version = "0.6", default-features = false, optional = true }
 mio = { version = "1", default-features = false, features = [
   "os-poll",
@@ -53,6 +53,7 @@ fastrand = { version = "2", optional = true }
 
 [dev-dependencies]
 serial_test = { version = "3" }
+uuid = { version = "1.8", default-features = false }
 
 [features]
 default = ["std", "async", "sync", "smoltcp"]
@@ -62,7 +63,6 @@ std = [
   "dep:nix",
   "dep:socket2",
   "dep:fastrand",
-  "dep:uuid",
   "smoltcp/alloc",
   "smoltcp/std",
 ]
