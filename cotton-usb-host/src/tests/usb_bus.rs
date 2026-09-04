@@ -3241,9 +3241,7 @@ fn device_events_hub_packet_end_of_stream() {
         |f| {
             f.hub_state.pipes.borrow_mut()[0] = {
                 let mut ip = MockInterruptPipe::new();
-                ip.expect_poll_next().returning(|_| {
-                    Poll::Ready(None)
-                });
+                ip.expect_poll_next().returning(|_| Poll::Ready(None));
                 Some(ip)
             };
             let stream = pin!(f.bus.device_events(&f.hub_state, no_delay));

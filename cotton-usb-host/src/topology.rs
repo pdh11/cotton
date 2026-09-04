@@ -31,16 +31,13 @@ impl Debug for Topology {
         ) -> Result<(), Error> {
             write!(f, "{}", i).unwrap();
 
-            let mut any = false;
-            for j in 1..(MAX_DEVICES as usize) {
-                let parent = bus.parent[j];
-                if parent != 0 && (parent & 15) == i as u8 {
-                    any = true;
-                }
-            }
-            if any {
+            if bus
+                .parent
+                .iter()
+                .any(|parent| *parent != 0 && (*parent & 15) == i as u8)
+            {
                 write!(f, ":(").unwrap();
-                any = false;
+                let mut any = false;
                 for j in 1..(MAX_DEVICES as usize) {
                     let parent = bus.parent[j];
                     if parent != 0 && (parent & 15) == i as u8 {
@@ -66,16 +63,13 @@ impl defmt::Format for Topology {
         fn fmt_inner(bus: &Topology, i: usize, f: defmt::Formatter<'_>) {
             defmt::write!(f, "{}", i);
 
-            let mut any = false;
-            for j in 1..(MAX_DEVICES as usize) {
-                let parent = bus.parent[j];
-                if parent != 0 && (parent & 15) == i as u8 {
-                    any = true;
-                }
-            }
-            if any {
+            if bus
+                .parent
+                .iter()
+                .any(|parent| *parent != 0 && (*parent & 15) == i as u8)
+            {
                 defmt::write!(f, ":(");
-                any = false;
+                let mut any = false;
                 for j in 1..(MAX_DEVICES as usize) {
                     let parent = bus.parent[j];
                     if parent != 0 && (parent & 15) == i as u8 {

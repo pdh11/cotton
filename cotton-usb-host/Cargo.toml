@@ -2,7 +2,6 @@
 name = "cotton-usb-host"
 version = "0.3.0"
 description = "USB host stack for embedded devices"
-homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
 categories = []
 edition.workspace = true
@@ -24,12 +23,11 @@ rp2040-pac = { version = "0.6", optional = true }
 cortex-m = { version = "0.7.7", optional = true }
 rtic-common = { version = "1", optional = true }        # For WakerRegistration
 mockall = { workspace = true, optional = true }
-critical-section = "1.1"
 bytemuck = "1.9"
 
 [features]
 default = ["std"]
-std = ["critical-section/std", "futures/std", "dep:mockall"]
+std = ["futures/std", "dep:mockall"]
 rp2040 = ["defmt", "dep:rp2040-pac", "dep:rtic-common", "dep:cortex-m"]
 rp235x = ["defmt", "dep:rp235x-pac", "dep:rtic-common", "dep:cortex-m"]
 defmt = ["dep:defmt"]
