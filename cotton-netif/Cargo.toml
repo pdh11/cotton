@@ -2,7 +2,6 @@
 name = "cotton-netif"
 version = "0.2.0"
 description = "Enumerating available network interfaces and their IP addresses"
-homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
 categories = ["network-programming"]
 authors = ["Peter Hartley <pdh@utter.chaos.org.uk>"]

@@ -2,7 +2,6 @@
 name = "cotton-ssdp"
 version = "0.2.0"
 description = "Implementing SSDP, the Simple Service Discovery Protocol"
-homepage = "https://github.com/pdh11/cotton"
 repository = "https://github.com/pdh11/cotton"
 categories = ["network-programming"]
 edition.workspace = true
