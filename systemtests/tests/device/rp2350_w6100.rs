@@ -22,3 +22,16 @@ fn arm_rp2350_w6100_0hello() {
         },
     );
 }
+
+#[test]
+#[serial(rp2350_w6100)]
+#[cfg_attr(miri, ignore)]
+fn arm_rp2350_usb_msc() {
+    rp2350_test(
+        "../cross/rp2350-w6100-rtic2/target/thumbv8m.main-none-eabihf/debug/rp2350-usb-msc",
+        |nt| {
+            nt.expect_stderr("Finished in", Duration::from_secs(45));
+            nt.expect("MSC OK", Duration::from_secs(20));
+        }
+    );
+}

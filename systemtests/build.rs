@@ -126,5 +126,22 @@ fn main() {
         io::stdout().write_all(&child.stderr).unwrap();
         io::stdout().write_all(&child.stdout).unwrap();
         assert!(child.status.success());
+
+        // cross/rp2350-w6100-rtic2
+
+        let child = Command::new("cargo")
+            .arg("build")
+            .arg("-vv")
+            .arg("--bins")
+            .arg("--target")
+            .arg("thumbv8m.main-none-eabihf")
+            .current_dir("../cross/rp2350-w6100-rtic2")
+            .env_clear()
+            .envs(&filtered_env)
+            .output()
+            .expect("failed to cross-compile for ARM");
+        io::stdout().write_all(&child.stderr).unwrap();
+        io::stdout().write_all(&child.stdout).unwrap();
+        assert!(child.status.success());
     }
 }

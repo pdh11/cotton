@@ -42,7 +42,7 @@ So far:
    [![Crates.io](https://img.shields.io/crates/v/cotton-usb-host)](https://crates.io/crates/cotton-usb-host)
    [![Crates.io](https://img.shields.io/crates/d/cotton-usb-host)](https://crates.io/crates/cotton-usb-host)
    [![docs.rs](https://img.shields.io/docsrs/cotton-usb-host)](https://docs.rs/cotton-usb-host/latest/cotton_usb-host/): a no-std, no-alloc asynchronous
-   USB *host* stack, initially for RP2040.
+   USB *host* stack, initially for RP2040 and RP235x.
 
  - [cotton-usb-host-hid](https://crates.io/crates/cotton-usb-host-hid)
    [![Crates.io](https://img.shields.io/crates/v/cotton-usb-host-hid)](https://crates.io/crates/cotton-usb-host-hid)
@@ -66,12 +66,12 @@ So far:
 
 These crates are `no_std`-compatible, meaning that they can be used on
 embedded systems. In fact, all pushes to my local (not Github)
-continuous-integration server are *automatically* tested on both STM32
-and RP2040 platforms. You can read about how that is set up on my
+continuous-integration server are *automatically* tested on STM32,
+RP2040 and RP2350 platforms. You can read about how that is set up on my
 blog: *[Part
-one](https://pdh11.blogspot.com/2024/02/system-testing-embedded-code-in-rust.html),
-[Part two](https://pdh11.blogspot.com/2024/03/system-tests-2.html),
-[Part three](https://pdh11.blogspot.com/2024/04/blog-post.html)*.
+one](https://talesfromthearmchair.net/system-testing-embedded-code-in-rust.html),
+[Part two](https://talesfromthearmchair.net/system-tests-2.html),
+[Part three](https://talesfromthearmchair.net/system-tests-3.html)*.
 
 These system-tests also serve as example code combining the Cotton
 crates with the wider ecosystem, including examples where the
@@ -142,6 +142,11 @@ itself will be useful to others:
   - [rp2040-w5500macraw-ssdp-rtic](https://github.com/pdh11/cotton/blob/main/cross/rp2040-w5500/src/bin/rp2040-w5500macraw-ssdp-rtic.rs):
     combining rp2040-hal + RTIC + w5500 (MACRAW mode with
     interrupts) + smoltcp + cotton-unique + cotton-ssdp;
+
+  - [rp2350-usb-msc](https://github.com/pdh11/cotton/blob/main/cross/rp2350-w6100-rtic2/src/bin/rp2350-usb-msc.rs):
+   combining RTIC&nbsp;2 + cotton-usb-host + cotton-usb-host-msc;
+   **WARNING** this _writes_ to the USB drive, don't use one with data
+   on that you want to keep;
 
 My long-term goals for this project as a whole:
 
